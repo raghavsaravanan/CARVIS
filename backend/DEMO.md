@@ -2,12 +2,14 @@
 
 Keep this path green before building a frontend.
 
-## Current corpus
+## Demo corpus to ingest
 
 | PDF | document_ref | year | make | model |
 | --- | --- | --- | --- | --- |
 | `intake_manifold_guide.pdf.pdf` | `intake_manifold_guide` | 2019 | chevrolet | silverado |
 | `AMS Performance VR30 Guide.pdf` | `ams_performance_vr30_guide` | 2016 | nissan | vr30 |
+
+The PDFs are local-only inputs and are not tracked in Git. Confirm that the files exist and that the Qdrant `george_specs` collection contains points before starting the API. The configured cloud database is currently empty until these manuals are ingested.
 
 Parse Markdown is cached in `.george_parse_cache/` (gitignored). Re-ingest does **not** call LlamaParse unless you pass `--force-parse`.
 

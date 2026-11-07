@@ -21,6 +21,9 @@ build/
 node_modules/
 frontend/dist/
 frontend/build/
+frontend/*.tsbuildinfo
+.spacetime/
+spacetime/.spacetime/
 
 # Manuals stay on disk for local ingest; not in git (use cloud Qdrant for runtime).
 *.pdf

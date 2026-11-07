@@ -1,6 +1,6 @@
 # George glasses copilot architecture
 
-Status: Phase 0 complete; the web-first Phase 2 vertical slice is implemented; native glasses capture remains the next hardware-gated step.
+Status: Phase 0 complete; the web-first Phase 2 vertical slice is implemented; SpacetimeDB is deferred; native glasses capture remains hardware-gated.
 
 ## Current workspace
 
@@ -12,7 +12,7 @@ The existing application is split into the following top-level areas:
 - [`frontend/`](../frontend/) is the Vite/React web client. It is not the native glasses companion.
 - [`ios/`](../ios/) contains the official Meta CameraAccess handoff for the future native capture bridge.
 
-The local corpus currently includes an intake-manifold guide tagged `2019 / chevrolet / silverado` and an AMS VR30 guide tagged `2016 / nissan / vr30`. PDFs, `.env`, local Qdrant data, and parse caches are local-only artifacts.
+The demo expects an intake-manifold guide tagged `2019 / chevrolet / silverado` and an AMS VR30 guide tagged `2016 / nissan / vr30`. Those PDFs are local-only inputs and are not currently present in the repository; Qdrant must be seeded before live answers can work. `.env`, local Qdrant data, and parse caches are also local-only artifacts.
 
 ## Target request flow
 
@@ -61,9 +61,9 @@ The default provider is NVIDIA Nemotron 3 Nano Omni through NVIDIA's OpenAI-comp
 
 `/vapi-tool` remains unchanged and must continue to pass the existing tests.
 
-### SpacetimeDB decision
+### Deferred SpacetimeDB option
 
-SpacetimeDB is not needed for Nemotron inference or Qdrant retrieval. If adopted, use it as the operational state layer: `mechanic_session`, `vision_query`, and `query_result` tables plus reducers for creating a session and recording result metadata. Subscribe the web console to active sessions/results for live demo visibility. Do not put manual vectors, raw JPEGs, API keys, or the existing Qdrant corpus in SpacetimeDB. The recommended sequence is Nemotron + Qdrant first, then a TypeScript SpacetimeDB module once the state/history UX is concrete.
+SpacetimeDB is not used for the current runtime. Qdrant is sufficient for manual retrieval, and the request/session flow remains short-lived. The deferred design for persistent sessions, live multi-device state, or shop workflow is documented in [`docs/spacetime-integration-plan.md`](./spacetime-integration-plan.md), but no SpacetimeDB credentials, client, module, or deployment are required now.
 
 ### iOS / glasses
 

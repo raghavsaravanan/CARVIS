@@ -7,7 +7,7 @@ Hands-free AI mechanic copilot for manual-grounded automotive answers.
 ```text
 backend/    FastAPI API, ingestion, Qdrant retrieval, tests
 frontend/   Vite/React browser and iPhone-camera demo
-docs/       architecture and Nemotron/SpacetimeDB decisions
+docs/       architecture, integration plans, and platform decisions
 ios/        Meta CameraAccess native integration handoff
 ```
 
@@ -44,7 +44,7 @@ George/
 │   ├── purge_db.py          # Wipe/recreate empty george_specs
 │   ├── setup.sh             # Prerequisite check
 │   ├── requirements.txt
-│   ├── Procfile             # Render start (used with rootDir)
+│   ├── Procfile             # Backend-local Render start command
 │   ├── runtime.txt          # Python 3.12
 │   ├── DEMO.md              # Shop-demo runbook
 │   ├── tests/
@@ -88,12 +88,14 @@ PDF
         payload: text, year, make, model, section
 ```
 
-**Current corpus**
+**Demo corpus to ingest**
 
 | PDF | Tags |
 | --- | --- |
-| Intake manifold guide | 2019 · chevrolet · silverado |
-| AMS VR30 guide | 2016 · nissan · vr30 |
+| `intake_manifold_guide.pdf.pdf` | 2019 · chevrolet · silverado |
+| `AMS Performance VR30 Guide.pdf` | 2016 · nissan · vr30 |
+
+These PDFs are local-only inputs and are not currently present in the repository. Qdrant must contain at least one correctly tagged manual before the API can start answering.
 
 ```bash
 cd backend
@@ -157,9 +159,9 @@ npm run dev
 
 Open the Vite URL, choose a JPEG, confirm the manual vehicle fields, and ask a question. A matching uploaded manual is required; the image never establishes vehicle year, make, or model.
 
-## State and database decision
+## State and database architecture
 
-Nemotron does not require a database. Qdrant remains the vector database for manual chunks and is the only store needed to answer a query. SpacetimeDB is a good optional operational state layer for durable mechanic sessions, query history, connected-device state, live result updates, or a shared demo dashboard. It should store session metadata and result events—not service-manual vectors, raw images, or API keys. The first demo keeps state in the FastAPI request/session path; add SpacetimeDB after the Nemotron + Qdrant path is validated.
+Qdrant is the only database required for the current demo: it stores the embedded service-manual chunks and vehicle metadata used for retrieval. Request/session state is short-lived in the FastAPI and client flow. SpacetimeDB is deferred until it provides a fundamental product capability such as multi-device live state or persistent shop workflow; it is not part of the current runtime path.
 
 ## Quick start (local Call test)
 
@@ -230,4 +232,4 @@ The live webhook is [`backend/main.py`](backend/main.py). Ingest stays on your l
 
 ## What’s next
 
-Minimal Start Call UI + persistent job/transcript review — after hosted `/vapi-tool` stays green.
+Integrate Meta's official CameraAccess sample after Xcode and physical-glasses prerequisites are available. Then connect the captured JPEG to `/vision-query` and verify audio output. SpacetimeDB remains deferred; its design is preserved in [`docs/spacetime-integration-plan.md`](docs/spacetime-integration-plan.md) if the demo scope later requires it. See [`ios/README.md`](ios/README.md).
