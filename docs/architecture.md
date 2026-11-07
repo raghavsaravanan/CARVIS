@@ -1,15 +1,16 @@
 # George glasses copilot architecture
 
-Status: Phase 0 complete; Phase 1 is prepared but requires Xcode and physical-device access.
+Status: Phase 0 complete; the web-first Phase 2 vertical slice is implemented; native glasses capture remains the next hardware-gated step.
 
 ## Current workspace
 
-The existing application is in [`George copy/`](../George%20copy/):
+The existing application is split into the following top-level areas:
 
-- [`backend/main.py`](../George%20copy/backend/main.py) owns the FastAPI app, the existing `/vapi-tool` webhook, `/upload`, `/health`, vehicle-session handling, Qdrant retrieval, and source-to-speech formatting.
-- [`backend/ingest.py`](../George%20copy/backend/ingest.py) parses service-manual PDFs with LlamaParse, expands mechanical units, chunks tables, embeds with FastEmbed, and upserts into Qdrant collection `george_specs`.
-- [`backend/tests/test_main.py`](../George%20copy/backend/tests/test_main.py) covers the safety-critical speech formatting and vehicle-catalog guards without requiring Qdrant.
-- [`frontend/`](../George%20copy/frontend/) is the existing Vite/React shop console. It is not the native glasses companion and remains unchanged in Phase 0.
+- [`backend/main.py`](../backend/main.py) owns the FastAPI app, the existing `/vapi-tool` webhook, `/upload`, `/health`, `/vision-query`, vehicle-session handling, Qdrant retrieval, and source-to-speech formatting.
+- [`backend/ingest.py`](../backend/ingest.py) parses service-manual PDFs with LlamaParse, expands mechanical units, chunks tables, embeds with FastEmbed, and upserts into Qdrant collection `george_specs`.
+- [`backend/tests/test_main.py`](../backend/tests/test_main.py) covers the safety-critical speech formatting and vehicle-catalog guards without requiring Qdrant.
+- [`frontend/`](../frontend/) is the Vite/React web client. It is not the native glasses companion.
+- [`ios/`](../ios/) contains the official Meta CameraAccess handoff for the future native capture bridge.
 
 The local corpus currently includes an intake-manifold guide tagged `2019 / chevrolet / silverado` and an AMS VR30 guide tagged `2016 / nissan / vr30`. PDFs, `.env`, local Qdrant data, and parse caches are local-only artifacts.
 
@@ -43,16 +44,26 @@ iPhone UI + verified audio route
 
 ### Backend
 
-The future `/vision-query` endpoint should be an additive route in [`backend/main.py`](../George%20copy/backend/main.py), or a small module imported there. It should accept:
+[`backend/main.py`](../backend/main.py) now exposes an additive `/vision-query` route. It accepts:
 
 - a JPEG upload;
 - `question`;
 - explicit `year`, `make`, and `model` fields;
 - `session_id` and optionally `shop_id`.
 
-The vision model output is context only: for example, “likely intake manifold.” It must not overwrite or infer the vehicle fields used to select manuals. Retrieval must continue through the existing `search_top_chunk(...)` path, and the final answer must use the existing `format_voice_answer(...)` rules. A missing or low-confidence match is a refusal, not a best-effort automotive answer.
+The vision model output is context only: for example, “likely intake manifold.” It does not overwrite or infer the vehicle fields used to select manuals. Retrieval continues through the existing `search_top_chunk(...)` path, and the final answer uses the existing `format_voice_answer(...)` rules. A missing manual match is a refusal, not a best-effort automotive answer. The endpoint rejects non-JPEG uploads and caps the request at 8 MB; it does not persist the image.
+
+The default provider is NVIDIA Nemotron 3 Nano Omni through NVIDIA's OpenAI-compatible `/v1/chat/completions` endpoint. The adapter sends a JPEG data URL plus text and asks for component context as JSON. `NVIDIA_API_KEY`, `NEMOTRON_MODEL`, and `NEMOTRON_BASE_URL` are environment variables only. An explicit `VISION_PROVIDER=openai` fallback remains available. The model is instructed to return component context as JSON and never return repair facts; those facts must come from George's manual chunk.
+
+### Web-first client
+
+[`frontend/`](../frontend/) is now a minimal Vite/React client for the first demo. It uses an iPhone/browser JPEG capture or file picker, asks for explicit vehicle identity, POSTs multipart form data to `/vision-query`, displays the visual context and answer, and uses browser speech synthesis as the initial audio fallback. In development, Vite proxies `/api` to the local FastAPI server. The Meta CameraAccess sample can later feed the same request contract from a thin native bridge.
 
 `/vapi-tool` remains unchanged and must continue to pass the existing tests.
+
+### SpacetimeDB decision
+
+SpacetimeDB is not needed for Nemotron inference or Qdrant retrieval. If adopted, use it as the operational state layer: `mechanic_session`, `vision_query`, and `query_result` tables plus reducers for creating a session and recording result metadata. Subscribe the web console to active sessions/results for live demo visibility. Do not put manual vectors, raw JPEGs, API keys, or the existing Qdrant corpus in SpacetimeDB. The recommended sequence is Nemotron + Qdrant first, then a TypeScript SpacetimeDB module once the state/history UX is concrete.
 
 ### iOS / glasses
 
@@ -70,8 +81,8 @@ The current official sample README lists iOS 17.2+, Xcode 26.4+, Swift 6.3+, and
 
 1. **Phase 0:** workspace map, integration contract, prerequisites, and repository rules — complete.
 2. **Phase 1:** clone/open the official sample, select the team's bundle identifier, build, connect actual glasses, stream preview, and capture a JPEG — blocked locally until Xcode is installed/selected and hardware is available.
-3. **Phase 2:** add `/vision-query` with a provider abstraction, bounded JPEG validation, explicit vehicle context, session correlation, and tests for refusal/mismatch behavior.
-4. **Phase 3:** connect the Swift client to the endpoint and expose loading/error/source-grounded result states.
+3. **Phase 2:** `/vision-query` and the web-first vertical slice — implemented; install dependencies and test with a configured NVIDIA API key plus an ingested local/cloud manual.
+4. **Phase 3:** connect the official CameraAccess capture output to the same multipart request contract; the web UI remains the fallback.
 5. **Phase 4:** verify an actual audio route to glasses; retain push-to-talk or phone input/audio fallback when the route is unavailable.
 6. **Phase 5:** run a full manual-backed demo and document setup without storing user images or credentials.
 

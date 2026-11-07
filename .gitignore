@@ -1,0 +1,27 @@
+.env
+backend/.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+george_mvp_db/
+backend/george_mvp_db/
+.george_parse_cache/
+backend/.george_parse_cache/
+.fastembed_cache/
+_ams_*.md
+_llama_parse_preview*.md
+*.egg-info/
+dist/
+build/
+.DS_Store
+node_modules/
+frontend/dist/
+frontend/build/
+
+# Manuals stay on disk for local ingest; not in git (use cloud Qdrant for runtime).
+*.pdf
+*.PDF
