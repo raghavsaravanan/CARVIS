@@ -29,6 +29,7 @@ final class GlassesController {
     private(set) var hasActiveDevice = false
     private(set) var sessionState: DeviceSessionState = .idle
     private(set) var streamState: StreamState = .stopped
+    let wakeListener = CarvisWakeListener()
 
     /// The newest video frame from the glasses.
     private(set) var frame: UIImage?
@@ -77,10 +78,12 @@ final class GlassesController {
     @ObservationIgnored private let deviceSelector: AutoDeviceSelector
     @ObservationIgnored private var session: DeviceSession?
     @ObservationIgnored private var camera: MWDATCamera.Camera?
+    @ObservationIgnored private var cameraStartSession: DeviceSession?
     @ObservationIgnored private let sessionTokens = ListenerTokenBag()
     @ObservationIgnored private let streamTokens = ListenerTokenBag()
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     private var wantsPreview = false
+    @ObservationIgnored private var restartAfterStop = false
     @ObservationIgnored private var photoContinuation: CheckedContinuation<Data, any Error>?
 
     init(wearables: any WearablesInterface = Wearables.shared) {
@@ -90,7 +93,13 @@ final class GlassesController {
 
         tasks.append(Task { [weak self] in
             for await state in wearables.registrationStateStream() {
-                self?.registrationState = state
+                guard let self else { return }
+                self.registrationState = state
+                if state == .registered {
+                    self.startSessionIfNeeded()
+                } else {
+                    self.tearDown()
+                }
             }
         })
         tasks.append(Task { [weak self, deviceSelector] in
@@ -98,19 +107,30 @@ final class GlassesController {
                 guard let self else { return }
                 self.hasActiveDevice = device != nil
                 // Glasses came back (put on, unfolded): resume video if a screen wants it.
-                if device != nil, self.wantsPreview { self.startSessionIfNeeded() }
+                if device != nil {
+                    self.startSessionIfNeeded()
+                } else {
+                    self.tearDown()
+                }
             }
         })
         tasks.append(Task { [weak self] in
             for await _ in NotificationCenter.default.notifications(named: UIApplication.didEnterBackgroundNotification) {
-                // Like the sample: stop the camera in the background to save the glasses' battery.
+                // Foreground-only wake experiment. Lock/background never leaves a
+                // stale "listening" indicator or silently switches to the phone mic.
                 self?.tearDown()
+            }
+        })
+        tasks.append(Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: UIApplication.didBecomeActiveNotification) {
+                self?.startSessionIfNeeded()
             }
         })
     }
 
     isolated deinit {
         tasks.forEach { $0.cancel() }
+        wakeListener.disarm()
         session?.stop()
     }
 
@@ -146,6 +166,28 @@ final class GlassesController {
 
     // MARK: - Live video
 
+    /// Explicit user action: only this path may prompt for glasses mic access.
+    func armWakeListener() {
+        guard isConnected else {
+            errorMessage = "Connect the glasses in Meta AI before arming wake detection."
+            return
+        }
+        errorMessage = nil
+        Task {
+            guard await wakeListener.arm(using: wearables) else { return }
+            if session?.state == .paused {
+                tearDown(restartForWake: true)
+            } else {
+                startSessionIfNeeded()
+            }
+        }
+    }
+
+    func disarmWakeListener() {
+        wakeListener.disarm()
+        if !wantsPreview { tearDown() }
+    }
+
     /// Call when a screen that shows the camera appears.
     func startPreview() {
         log("start preview (registered: \(isConnected), glasses found: \(hasActiveDevice), session: \(sessionState.description))")
@@ -157,13 +199,28 @@ final class GlassesController {
     /// Call when that screen goes away. Ends the session so the glasses rest.
     func stopPreview() {
         wantsPreview = false
-        tearDown()
+        // Keep the existing camera's terminal teardown semantics, then create a
+        // fresh speech-only session if still armed. No competing SDK sessions.
+        tearDown(restartForWake: wakeListener.isArmed)
     }
 
     private func startSessionIfNeeded() {
-        if let session, session.state == .started {
-            Task { await startCameraIfAllowed() }
-            return
+        guard UIApplication.shared.applicationState == .active, isConnected, hasActiveDevice,
+              wantsPreview || (wakeListener.isArmed && wakeListener.hasMicrophonePermission) else { return }
+        if let session {
+            if session.state == .started {
+                startCapabilities(on: session)
+                return
+            }
+            if session.state == .stopping {
+                restartAfterStop = true
+                return
+            }
+            if session.state == .stopped {
+                clearSession()
+            } else {
+                return
+            }
         }
         guard session == nil else {
             log("session exists in state \(session?.state.description ?? "?"), waiting")
@@ -183,8 +240,21 @@ final class GlassesController {
         }
     }
 
+    private func startCapabilities(on session: DeviceSession) {
+        guard self.session === session, session.state == .started, isConnected,
+              hasActiveDevice, UIApplication.shared.applicationState == .active else { return }
+        Task { await startCameraIfAllowed() }
+        Task { await wakeListener.attach(to: session, using: wearables) }
+    }
+
     private func startCameraIfAllowed() async {
-        guard wantsPreview, camera == nil, let session, session.state == .started else { return }
+        guard UIApplication.shared.applicationState == .active,
+              isConnected, hasActiveDevice, wantsPreview, camera == nil,
+              let session, session.state == .started, cameraStartSession !== session else { return }
+        cameraStartSession = session
+        defer {
+            if cameraStartSession === session { cameraStartSession = nil }
+        }
         do {
             var permission = try await wearables.checkPermissionStatus(.camera)
             log("camera permission: \(permission)")
@@ -204,7 +274,9 @@ final class GlassesController {
             errorMessage = error.localizedDescription
             return
         }
-        guard wantsPreview, camera == nil, self.session === session, session.state == .started else { return }
+        guard UIApplication.shared.applicationState == .active,
+              isConnected, hasActiveDevice, wantsPreview, camera == nil,
+              self.session === session, session.state == .started else { return }
 
         do {
             // Raw frames turn straight into images. Low resolution keeps Bluetooth smooth;
@@ -229,7 +301,9 @@ final class GlassesController {
         print("[Glasses] \(message)")
     }
 
-    private func tearDown() {
+    private func tearDown(restartForWake: Bool = false) {
+        restartAfterStop = restartForWake && UIApplication.shared.applicationState == .active
+        wakeListener.suspend("Paused: foreground and connected glasses are required. Locked-screen wake is not supported in this build.")
         failPendingPhoto(with: GlassesError.stopped)
         session?.stop()
     }
@@ -276,9 +350,14 @@ final class GlassesController {
         sessionState = state
         switch state {
         case .started:
-            Task { await startCameraIfAllowed() }
+            startCapabilities(on: changed)
+        case .paused:
+            wakeListener.sessionPaused()
         case .stopped:
+            let shouldRestart = restartAfterStop
+            restartAfterStop = false
             clearSession()
+            if shouldRestart { startSessionIfNeeded() }
         default:
             break
         }
@@ -287,7 +366,10 @@ final class GlassesController {
     private func observe(_ stream: MWDATCamera.Stream) {
         stream.statePublisher.listen { [weak self] state in
             guard let self else { return }
-            Task { @MainActor in self.streamChanged(to: state) }
+            Task { @MainActor in
+                guard self.camera?.stream === stream else { return }
+                self.streamChanged(to: state)
+            }
         }.store(in: streamTokens)
 
         stream.videoFramePublisher.listen { [weak self] videoFrame in
@@ -295,7 +377,7 @@ final class GlassesController {
             // Turn the frame into an image here, off the main thread.
             let image = videoFrame.makeUIImage()
             Task { @MainActor in
-                guard let image,
+                guard self.camera?.stream === stream, let image,
                       UIApplication.shared.applicationState != .background else { return }
                 self.frame = image
             }
@@ -304,6 +386,7 @@ final class GlassesController {
         stream.photoDataPublisher.listen { [weak self] photo in
             guard let self else { return }
             Task { @MainActor in
+                guard self.camera?.stream === stream else { return }
                 self.photoContinuation?.resume(returning: photo.data)
                 self.photoContinuation = nil
             }
@@ -312,6 +395,7 @@ final class GlassesController {
         stream.errorPublisher.listen { [weak self] error in
             guard let self else { return }
             Task { @MainActor in
+                guard self.camera?.stream === stream else { return }
                 if error == .photoCaptureFailed {
                     self.failPendingPhoto(with: GlassesError.captureFailed)
                 } else {
@@ -338,6 +422,7 @@ final class GlassesController {
     }
 
     private func clearSession() {
+        wakeListener.sessionEnded()
         clearStream()
         sessionTokens.clear()
         session = nil

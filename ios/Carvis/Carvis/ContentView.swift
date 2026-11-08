@@ -47,6 +47,8 @@ struct ContentView: View {
             }
         case .ask:
             AskView(vehicle: .demo, client: accounts.visionClient, speech: askSpeech)
+        case .wakeTest:
+            WakeTestView()
         }
     }
 }

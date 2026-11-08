@@ -33,6 +33,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Carvis listens for Hey Carvis and your question through your Meta glasses or phone microphone.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Carvis connects to your Meta glasses over Bluetooth.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
@@ -43,8 +45,6 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Carvis uses your local network to reach your glasses and the Carvis server.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Carvis listens for Hey Carvis and your question through your glasses or phone.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Carvis turns your spoken question into text so it can look it up in the service manual.</string>
 	<key>UIBackgroundModes</key>

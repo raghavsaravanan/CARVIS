@@ -114,7 +114,7 @@ struct DashboardView: View {
                 // 5. Team tools
                 if accounts.isTeam {
                     DashboardSection(title: "Team tools") {
-                        TeamToolsCard()
+                        TeamToolsCard(onWakeTest: { session.path.append(.wakeTest) })
                         .scrollReveal()
                     }
                     .transition(.blurReplace)
@@ -654,6 +654,8 @@ private struct ChatBubble: View {
 
 /// Mechanic / team mode: where questions go, and whether the server, glasses, and Vapi are ready.
 private struct TeamToolsCard: View {
+    /// Opens Raghav's glasses wake-word test screen (Meta Speech on the glasses).
+    let onWakeTest: () -> Void
     @Environment(AccountStore.self) private var accounts
     @Environment(GlassesController.self) private var glasses
     @State private var health: String?
@@ -708,6 +710,13 @@ private struct TeamToolsCard: View {
             DevRow(label: "Glasses", value: glasses.isConnected ? glasses.detail : "Not registered")
             DevRow(label: "Vapi", value: VapiConfig.load() == nil ? "Not configured, built-in voice" : "Configured")
             DevRow(label: "Vehicle", value: "\(Vehicle.demo.year) / \(Vehicle.demo.make) / \(Vehicle.demo.model)")
+
+            Button(action: onWakeTest) {
+                Label("Glasses wake test", systemImage: "waveform")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+            }
+            .carvisButton()
         }
         .padding(20)
         .carvisGlass(.card, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))

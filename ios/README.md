@@ -50,6 +50,12 @@ phone can hold only 3 free-team apps at once.
 
 ## Run it
 
+For the new foreground **Hi Carvis / Hey Carvis** glasses-speech experiment, follow
+[the wake-listener hardware test](WAKE_TEST.md). It adds a dedicated diagnostic
+screen and emits wake events; it does not integrate Vapi. Physical detection and
+camera concurrency are not yet verified. Locked-screen listening is intentionally
+paused in this build.
+
 1. Open `ios/Carvis/Carvis.xcodeproj` in Xcode. Swift Package Manager fetches
    `meta-wearables-dat-ios`.
 2. Select the Carvis target, choose your team, and keep or change the bundle ID.

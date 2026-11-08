@@ -9,7 +9,8 @@
 /* Begin PBXBuildFile section */
 		CA0000000000000000000101 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = CA0000000000000000000201 /* MWDATCore */; };
 		CA0000000000000000000102 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = CA0000000000000000000202 /* MWDATCamera */; };
-		CA0000000000000000000103 /* Vapi in Frameworks */ = {isa = PBXBuildFile; productRef = CA0000000000000000000203 /* Vapi */; };
+		CA0000000000000000000103 /* MWDATSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = CA0000000000000000000203 /* MWDATSpeech */; };
+		CA0000000000000000000104 /* Vapi in Frameworks */ = {isa = PBXBuildFile; productRef = CA0000000000000000000204 /* Vapi */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,7 +31,8 @@
 			files = (
 				CA0000000000000000000101 /* MWDATCore in Frameworks */,
 				CA0000000000000000000102 /* MWDATCamera in Frameworks */,
-				CA0000000000000000000103 /* Vapi in Frameworks */,
+				CA0000000000000000000103 /* MWDATSpeech in Frameworks */,
+				CA0000000000000000000104 /* Vapi in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -72,7 +74,8 @@
 			packageProductDependencies = (
 				CA0000000000000000000201 /* MWDATCore */,
 				CA0000000000000000000202 /* MWDATCamera */,
-				CA0000000000000000000203 /* Vapi */,
+				CA0000000000000000000203 /* MWDATSpeech */,
+				CA0000000000000000000204 /* Vapi */,
 			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* Carvis.app */;
@@ -371,8 +374,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/facebook/meta-wearables-dat-ios";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.0.1;
+				kind = exactVersion;
+				version = 1.0.1;
 			};
 		};
 		CA0000000000000000000301 /* XCRemoteSwiftPackageReference "client-sdk-ios" */ = {
@@ -396,7 +399,12 @@
 			package = 501E383C309FC8F900AA46CB /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
 			productName = MWDATCamera;
 		};
-		CA0000000000000000000203 /* Vapi */ = {
+		CA0000000000000000000203 /* MWDATSpeech */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 501E383C309FC8F900AA46CB /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATSpeech;
+		};
+		CA0000000000000000000204 /* Vapi */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = CA0000000000000000000301 /* XCRemoteSwiftPackageReference "client-sdk-ios" */;
 			productName = Vapi;
