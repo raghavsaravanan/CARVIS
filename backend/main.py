@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+import httpx
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -50,6 +51,34 @@ NEMOTRON_MODEL_NAME = os.getenv(
 NEMOTRON_BASE_URL = os.getenv(
     "NEMOTRON_BASE_URL", "https://integrate.api.nvidia.com/v1"
 ).strip()
+
+SPACETIMEDB_URI = (os.getenv("SPACETIMEDB_URI") or "").strip().rstrip("/")
+SPACETIMEDB_DB_NAME = (os.getenv("SPACETIMEDB_DB_NAME") or "hackutd").strip()
+SPACETIMEDB_TOKEN = (os.getenv("SPACETIMEDB_TOKEN") or "").strip()
+
+
+async def _spacetime_call_reducer(reducer_name: str, args: list[Any]) -> None:
+    """Best-effort async call to SpacetimeDB HTTP reducer endpoint."""
+    if not SPACETIMEDB_URI or not SPACETIMEDB_DB_NAME or not SPACETIMEDB_TOKEN:
+        return
+    url = f"{SPACETIMEDB_URI}/v1/database/{SPACETIMEDB_DB_NAME}/call/{reducer_name}"
+    headers = {
+        "Authorization": f"Bearer {SPACETIMEDB_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resp = await client.post(url, headers=headers, json=args)
+            if resp.status_code >= 400:
+                logger.warning(
+                    "SpacetimeDB reducer %s returned %d: %s",
+                    reducer_name,
+                    resp.status_code,
+                    resp.text[:200],
+                )
+    except Exception as exc:  # noqa: BLE001 - telemetry writes must never break queries
+        logger.debug("SpacetimeDB telemetry write skipped: %s", exc)
+
 
 # In-memory vehicle context keyed by Vapi callId (single-process demo/prod hop).
 _CALL_SESSIONS: dict[str, "CallSession"] = {}
@@ -1311,6 +1340,20 @@ async def vision_query(
     visual = {"component": component or "not analyzed", "confidence": 0.0,
               "visual_context": "Explicit request used; image inference skipped.",
               "uncertainty": "Vehicle and component require mechanic confirmation."}
+    query_id = str(uuid.uuid4())
+    asyncio.create_task(
+        _spacetime_call_reducer(
+            "start_shop_query",
+            [
+                query_id,
+                session_id,
+                vehicle.year,
+                vehicle.make,
+                vehicle.model,
+                question,
+            ],
+        )
+    )
     try:
         try:
             slots = normalize_request(question, context)
@@ -1328,18 +1371,81 @@ async def vision_query(
             request.app.state.qdrant, request.app.state.embedder, question,
             vehicle.year, vehicle.make, vehicle.model, vehicle.shop_id, context)
     except SpecificationRefusal as exc:
+        total_ms = (time.perf_counter() - started) * 1000
+        asyncio.create_task(
+            _spacetime_call_reducer(
+                "record_shop_query_result",
+                [
+                    query_id,
+                    visual.get("component") or "unidentified",
+                    float(visual.get("confidence") or 0.0),
+                    "refused",
+                    str(exc),
+                    "none",
+                    False,
+                    max(1, int(round(total_ms))),
+                ],
+            )
+        )
         return JSONResponse(status_code=404, content={
             "session_id": session_id, "error": str(exc), "status": exc.code,
             "component": visual, "source_grounded": False,
-            "timings_ms": {"inference": inference_ms, "total": (time.perf_counter()-started)*1000}})
+            "timings_ms": {"inference": inference_ms, "total": total_ms}})
     except VisionConfigurationError as exc:
+        total_ms = (time.perf_counter() - started) * 1000
+        asyncio.create_task(
+            _spacetime_call_reducer(
+                "record_shop_query_result",
+                [
+                    query_id,
+                    visual.get("component") or "error",
+                    0.0,
+                    "failed",
+                    str(exc),
+                    "none",
+                    False,
+                    max(1, int(round(total_ms))),
+                ],
+            )
+        )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
+        total_ms = (time.perf_counter() - started) * 1000
+        asyncio.create_task(
+            _spacetime_call_reducer(
+                "record_shop_query_result",
+                [
+                    query_id,
+                    visual.get("component") or "error",
+                    0.0,
+                    "failed",
+                    "Specification lookup is temporarily unavailable.",
+                    "none",
+                    False,
+                    max(1, int(round(total_ms))),
+                ],
+            )
+        )
         logger.error("Carvis specification lookup unavailable: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Specification lookup is temporarily unavailable.") from exc
     timings = {**result.timings_ms, "inference": inference_ms,
                "total": (time.perf_counter()-started)*1000}
     logger.info("Carvis vision-query timings_ms=%s", timings)
+    asyncio.create_task(
+        _spacetime_call_reducer(
+            "record_shop_query_result",
+            [
+                query_id,
+                visual.get("component") or "confirmed",
+                float(visual.get("confidence") or 0.0),
+                "answered",
+                result.answer,
+                result.source or "verified_manual",
+                True,
+                max(1, int(round(timings["total"]))),
+            ],
+        )
+    )
     return JSONResponse(content={
         "session_id": session_id, "vehicle": vehicle.model_dump(), "component": visual,
         "answer": result.answer, "source_grounded": True, "source": result.source,
