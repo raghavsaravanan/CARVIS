@@ -73,6 +73,18 @@ The car hero, an oil change countdown, odometer, next-due item, maintenance list
 specs. Everything is edited on the phone and saved locally (`car-profile.json`). The pre-filled
 intervals and mileage are demo placeholders; set them from the owner's manual.
 
+## Shop (mechanic / team accounts)
+
+Host a shop to watch every mechanic's job live: who, bay, vehicle, job, current step,
+progress, safety and camera checks, and an activity feed. Mechanics on the same model are
+grouped together. Your own job on this phone shows as "You".
+
+Frontend only for now: the other mechanics are a simulated crew. To connect the SpacetimeDB
+backend, replace `seedCrew` and `tick` in `Carvis/Models/ShopStore.swift` with a subscription
+that fills `crew`, `events`, and `finishedToday`. Per mechanic the screens need: name, bay,
+vehicle, job name, step number, total steps, step title, safety/camera flags, step start time,
+and job finish time. The views in `ShopViews.swift` only read the store.
+
 ## Voice: Hey Carvis and Vapi
 
 1. **Wake word (on the phone).** Opening Ask Carvis starts Apple speech recognition on the

@@ -8,13 +8,17 @@ import Observation
 final class RepairSession {
     /// Screens that open on top of the dashboard.
     enum Route: Hashable {
-        case progress, done, ask, wakeTest
+        case progress, done, ask, wakeTest, shop
     }
 
     /// Which screens are open. Empty means the dashboard is showing.
     var path: [Route] = []
     private(set) var jobName = ""
-    private(set) var current: StepResponse?
+    private(set) var current: StepResponse? {
+        didSet { if oldValue?.stepNumber != current?.stepNumber { stepStartedAt = .now } }
+    }
+    /// When the current step began, for the shop floor's timer.
+    private(set) var stepStartedAt = Date.now
 
     /// Every step we've seen in this job, by step number. Used to draw the timeline.
     private(set) var seenSteps: [Int: StepResponse] = [:]

@@ -21,6 +21,8 @@ struct DashboardView: View {
     @State private var isEditingCar = false
     @State private var isUpdatingOdometer = false
     @State private var isShowingAccount = false
+    @State private var isHostingShop = false
+    @Environment(ShopStore.self) private var shops
     @State private var pendingJobName: String?
 
     private var garage: CarProfileStore { session.garage }
@@ -35,6 +37,17 @@ struct DashboardView: View {
                        onEdit: { isEditingCar = true },
                        onAccount: { isShowingAccount = true })
                     .appearAnimation(index: 0)
+
+                // Mechanic / team accounts: the shop they host, live.
+                if accounts.isTeam {
+                    DashboardSection(title: "Your shop") {
+                        ShopSummaryCard(liveYou: ShopMechanic.you(from: session),
+                                        onHost: { isHostingShop = true },
+                                        onOpen: { session.path.append(.shop) })
+                    }
+                    .appearAnimation(index: 1)
+                    .transition(.blurReplace)
+                }
 
                 // 1. The car and its state, under its name
                 VStack(alignment: .leading, spacing: 12) {
@@ -159,6 +172,9 @@ struct DashboardView: View {
         .sheet(isPresented: $isShowingAccount) {
             AccountSheet(accounts: accounts)
         }
+        .sheet(isPresented: $isHostingShop) {
+            HostShopSheet(suggestedName: shopName) { shops.host(name: $0) }
+        }
     }
 
     private var newJobButton: some View {
@@ -175,6 +191,11 @@ struct DashboardView: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 8)
         .appearAnimation(index: 6)
+    }
+
+    private var shopName: String {
+        let first = accounts.account?.name.split(separator: " ").first.map(String.init)
+        return first.map { "\($0)'s Garage" } ?? "Carvis Garage"
     }
 
     /// Start the job only after the sheet has fully closed, so the zoom has a clear stage.

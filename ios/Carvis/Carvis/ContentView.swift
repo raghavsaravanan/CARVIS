@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var askSpeech = SystemSpeechOutput()
     @State private var accounts = AccountStore()
     @State private var chats = ChatHistory()
+    @State private var shops = ShopStore()
     @Namespace private var zoom
 
     var body: some View {
@@ -20,6 +21,7 @@ struct ContentView: View {
         .environment(glasses)
         .environment(accounts)
         .environment(chats)
+        .environment(shops)
         // Sign-up on first launch, and again after signing out.
         .fullScreenCover(isPresented: Binding(get: { accounts.account == nil }, set: { _ in })) {
             OnboardingView(accounts: accounts)
@@ -49,6 +51,8 @@ struct ContentView: View {
             AskView(vehicle: .demo, client: accounts.visionClient, speech: askSpeech)
         case .wakeTest:
             WakeTestView()
+        case .shop:
+            ShopFloorView(liveYou: ShopMechanic.you(from: session))
         }
     }
 }
