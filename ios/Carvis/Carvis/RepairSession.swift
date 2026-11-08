@@ -8,7 +8,7 @@ import Observation
 final class RepairSession {
     /// Screens that open on top of the dashboard.
     enum Route: Hashable {
-        case progress, done, ask
+        case progress, done, ask, wakeTest
     }
 
     /// Which screens are open. Empty means the dashboard is showing.

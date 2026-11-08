@@ -37,6 +37,8 @@ struct ContentView: View {
             }
         case .ask:
             AskView(vehicle: .demo, client: CarvisVisionClient.fromInfoPlist(), speech: askSpeech)
+        case .wakeTest:
+            WakeTestView()
         }
     }
 }

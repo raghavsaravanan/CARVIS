@@ -41,6 +41,11 @@ struct DashboardView: View {
                 GlassesCard(onAsk: session.showAsk)
                     .appearAnimation(index: 2)
 
+                Button("Glasses wake test", systemImage: "waveform") {
+                    session.path.append(.wakeTest)
+                }
+                .buttonStyle(.bordered)
+
                 if let latest = session.history.records.first {
                     UpcomingCard(summary: latest.summary)
                         .appearAnimation(index: 3)

@@ -33,6 +33,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Carvis listens for Hi Carvis or Hey Carvis using speech from your Meta glasses microphone while armed.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Carvis connects to your Meta glasses over Bluetooth.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
