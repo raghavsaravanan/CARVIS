@@ -43,6 +43,19 @@ def normalize_request(query: str, context: dict | None = None) -> dict:
     component = component_from_text(query)
     operation = operation_from_text(query, component)
     spec_type = spec_type_from_text(query, component)
+    # One tolerance covers both axles, so naming an axle must not hide it.
+    if spec_type == "tolerance" and component and component.startswith("suspension_height"):
+        component = "suspension_height"
+        if str(context.get("component", "")).startswith("suspension_height"):
+            context["component"] = component
+    wheel_sizes = {f"{size}-inch" for size in re.findall(r"\b(\d{2})[- ]?inch(?:es)?\b", query.lower())}
+    if len(wheel_sizes) > 1:
+        raise SpecificationRefusal("Please select one wheel size.", "clarification")
+    if wheel_sizes:
+        wheel_size = next(iter(wheel_sizes))
+        if context.get("wheel_size") and context["wheel_size"] != wheel_size:
+            raise SpecificationRefusal("The wheel size conflicts with the confirmed vehicle.", "ambiguous")
+        context["wheel_size"] = wheel_size
     result = {}
     for name, inferred in (("component", component), ("operation", operation), ("spec_type", spec_type)):
         explicit = context.get(name)
@@ -55,6 +68,8 @@ def normalize_request(query: str, context: dict | None = None) -> dict:
         raise SpecificationRefusal("Please specify the operation, including whether the oil filter is being replaced.", "clarification")
     if not result["spec_type"]:
         raise SpecificationRefusal("Please specify which documented specification you need.", "clarification")
+    if result["component"] == "suspension_height" and result["spec_type"] == "dimension":
+        raise SpecificationRefusal("Please specify the front or rear suspension height.", "clarification")
     transmissions = set(re.findall(r"\b(?:6mt|cvt)\b", query.lower()))
     if len(transmissions) > 1:
         raise SpecificationRefusal("Please select one transmission: 6MT or CVT.", "clarification")
@@ -70,11 +85,19 @@ def normalize_request(query: str, context: dict | None = None) -> dict:
 
 def request_filter(vehicle: Vehicle, slots: dict) -> models.Filter:
     fields = {key: getattr(vehicle, key) for key in ("shop_id", "year", "make", "model")}
-    fields.update({key: value for key, value in slots.items() if value is not None})
+    fields.update({key: value for key, value in slots.items() if value is not None and key not in VARIANTS})
     fields.update(schema_version=2, verification_status="verified")
-    return models.Filter(must=[models.FieldCondition(key=key, match=models.MatchValue(value=value))
-                               for key, value in fields.items()] + [models.FieldCondition(
-                                   key="record_kind", match=models.MatchAny(any=["specification", "procedure_step"]))])
+    must: list = [models.FieldCondition(key=key, match=models.MatchValue(value=value)) for key, value in fields.items()]
+    must.append(models.FieldCondition(key="record_kind", match=models.MatchAny(any=["specification", "procedure_step"])))
+    for variant in VARIANTS:
+        if slots.get(variant) is not None:
+            # A record without this variant applies to every value of it. A record for a
+            # different value is excluded, and conflicts are still checked in Python.
+            must.append(models.Filter(should=[
+                models.FieldCondition(key=variant, match=models.MatchValue(value=slots[variant])),
+                models.IsEmptyCondition(is_empty=models.PayloadField(key=variant)),
+            ]))
+    return models.Filter(must=must)
 
 
 def evaluate_candidates(payloads: list[dict], vehicle: Vehicle, slots: dict) -> list[SpecRecord]:
@@ -86,8 +109,10 @@ def evaluate_candidates(payloads: list[dict], vehicle: Vehicle, slots: dict) -> 
         except ValueError:
             raise SpecificationRefusal("A retrieved record has an invalid evidence schema.", "unverified") from None
         expected = {k: getattr(vehicle, k) for k in ("shop_id", "year", "make", "model")}
-        expected.update({k: v for k, v in slots.items() if v is not None})
+        expected.update({k: v for k, v in slots.items() if v is not None and k not in VARIANTS})
         if any(getattr(record, k) != v for k, v in expected.items()):
+            continue
+        if any(slots.get(v) is not None and getattr(record, v) not in (None, slots[v]) for v in VARIANTS):
             continue
         if evidence_errors(record):
             raise SpecificationRefusal("The matching specification has incomplete or unverified source evidence.", "unverified")
@@ -119,28 +144,79 @@ def evaluate_candidates(payloads: list[dict], vehicle: Vehicle, slots: dict) -> 
     return candidates
 
 
+def _signed_words(value: str) -> str:
+    """Say a sign out loud so it can't be dropped by speech synthesis or misheard."""
+    if value.startswith("-"):
+        return f"minus {value[1:]}"
+    if value.startswith("+"):
+        return f"plus {value[1:]}"
+    return value
+
+
+def _spoken_quantity(r: SpecRecord) -> str:
+    unit = UNIT_LABELS[r.unit]
+    if r.spec_type == "tolerance" and r.value_min is not None:
+        # Offsets from nominal, upper first as the manual prints them.
+        spoken = f"{_signed_words(r.value_max)} {unit}, {_signed_words(r.value_min)} {unit}"
+    elif r.numeric_value is not None:
+        spoken = f"{_signed_words(r.numeric_value)} {unit}"
+    else:
+        spoken = f"{r.value_min} to {r.value_max} {unit}"
+    # The manual prints inches beside millimeters. Read them from the source cell; never convert.
+    secondary = re.search(r"\(([^()]*)\)", r.raw_value or "")
+    if secondary and re.fullmatch(r"mm\s*\(in\)", (r.source_unit or "").strip()):
+        numbers = re.findall(r"[+-]?\d+(?:\.\d+)?", secondary.group(1))
+        if numbers:
+            spoken += " (" + ", ".join(f"{_signed_words(n)} inches" for n in numbers) + ")"
+    return spoken
+
+
+def _spoken_label(r: SpecRecord) -> str:
+    vehicle = f"{r.year} {r.make.title()} {r.model.upper()}"
+    if r.component and r.component.startswith("suspension_height"):
+        axle = r.component.removeprefix("suspension_height").strip("_")
+        name = " ".join(part for part in (axle, "suspension height", "tolerance" if r.spec_type == "tolerance" else "") if part)
+        return ", ".join(part for part in (vehicle, f"{r.wheel_size} model" if r.wheel_size else "", name) if part)
+    label = f"{vehicle}, {r.component.replace('_', ' ')} ({r.operation.replace('_', ' ')})"
+    return label
+
+
 def format_records(records: list[SpecRecord]) -> str:
     sentences = []
     for r in records:
         if evidence_errors(r):
             raise SpecificationRefusal("Source evidence failed verification.", "unverified")
-        value = r.numeric_value if r.numeric_value is not None else f"{r.value_min} to {r.value_max}"
         prefix = f"Step {r.step_order}: " if r.step_order else ""
-        label = f"{r.year} {r.make.title()} {r.model.upper()}, {r.component.replace('_', ' ')} ({r.operation.replace('_', ' ')})"
+        label = _spoken_label(r)
         if r.transmission:
             label += f", {r.transmission.upper()}"
-        sentences.append(f"{prefix}{label}: {value} {UNIT_LABELS[r.unit]}.")
+        sentences.append(f"{prefix}{label}: {_spoken_quantity(r)}.")
         redundant = {r.component.replace("_", " ").lower()}
         oil_condition = {"oil_and_filter": "when replacing engine oil and oil filter",
                          "oil_only": "when replacing engine oil only"}
         if r.component == "engine_oil" and r.operation in oil_condition:
             redundant.add(oil_condition[r.operation])
+        if r.component.startswith("suspension_height"):
+            redundant.update({"suspension height tolerance", f"{r.wheel_size} model"})
         conditions = [text for text in r.conditions if text.strip().lower() not in redundant]
         for text in dict.fromkeys(conditions + r.warnings + r.notes):
             if text:
                 sentences.append(text.rstrip(".") + ".")
     # Never truncate a multi-stage operation or a warning to satisfy a voice length target.
     return " ".join(sentences)
+
+
+_SPOKEN_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def ungrounded_numbers(spoken: str, records: list[SpecRecord]) -> list[str]:
+    """Numbers in `spoken` that don't appear in the reviewed evidence. Empty means grounded."""
+    evidence: set[str] = set()
+    for r in records:
+        for text in (r.year, r.wheel_size or "", r.raw_value or "", r.source_excerpt, r.source_header or "",
+                     *r.conditions, *r.warnings, *r.notes, str(r.step_order or "")):
+            evidence.update(_SPOKEN_NUMBER.findall(text))
+    return [n for n in _SPOKEN_NUMBER.findall(spoken) if n not in evidence]
 
 
 def lookup(client, embedder, collection: str, query: str, vehicle: Vehicle,

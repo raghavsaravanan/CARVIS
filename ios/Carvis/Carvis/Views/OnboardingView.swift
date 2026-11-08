@@ -5,16 +5,27 @@ import SwiftUI
 /// 2. About you: your name and how you'll use Carvis. Saved on this phone only.
 struct OnboardingView: View {
     let accounts: AccountStore
+    let garage: CarProfileStore
 
     private enum Step { case welcome, details }
 
     @State private var step: Step = .welcome
     @State private var name = ""
+    @State private var year = ""
+    @State private var make = ""
+    @State private var model = ""
     @State private var mode: Account.Mode = .personal
     @FocusState private var isNameFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var canFinish: Bool {
+        var car = garage.profile
+        car.year = year
+        car.make = make
+        car.model = model
+        return !trimmedName.isEmpty && car.vehicle != nil
+    }
     private var stepAnimation: Animation { reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.6, bounce: 0.08) }
 
     var body: some View {
@@ -96,6 +107,20 @@ struct OnboardingView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
+                    Text("Your car")
+                        .font(.headline)
+                    HStack(spacing: 10) {
+                        carField("Year", text: $year)
+                            .keyboardType(.numberPad)
+                            .frame(maxWidth: 110)
+                        carField("Make", text: $make)
+                            .textInputAutocapitalization(.words)
+                    }
+                    carField("Model", text: $model)
+                        .autocorrectionDisabled()
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
                     Text("How will you use Carvis?")
                         .font(.headline)
                     ForEach(Account.Mode.allCases) { option in
@@ -132,15 +157,26 @@ struct OnboardingView: View {
                         .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
                 }
                 .floatingGlassButton()
-                .disabled(trimmedName.isEmpty)
+                .disabled(!canFinish)
             }
             .padding(.bottom, 8)
             .background(Theme.card)
         }
     }
 
+    private func carField(_ title: String, text: Binding<String>) -> some View {
+        TextField(title, text: text)
+            .font(.title3)
+            .padding(.horizontal, 20)
+            .frame(minHeight: 60)
+            .background(Theme.pearl, in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+    }
+
     private func finish() {
-        guard !trimmedName.isEmpty else { return }
+        guard canFinish else { return }
+        garage.profile.year = year.trimmed
+        garage.profile.make = make.trimmed
+        garage.profile.model = model.trimmed
         accounts.account = Account(name: trimmedName, mode: mode)
     }
 }
@@ -236,7 +272,7 @@ private struct ShowroomStage: View {
                         .padding(.horizontal, 24)
                         .offset(y: 6)
                 }
-                .accessibilityLabel("Blue 2022 Subaru WRX")
+                .accessibilityLabel("A blue sports sedan")
 
             // Faint reflection on the floor
             Image("WRX")
@@ -427,6 +463,6 @@ struct CarImage: View {
                 }
                 .offset(y: 10)
             }
-            .accessibilityLabel("Blue 2022 Subaru WRX")
+            .accessibilityLabel("A blue sports sedan")
     }
 }

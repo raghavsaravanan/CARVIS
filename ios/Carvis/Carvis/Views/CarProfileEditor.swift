@@ -22,8 +22,20 @@ struct CarProfileEditor: View {
         NavigationStack {
             Form {
                 Section("Your car") {
-                    LabeledContent("Model", value: "2022 Subaru WRX")
+                    TextField("Year", text: $draft.year)
+                        .keyboardType(.numberPad)
+                    TextField("Make, like Subaru", text: $draft.make)
+                        .textInputAutocapitalization(.words)
+                    TextField("Model, like WRX", text: $draft.model)
+                        .autocorrectionDisabled()
                     TextField("Trim, like Premium", text: $draft.trim)
+                    Picker("Transmission", selection: $draft.transmission) {
+                        Text("Not set").tag("")
+                        Text("Manual (6MT)").tag("6mt")
+                        Text("CVT").tag("cvt")
+                    }
+                    TextField("Wheel size, like 17-inch", text: $draft.wheelSize)
+                        .autocorrectionDisabled()
                     TextField("Color", text: $draft.color)
                     TextField("License plate", text: $draft.plate)
                         .textInputAutocapitalization(.characters)

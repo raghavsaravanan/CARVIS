@@ -1,6 +1,6 @@
 import Foundation
 
-/// A fake backend with a hardcoded 12-step oil change for the demo 2022 Subaru WRX.
+/// A fake backend with a hardcoded 12-step oil change for the visual step guide.
 /// It follows the same contract the real server will.
 /// It deliberately contains no torque values, oil amounts, or intervals: those must come
 /// from the WRX service manual, and the oil section isn't loaded yet.
@@ -79,7 +79,7 @@ struct MockBackendClient: BackendClient {
                     oil: "Oil and amount per service manual",
                     filter: "New oil filter"
                 ),
-                nextService: "Check your WRX maintenance schedule for the next oil change.",
+                nextService: "Check your maintenance schedule for the next oil change.",
                 nextStep: NextStep(
                     title: "Tire rotation",
                     detail: "Carvis will walk you through it.",
@@ -107,7 +107,7 @@ struct MockBackendClient: BackendClient {
             why: "Level ground keeps the car from rolling and gives an accurate oil reading. A cool engine means the oil won't burn you.",
             checkpoint: Checkpoint(type: .voice, prompt: "Say next when the car is parked."),
             trace: [
-                TraceEntry(tool: "vehicle_lookup", input: "2022 Subaru WRX", result: "found", ms: 38),
+                TraceEntry(tool: "vehicle_lookup", input: "profile vehicle", result: "found", ms: 38),
                 TraceEntry(tool: "manual_lookup", input: "oil change prep", result: "level surface, engine cool", ms: 61)
             ]
         ),
@@ -165,7 +165,7 @@ struct MockBackendClient: BackendClient {
             spoken: "Wipe the drain plug, fit the new gasket, and thread it in by hand. Then tighten it to the torque in your service manual.",
             why: "A new gasket seals the plug. Threading by hand first keeps you from stripping the oil pan threads.",
             trace: [
-                TraceEntry(tool: "torque_lookup", input: "drain plug, 2022 WRX", result: "not in loaded manual", ms: 52)
+                TraceEntry(tool: "torque_lookup", input: "drain plug", result: "not in loaded manual", ms: 52)
             ]
         ),
         MockStep(

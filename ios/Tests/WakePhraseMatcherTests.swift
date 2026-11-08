@@ -29,6 +29,14 @@ struct WakePhraseMatcherTests {
         check(detector.consume("OK Carver what is this", isFinal: true, isListening: true, now: 30) == "Hey Carvis", "OK Carver")
         check(detector.consume("Hey car wash", isFinal: true, isListening: true, now: 40) == nil, "car wash")
         check(detector.consume("I said hey Jarvis", isFinal: true, isListening: true, now: 50) == nil, "mid-sentence variant")
+        // What follows the wake phrase, kept exactly as it was said
+        check(WakePhraseMatcher.question(after: "Hey Carvis") == "", "bare")
+        check(WakePhraseMatcher.question(after: "Hey, Carvis.") == "", "bare with punctuation")
+        check(WakePhraseMatcher.question(after: "Hey Carvis, what's the ride height?") == "what's the ride height?", "question")
+        check(WakePhraseMatcher.question(after: "OK Jarvis what is this") == "what is this", "near miss")
+        check(WakePhraseMatcher.question(after: "Hey car vis, look at this") == "look at this", "split name")
+        check(WakePhraseMatcher.question(after: "I said hey Carvis") == nil, "not a wake")
+        check(WakePhraseMatcher.question(after: "") == nil, "empty")
         print("\(checks) wake phrase checks passed")
     }
 }

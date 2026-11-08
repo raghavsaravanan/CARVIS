@@ -16,7 +16,7 @@ from ingest import atomic_json, content_hash
 from qdrant_v2 import (ACTIVE_ALIAS, KEYWORD_FIELDS, LEGACY_COLLECTION,
                        STAGING_COLLECTION, all_points, assert_staging, open_client)
 from spec_retrieval import SpecificationRefusal, evaluate_candidates, lookup
-from spec_schema import EMBEDDING_MODEL, VECTOR_SIZE, SpecRecord, Vehicle, digest, evidence_errors
+from spec_schema import EMBEDDING_MODEL, VARIANTS, VECTOR_SIZE, SpecRecord, Vehicle, digest, evidence_errors
 
 
 def inventory(client, collection):
@@ -95,7 +95,7 @@ def validate_collection(client, embedder, collection, suite: list[dict], *, requ
         groups.setdefault(tuple(getattr(record, k) for k in keys), []).append(record)
     for group in groups.values():
         vehicle = Vehicle(**{k: getattr(group[0], k) for k in Vehicle.model_fields})
-        slots = {k: getattr(group[0], k) for k in ("component", "operation", "spec_type", "transmission", "trim", "market", "engine_code")}
+        slots = {k: getattr(group[0], k) for k in ("component", "operation", "spec_type", *VARIANTS)}
         evaluate_candidates([r.model_dump() for r in group], vehicle, slots)
     if not suite or not any("expected" in c for c in suite) or not any("refusal" in c for c in suite):
         raise ValueError("A source-reviewed acceptance suite must include answers and refusals")

@@ -130,11 +130,13 @@ async def run_ingest(pdf_path: Path, year: str, make: str, model: str, embedding
                      *, shop_id: str, force_parse: bool = False, premium_mode: bool = False,
                      transmission: str | None = None, engine_code: str | None = None,
                      trim: str | None = None, market: str | None = None,
+                     wheel_size: str | None = None,
                      document_ref: str | None = None, collection: str = STAGING_COLLECTION,
                      export: Path | None = None, client=None,
                      page_evidence: Path | None = None) -> int:
     vehicle = Vehicle(shop_id=shop_id, year=year, make=make, model=model,
-                      transmission=transmission, engine_code=engine_code, trim=trim, market=market)
+                      transmission=transmission, engine_code=engine_code, trim=trim, market=market,
+                      wheel_size=wheel_size)
     if page_evidence:
         # Explicit transcription fallback for scans/merged cells. This still
         # creates pending records and never authorizes technical answers.
@@ -170,7 +172,7 @@ def parse_args(argv=None):
     parser.add_argument("pdf_paths", nargs="*")
     parser.add_argument("--manifest", type=Path, help="JSON documents list; paths relative to the manifest")
     parser.add_argument("--page-evidence", type=Path, help="Explicit source transcription fallback, bound to the PDF hash")
-    for name in ("year", "make", "model", "shop-id", "transmission", "engine-code", "trim", "market"):
+    for name in ("year", "make", "model", "shop-id", "transmission", "engine-code", "trim", "market", "wheel-size"):
         parser.add_argument("--" + name)
     parser.add_argument("--collection", default=STAGING_COLLECTION)
     parser.add_argument("--force-parse", action="store_true")
@@ -179,7 +181,7 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if bool(args.pdf_paths) == bool(args.manifest):
         parser.error("Supply explicit PDF paths OR a vehicle manifest")
-    if args.manifest and (args.page_evidence or any(getattr(args, name) for name in ("year", "make", "model", "shop_id", *("transmission", "engine_code", "trim", "market")))):
+    if args.manifest and (args.page_evidence or any(getattr(args, name) for name in ("year", "make", "model", "shop_id", *("transmission", "engine_code", "trim", "market", "wheel_size")))):
         parser.error("Put applicability in each manifest entry, not in both CLI and manifest")
     if not args.manifest and not all((args.year, args.make, args.model, args.shop_id)):
         parser.error("--year, --make, --model and --shop-id are required")

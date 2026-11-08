@@ -41,6 +41,8 @@
 	<array>
 		<string>_bonjour._tcp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Carvis sees through your Meta glasses. The iPhone camera stays off, but the calling library requires this entry.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Carvis uses your local network to reach your glasses and the Carvis server.</string>
 	<key>NSMicrophoneUsageDescription</key>

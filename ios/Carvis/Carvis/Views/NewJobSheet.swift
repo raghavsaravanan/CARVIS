@@ -4,6 +4,8 @@ import SwiftUI
 /// 1. What you're working on: the job name and what to expect.
 /// 2. Your glasses: whether they're connected, then Start.
 struct NewJobSheet: View {
+    /// The car this job is on.
+    let vehicleName: String
     /// Called with the job name when you tap Start.
     let onStart: (String) -> Void
 
@@ -39,7 +41,7 @@ struct NewJobSheet: View {
 
     private var nameStep: some View {
         VStack(alignment: .leading, spacing: 20) {
-            StepHeader(number: 1, title: "New job", subtitle: Vehicle.demo.displayName)
+            StepHeader(number: 1, title: "New job", subtitle: vehicleName)
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("Name this job")

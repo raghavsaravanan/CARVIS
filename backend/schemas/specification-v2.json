@@ -65,6 +65,18 @@
       "default": null,
       "title": "Market"
     },
+    "wheel_size": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Wheel Size"
+    },
     "schema_version": {
       "const": 2,
       "default": 2,

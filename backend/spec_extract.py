@@ -14,7 +14,11 @@ COMPONENTS = {
     "wheel_fastener": (r"\b(?:wheel|lug)[ -]?(?:bolts?|nuts?|fasteners?)\b",),
     "engine_oil": (r"engine oil|oil capacity|oil amount|how much oil|oil change",),
     "intake_manifold_fastener": (r"intake.*(?:bolt|nut|torque)|intake manifold",),
-    "suspension_height": (r"suspension height|ride height",),
+    "suspension_height_front": (r"\bfront\s+(?:suspension|ride|vehicle)\s+height\b",
+                                r"\b(?:suspension|ride|vehicle)\s+height\b.{0,24}\bfront\b",),
+    "suspension_height_rear": (r"\b(?:rear|back)\s+(?:suspension|ride|vehicle)\s+height\b",
+                               r"\b(?:suspension|ride|vehicle)\s+height\b.{0,24}\b(?:rear|back)\b",),
+    "suspension_height": (r"suspension height|ride height|vehicle height",),
 }
 
 
@@ -43,7 +47,7 @@ def operation_from_text(text: str, component: str | None) -> str | None:
         return "installation"
     if component == "camber_fastener":
         return "alignment"
-    if component == "suspension_height":
+    if component and component.startswith("suspension_height"):
         return "inspection"
     if re.search(r"install|tighten|torque", text):
         return "installation"
@@ -55,8 +59,9 @@ def spec_type_from_text(text: str, component: str | None) -> str | None:
         return "torque"
     if component == "engine_oil" and re.search(r"capacity|amount|how much|replacing|liters|\bL\b", text, re.I):
         return "fluid_capacity"
-    if component == "suspension_height":
-        return "dimension"
+    if component and component.startswith("suspension_height"):
+        # The allowed variation is a different fact from the nominal height.
+        return "tolerance" if re.search(r"toleran|allowable|allowed|plus or minus|out of spec|within spec", text, re.I) else "dimension"
     return None
 
 
@@ -148,7 +153,12 @@ def extract_records(pages: list[dict], vehicle: Vehicle, *, document_ref: str,
                 row_transmissions = set(re.findall(r"\b(?:6mt|cvt)\b", " ".join(row), re.I))
                 row_transmissions = {v.lower() for v in row_transmissions}
                 row_transmission = next(iter(row_transmissions)) if len(row_transmissions) == 1 else None
-                columns = variants or [(n, vehicle.transmission) for n, h in enumerate(lower)
+                # Front/Rear columns give each axle its own record, read from its own cell.
+                axles = {n: h for n, h in enumerate(lower) if h in ("front", "rear")} \
+                    if component and component.startswith("suspension_height") else {}
+                wheel_size = next((m.group(1) + "-inch" for cell in row
+                                   if (m := re.fullmatch(r"(\d{2})-inch model", cell.strip(), re.I))), None)
+                columns = variants or [(n, vehicle.transmission) for n in axles] or [(n, vehicle.transmission) for n, h in enumerate(lower)
                                       if h in ("torque", "value", "capacity", "specification")
                                       or re.search(r"(?:initial|final|stage\s*\d+|pass\s*\d+)\s+torque", h)]
                 if not columns:
@@ -172,6 +182,9 @@ def extract_records(pages: list[dict], vehicle: Vehicle, *, document_ref: str,
                             stage = int(stage_match.group(1))
                     fields = vehicle.model_dump()
                     fields["transmission"] = transmission
+                    if wheel_size:
+                        fields["wheel_size"] = wheel_size
+                    record_component = f"suspension_height_{axles[column]}" if column in axles else component
                     source_mismatch = False
                     for variant in ("engine_code", "trim", "market"):
                         labels = [h.strip().replace(" ", "_") for h in lower]
@@ -185,7 +198,7 @@ def extract_records(pages: list[dict], vehicle: Vehicle, *, document_ref: str,
                         continue
                     records.append(SpecRecord(**fields, **quantity,
                         record_kind="procedure_step" if stage else ("specification" if quantity else "unclassified"),
-                        component=component, component_aliases=[component.replace("_", " ")] if component else [],
+                        component=record_component, component_aliases=[record_component.replace("_", " ")] if record_component else [],
                         operation=operation, spec_type=spec_type, raw_value=raw,
                         conditions=[value for n, value in enumerate(row) if value and n not in {c for c, _ in columns}
                                     and lower[n] not in ("unit", "notes", "step")

@@ -4,8 +4,8 @@ import Speech
 
 /// Listens for "Hey Carvis" followed by a question, using Apple's speech
 /// recognition (on the phone, on-device when supported). The microphone is the
-/// glasses' Bluetooth mic when they're connected, set up the same way as Meta's
-/// CameraAccess sample; otherwise it's the phone's mic.
+/// glasses' Bluetooth mic, set up the same way as Meta's CameraAccess sample.
+/// If that mic isn't available it stops and says so; it never uses the phone's mic.
 ///
 /// It only listens while it's turned on and Carvis is open. Nothing is recorded
 /// or saved: audio goes straight to the recognizer.
@@ -27,7 +27,10 @@ final class VoiceListener {
         let text: String
     }
 
-    private(set) var state: State = .off
+    private(set) var state: State = .off {
+        didSet { if oldValue != state { onStateChange?(state) } }
+    }
+    @ObservationIgnored var onStateChange: ((State) -> Void)?
     /// What it's hearing right now: the question so far, after the wake phrase.
     private(set) var transcript = ""
     private(set) var heard: Heard?
@@ -87,17 +90,37 @@ final class VoiceListener {
                 return
             }
             attempts = 0  // so tapping the switch gets a fresh try
-            state = .unavailable("Couldn't start the microphone: \(error.localizedDescription)")
+            state = .unavailable(error is VoiceError ? error.localizedDescription : "Couldn't start the microphone: \(error.localizedDescription)")
             return
         }
         observeRouteChanges()
         attempts = 0
-        print("[Voice] listening, mic: \(microphoneName ?? "phone"), on-device: \(recognizer.supportsOnDeviceRecognition)")
+        print("[Voice] listening, mic: \(microphoneName ?? "none"), on-device: \(recognizer.supportsOnDeviceRecognition)")
         state = .listening
         beginRecognition()
     }
 
     func stop() {
+        stopRecognition()
+        guard !AudioOwnership.conversationOwnsAudio else { return }
+        AudioSessionQueue.runDetached {
+            let session = AVAudioSession.sharedInstance()
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try? session.setCategory(.playback, mode: .spokenAudio)
+        }
+    }
+
+    /// Hands the microphone over to a conversation. Returns once iOS has let go of it.
+    func stopAndRelease() async {
+        let wasOn = state != .off
+        stopRecognition()
+        guard wasOn else { return }
+        _ = try? await AudioSessionQueue.run {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+
+    private func stopRecognition() {
         attempts = 0
         endRecognition()
         stopEngine()
@@ -106,11 +129,6 @@ final class VoiceListener {
         state = .off
         transcript = ""
         microphoneName = nil
-        AudioSessionQueue.runDetached {
-            let session = AVAudioSession.sharedInstance()
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
-            try? session.setCategory(.playback, mode: .spokenAudio)
-        }
     }
 
     /// Stop listening while Carvis answers, so it doesn't hear itself.
@@ -132,25 +150,19 @@ final class VoiceListener {
     private func useGlassesMicrophone() async throws {
         microphoneName = try await AudioSessionQueue.run {
             let session = AVAudioSession.sharedInstance()
-            print("[Voice] before: category \(session.category.rawValue), other audio playing: \(session.isOtherAudioPlaying), "
-                  + "inputs: \(session.availableInputs?.map { "\($0.portName) (\($0.portType.rawValue))" } ?? [])")
-            do {
-                // Exactly Meta's CameraAccess setup (AudioInputHandler.configureBluetooth).
-                // defaultToSpeaker only covers the phone-only case.
-                try session.setCategory(.playAndRecord, mode: .videoRecording,
-                                        options: [.allowBluetoothHFP, .mixWithOthers, .defaultToSpeaker])
-                try session.setActive(true)
-            } catch {
-                // The glasses mic was refused. Try the phone's own mic so Hey Carvis still works.
-                print("[Voice] glasses mic setup failed (\(error.localizedDescription)); trying the phone mic")
-                try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
-                try session.setActive(true)
+            // Meta's CameraAccess setup (AudioInputHandler.configureBluetooth).
+            try session.setCategory(.playAndRecord, mode: .videoRecording, options: [.allowBluetoothHFP, .mixWithOthers])
+            try session.setActive(true)
+            // The glasses' Bluetooth microphone or nothing. The phone's mic is never used.
+            guard let glasses = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) else {
+                throw VoiceError.noGlassesMicrophone
             }
-            if let glasses = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
-                try? session.setPreferredInput(glasses)
-            }
+            try session.setPreferredInput(glasses)
             print("[Voice] route: \(session.currentRoute.inputs.map(\.portName)) -> \(session.currentRoute.outputs.map(\.portName))")
-            return session.currentRoute.inputs.first { $0.portType == .bluetoothHFP }?.portName
+            guard let active = session.currentRoute.inputs.first(where: { $0.portType == .bluetoothHFP }) else {
+                throw VoiceError.noGlassesMicrophone
+            }
+            return active.portName
         }
     }
 
@@ -260,7 +272,8 @@ final class VoiceListener {
     /// The question is done when you stop talking. Just "Hey Carvis" waits longer for the rest.
     private func waitForSilence(id: Int) {
         silenceTimer?.cancel()
-        let pause: Duration = transcript.isEmpty ? .seconds(5) : .milliseconds(1500)
+        // A bare "Hey Carvis" starts the conversation almost at once.
+        let pause: Duration = transcript.isEmpty ? .milliseconds(1100) : .milliseconds(1500)
         silenceTimer = Task { [weak self] in
             try? await Task.sleep(for: pause)
             guard let self, !Task.isCancelled, self.taskID == id, self.state == .hearingQuestion else { return }
@@ -272,14 +285,9 @@ final class VoiceListener {
         let question = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         endRecognition()
         transcript = ""
-        if question.split(separator: " ").count >= 2 {
-            state = .paused  // the screen resumes listening after answering
-            heard = Heard(text: question)
-            onHeard?(question)
-        } else {
-            state = .listening
-            beginRecognition()
-        }
+        state = .paused  // resumes only after the conversation has completely ended
+        heard = Heard(text: question)
+        onHeard?(question)
     }
 
     // MARK: - Wake phrase
@@ -348,5 +356,11 @@ private final class RequestBox: @unchecked Sendable {
 
 private enum VoiceError: LocalizedError {
     case noMicrophone
-    var errorDescription: String? { "No microphone is available." }
+    case noGlassesMicrophone
+    var errorDescription: String? {
+        switch self {
+        case .noMicrophone: "No microphone is available."
+        case .noGlassesMicrophone: "Your glasses' microphone isn't connected to this iPhone."
+        }
+    }
 }

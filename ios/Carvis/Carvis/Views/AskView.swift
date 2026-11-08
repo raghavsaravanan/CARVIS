@@ -3,15 +3,15 @@ import SwiftUI
 /// Look at a part through your glasses, ask about it, and hear the answer.
 /// The answer comes only from the car's service manual; if the manual
 /// doesn't have it, Carvis says so instead of guessing.
-/// All the listening and asking lives in `CarvisAssistant`; this screen shows it.
+/// All the listening and asking lives in `CarvisConversationCoordinator`; this screen shows it.
 struct AskView: View {
-    @Environment(CarvisAssistant.self) private var assistant
+    @Environment(CarvisConversationCoordinator.self) private var assistant
     @Environment(GlassesController.self) private var glasses
     @Environment(AccountStore.self) private var accounts
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isQuestionFocused: Bool
 
-    private var phase: CarvisAssistant.Phase { assistant.phase }
+    private var phase: CarvisConversationCoordinator.Phase { assistant.phase }
     private var isWorking: Bool { assistant.isWorking }
 
     var body: some View {
@@ -20,7 +20,7 @@ struct AskView: View {
                 cameraCard
                     .appearAnimation(index: 0)
                 if let agent = assistant.agent, agent.isInCall || agent.state != .idle {
-                    ConversationCard(agent: agent)
+                    ConversationCard(agent: agent, onEnd: assistant.endConversation)
                         .transition(.blurReplace)
                 }
                 questionCard
@@ -42,7 +42,7 @@ struct AskView: View {
         // Carvis listens and the camera stays live while this screen is open.
         .onAppear { assistant.activate(.askScreen) }
         .onDisappear { assistant.deactivate(.askScreen) }
-        .sensoryFeedback(.start, trigger: assistant.awaitingQuestionUntil != nil || assistant.listener.state == .hearingQuestion) { _, hearing in hearing }
+        .sensoryFeedback(.start, trigger: assistant.conversationPhase == .inCall) { _, inCall in inCall }
         .sensoryFeedback(.success, trigger: phase) { _, new in
             if case .result(.answer) = new { return true }
             return false
@@ -100,7 +100,7 @@ struct AskView: View {
     private var questionCard: some View {
         @Bindable var assistant = assistant
         return VStack(alignment: .leading, spacing: 14) {
-            Label(assistant.vehicle.displayName, systemImage: "car.side.fill")
+            Label(assistant.vehicle?.displayName ?? "Add your car in the edit screen", systemImage: "car.side.fill")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.inkSecondary)
 
@@ -216,6 +216,7 @@ func percent(_ value: Double) -> String {
 /// The live conversation with Carvis on Vapi: who's talking, what was said, and a way out.
 private struct ConversationCard: View {
     let agent: VapiAgent
+    let onEnd: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -251,9 +252,7 @@ private struct ConversationCard: View {
             .animation(Motion.enter, value: agent.lines)
 
             if agent.isInCall {
-                Button(role: .destructive) {
-                    agent.end()
-                } label: {
+                Button(role: .destructive, action: onEnd) {
                     Label("End conversation", systemImage: "phone.down.fill")
                         .font(Theme.buttonFont)
                         .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
@@ -272,7 +271,6 @@ private struct ConversationCard: View {
         case .connecting: "Connecting"
         case .listening: "Listening"
         case .speaking: "Speaking"
-        case .lookingAtPart: "Looking at the part"
         case .failed: "Couldn\u{2019}t connect"
         }
     }
@@ -280,7 +278,7 @@ private struct ConversationCard: View {
     private var statusColor: Color {
         switch agent.state {
         case .failed: Theme.safetyRed
-        case .speaking, .lookingAtPart: Theme.accent
+        case .speaking: Theme.accent
         default: Theme.inkSecondary
         }
     }
