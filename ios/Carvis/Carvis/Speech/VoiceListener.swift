@@ -50,6 +50,8 @@ final class VoiceListener {
     @ObservationIgnored private var restartTimer: Task<Void, Never>?
     @ObservationIgnored private var routeObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var attempts = 0
+    /// Called with each question heard after "Hey Carvis".
+    @ObservationIgnored var onHeard: ((String) -> Void)?
 
     // MARK: - Turning it on and off
 
@@ -273,6 +275,7 @@ final class VoiceListener {
         if question.split(separator: " ").count >= 2 {
             state = .paused  // the screen resumes listening after answering
             heard = Heard(text: question)
+            onHeard?(question)
         } else {
             state = .listening
             beginRecognition()

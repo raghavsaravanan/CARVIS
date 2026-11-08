@@ -42,148 +42,140 @@ struct StepVisual {
     }
 }
 
-/// The swipeable stack of step cards. Swipe left to complete a step, right to go back.
+/// The swipeable stack of step cards: a visual guide, secondary to talking with Carvis.
+/// Swipe left to complete a step, right to go back. The card checks itself off as soon as
+/// you've dragged far enough, then flies straight into the next one.
 struct StepDeck: View {
     let response: StepResponse
     let onNext: () -> Void
     let onBack: () -> Void
 
     @State private var drag: CGSize = .zero
-    @State private var completing = false
     @State private var flyingAway: CGFloat = 0
-    @State private var cardHeight: CGFloat = 300
+    @State private var isLeaving = false
+    @State private var cardHeight: CGFloat = 260
     /// nil until a drag shows its direction; only sideways drags move the card.
     @State private var isSideways: Bool?
+    @State private var hasHinted = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var step: Int { response.stepNumber }
     private var total: Int { response.totalSteps }
-    private let swipeDistance: CGFloat = 110
+    private let swipeDistance: CGFloat = 100
+
+    /// Dragged far enough to complete: the card shows it's checked off.
+    private var isPastThreshold: Bool { drag.width < -swipeDistance }
+    private var showsComplete: Bool { isPastThreshold || isLeaving }
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 14) {
             ZStack {
-                // Upcoming steps peek out behind, smaller and lower.
+                // Upcoming steps wait behind, and the next one rises as you swipe.
                 ForEach((1...2).reversed(), id: \.self) { depth in
                     if step + depth <= total {
                         PeekCard(number: step + depth, total: total)
                             .frame(height: cardHeight)
-                            .scaleEffect(1 - CGFloat(depth) * 0.06 + peekLift(depth))
-                            .offset(y: CGFloat(depth) * 30 - peekLift(depth) * 300)
-                            .opacity(depth == 1 ? 0.9 : 0.6)
+                            .scaleEffect(1 - CGFloat(depth) * 0.06 + lift(depth))
+                            .offset(y: CGFloat(depth) * 28 - lift(depth) * 270)
+                            .opacity(depth == 1 ? 0.95 : 0.6)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
                     }
                 }
 
-                StepCard(response: response, visual: .forStep(step), completing: completing)
+                StepCard(response: response, visual: .forStep(step), completing: showsComplete)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
                     .id(step)
-                    .offset(x: drag.width + flyingAway, y: drag.height * 0.15)
-                    .rotationEffect(.degrees(reduceMotion ? 0 : Double(drag.width + flyingAway) / 22),
-                                    anchor: .bottom)
+                    .offset(x: drag.width + flyingAway, y: drag.height * 0.1)
+                    .rotationEffect(.degrees(reduceMotion ? 0 : Double(drag.width + flyingAway) / 24), anchor: .bottom)
                     .simultaneousGesture(swipe)
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.95).combined(with: .opacity),
-                        removal: .opacity
-                    ))
-                    .accessibilityAction(named: "Next step") { complete() }
+                    // The next card takes the place of the one that rose behind it.
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .identity))
+                    .accessibilityAction(named: "Complete step") { leave() }
                     .accessibilityAction(named: "Previous step") { onBack() }
             }
-            .padding(.bottom, 56)  // room for the peeking cards
+            .padding(.bottom, 52)  // room for the waiting cards
 
-            controls
+            HStack(spacing: 8) {
+                Image(systemName: "hand.draw.fill")
+                    .foregroundStyle(Theme.accent)
+                Text(step >= total ? "Swipe left to finish" : "Swipe left to complete")
+                    .font(.subheadline.weight(.semibold))
+                if step > 1 {
+                    Text("· right to go back")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.inkSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .accessibilityHidden(true)
         }
-        .sensoryFeedback(.success, trigger: completing) { _, new in new }
-        // The new step arrived: reset instantly so the next card starts centered.
+        .sensoryFeedback(.impact(weight: .medium), trigger: isPastThreshold) { old, new in new && !old }
+        // The new step arrived: reset instantly so the next card starts in place.
         .onChange(of: step) {
             withTransaction(Transaction(animation: nil)) {
                 drag = .zero
                 flyingAway = 0
-                completing = false
+                isLeaving = false
                 isSideways = nil
             }
         }
-    }
-
-    /// As you drag, the next card rises a little to take the front card's place.
-    private func peekLift(_ depth: Int) -> CGFloat {
-        guard depth == 1 else { return 0 }
-        return min(abs(drag.width) / 1600, 0.05)
-    }
-
-    private var controls: some View {
-        HStack(spacing: 16) {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .font(.title3.weight(.semibold))
-                    .frame(width: Theme.buttonHeight, height: Theme.buttonHeight)
-            }
-            .buttonStyle(PressableCardStyle())
-            .carvisGlass(.card, in: Circle())
-            .disabled(step <= 1)
-            .opacity(step <= 1 ? 0.4 : 1)
-            .accessibilityLabel("Previous step")
-
-            VStack(spacing: 4) {
-                Text(step >= total ? "Swipe to finish" : "Swipe to complete")
-                    .font(.subheadline.weight(.semibold))
-                Text("or tap the arrow")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.inkSecondary)
-            }
-            .frame(maxWidth: .infinity)
-
-            Button(action: complete) {
-                Image(systemName: step >= total ? "checkmark" : "chevron.right")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: Theme.buttonHeight, height: Theme.buttonHeight)
-                    .background(Theme.ink, in: Circle())
-                    .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 1))
-                    .shadow(color: Theme.ink.opacity(0.25), radius: 14, y: 8)
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .buttonStyle(PressableCardStyle())
-            .accessibilityLabel(step >= total ? "Finish job" : "Next step")
+        // On the first card, a half swipe shows that swiping is how you move on.
+        .task(id: step) {
+            guard step == 1, !hasHinted, !reduceMotion else { return }
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled, drag == .zero, !isLeaving else { return }
+            hasHinted = true
+            withAnimation(.spring(duration: 0.55, bounce: 0)) { drag = CGSize(width: -swipeDistance * 0.7, height: 0) }
+            try? await Task.sleep(for: .milliseconds(600))
+            withAnimation(.spring(duration: 0.55, bounce: 0.3)) { drag = .zero }
         }
     }
 
+    /// How far the next card has risen toward the front, 0 to 0.06.
+    private func lift(_ depth: Int) -> CGFloat {
+        guard depth == 1 else { return 0 }
+        return min((abs(drag.width) + abs(flyingAway)) / 1600, 0.06)
+    }
+
     private var swipe: some Gesture {
-        DragGesture(minimumDistance: 12)
+        DragGesture(minimumDistance: 10)
             .onChanged { value in
-                guard !completing else { return }
+                guard !isLeaving else { return }
                 if isSideways == nil {
                     isSideways = abs(value.translation.width) > abs(value.translation.height)
                 }
                 guard isSideways == true else { return }
-                drag = value.translation
+                // Can't swipe back past the first step.
+                let width = step <= 1 ? min(value.translation.width, value.translation.width / 4) : value.translation.width
+                drag = CGSize(width: width, height: value.translation.height)
             }
             .onEnded { value in
                 defer { isSideways = nil }
-                guard !completing, isSideways == true else { return }
-                let travel = value.predictedEndTranslation.width
-                if value.translation.width < -swipeDistance || travel < -swipeDistance * 2.5 {
-                    complete()
-                } else if (value.translation.width > swipeDistance || travel > swipeDistance * 2.5), step > 1 {
-                    withAnimation(.spring(duration: 0.45, bounce: 0.1)) { onBack() }
+                guard isSideways == true, !isLeaving else { return }
+                let flick = value.predictedEndTranslation.width
+                if value.translation.width < -swipeDistance || flick < -swipeDistance * 2.5 {
+                    leave()
+                } else if (value.translation.width > swipeDistance || flick > swipeDistance * 2.5), step > 1 {
+                    withAnimation(.spring(duration: 0.35, bounce: 0)) { drag = .zero }
+                    onBack()
                 } else {
                     withAnimation(.spring(duration: 0.4, bounce: 0.25)) { drag = .zero }
                 }
             }
     }
 
-    /// Check it off, show what the mechanic said, fly the card away, then move on.
-    private func complete() {
-        guard !completing else { return }
-        withAnimation(.spring(duration: 0.3, bounce: 0.3)) { completing = true }
+    /// Fly the card off and move on as soon as it's out of sight. No pause.
+    private func leave() {
+        guard !isLeaving else { return }
+        isLeaving = true
+        withAnimation(.spring(duration: reduceMotion ? 0.2 : 0.3, bounce: 0)) {
+            flyingAway = -700
+            drag.height = 0
+        }
         Task {
-            try? await Task.sleep(for: .milliseconds(reduceMotion ? 250 : 650))
-            withAnimation(.spring(duration: 0.4, bounce: 0)) {
-                flyingAway = reduceMotion ? 0 : -520
-            }
-            try? await Task.sleep(for: .milliseconds(reduceMotion ? 50 : 220))
-            onNext()  // the card stays off screen until the next step arrives (see onChange)
+            try? await Task.sleep(for: .milliseconds(reduceMotion ? 120 : 240))
+            onNext()
         }
     }
 }
@@ -197,7 +189,7 @@ private struct StepCard: View {
     private var tint: Color { response.safetyGate ? Theme.safetyRed : Theme.accent }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Step \(response.stepNumber) of \(response.totalSteps)")
                     .font(.subheadline.weight(.semibold))
@@ -223,22 +215,22 @@ private struct StepCard: View {
                         .fill(LinearGradient(colors: [tint, tint.opacity(0.75)], startPoint: .top, endPoint: .bottom))
                         .shadow(color: tint.opacity(0.4), radius: 14, y: 8)
                     Image(systemName: visual.symbol)
-                        .font(.system(size: 34, weight: .semibold))
+                        .font(.system(size: 27, weight: .semibold))
                         .foregroundStyle(.white)
                         .symbolEffect(.bounce, value: response.stepNumber)
                         .symbolEffect(.bounce, value: completing)
                 }
-                .frame(width: 76, height: 76)
+                .frame(width: 60, height: 60)
                 .accessibilityHidden(true)
 
                 Text(visual.title)
-                    .font(.system(size: 26, weight: .semibold))
+                    .font(.system(size: 22, weight: .semibold))
                     .tracking(-0.4)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Text(response.safetyGate ? response.spokenText : response.displayText)
-                .font(.title3)
+                .font(.body)
                 .foregroundStyle(Theme.ink.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -287,7 +279,7 @@ private struct StepCard: View {
                 .transition(.scale(scale: 0.8, anchor: .bottomTrailing).combined(with: .opacity))
             }
         }
-        .padding(22)
+        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
         .overlay(
@@ -296,6 +288,7 @@ private struct StepCard: View {
         )
         .shadow(color: Theme.ink.opacity(0.12), radius: 24, y: 14)
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
+        .animation(.spring(duration: 0.28, bounce: 0.3), value: completing)
         .accessibilityElement(children: .combine)
     }
 }

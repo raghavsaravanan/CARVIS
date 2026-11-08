@@ -3,13 +3,26 @@ import SwiftUI
 /// The root view. The dashboard is home; the progress and done screens open
 /// on top of it. On iOS 18+ the progress screen zooms out of the card you tapped.
 struct ContentView: View {
-    @State private var session = RepairSession()
-    @State private var glasses = GlassesController()
-    @State private var askSpeech = SystemSpeechOutput()
-    @State private var accounts = AccountStore()
-    @State private var chats = ChatHistory()
+    @State private var session: RepairSession
+    @State private var glasses: GlassesController
+    @State private var accounts: AccountStore
+    @State private var chats: ChatHistory
     @State private var shops = ShopStore()
+    @State private var assistant: CarvisAssistant
     @Namespace private var zoom
+
+    init() {
+        // One voice for the whole app, so step readouts and answers never talk over each other.
+        let speech = SystemSpeechOutput()
+        let glasses = GlassesController()
+        let accounts = AccountStore()
+        let chats = ChatHistory()
+        _session = State(initialValue: RepairSession(speech: speech))
+        _glasses = State(initialValue: glasses)
+        _accounts = State(initialValue: accounts)
+        _chats = State(initialValue: chats)
+        _assistant = State(initialValue: CarvisAssistant(glasses: glasses, accounts: accounts, chats: chats, speech: speech))
+    }
 
     var body: some View {
         NavigationStack(path: $session.path) {
@@ -22,6 +35,15 @@ struct ContentView: View {
         .environment(accounts)
         .environment(chats)
         .environment(shops)
+        .environment(assistant)
+        // Starting a job turns Carvis on (camera live, listening for "Hey Carvis") until it ends.
+        .onChange(of: session.hasActiveJob) { _, active in
+            if active {
+                assistant.activate(.job)
+            } else {
+                assistant.deactivate(.job)
+            }
+        }
         // Sign-up on first launch, and again after signing out.
         .fullScreenCover(isPresented: Binding(get: { accounts.account == nil }, set: { _ in })) {
             OnboardingView(accounts: accounts)
@@ -48,7 +70,7 @@ struct ContentView: View {
                 DoneView(session: session, response: response)
             }
         case .ask:
-            AskView(vehicle: .demo, client: accounts.visionClient, speech: askSpeech)
+            AskView()
         case .wakeTest:
             WakeTestView()
         case .shop:

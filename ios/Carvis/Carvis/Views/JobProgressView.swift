@@ -1,15 +1,47 @@
 import SwiftUI
 
-/// The live progress screen. View only: the glasses guide the repair,
-/// and this screen shows where you are for you (on a break) or anyone watching.
+/// The job screen. Carvis comes first: what your glasses see, what Carvis hears, and its
+/// latest answer, because in practice you're under the car talking to it. The step cards
+/// below are the visual guide.
 struct JobProgressView: View {
     let session: RepairSession
     let response: StepResponse
 
+    private var percentDone: Int {
+        Int((Double(response.stepNumber - 1) / Double(max(response.totalSteps, 1))) * 100)
+    }
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                heroCard
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        LiveDot()
+                        Text(session.jobName)
+                            .font(.headline)
+                        Spacer()
+                        Text("\(percentDone)%")
+                            .font(.headline)
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.accent)
+                            .contentTransition(.numericText(value: Double(response.stepNumber)))
+                    }
+                    SegmentedProgress(step: response.stepNumber, total: response.totalSteps)
+                }
+
+                AssistantPanel()
+                    .appearAnimation(index: 0)
+
+                Text("Step guide")
+                    .font(.title3.weight(.semibold))
+                    .padding(.top, 4)
+                    .accessibilityAddTraits(.isHeader)
+
+                StepDeck(response: response,
+                         onNext: { Task { await session.next() } },
+                         onBack: { session.goBack() })
+                    .appearAnimation(index: 1)
+
                 StepTimeline(total: response.totalSteps,
                              currentStep: response.stepNumber,
                              seenSteps: session.seenSteps)
@@ -18,7 +50,7 @@ struct JobProgressView: View {
             .padding(.horizontal, 20)
             .padding(.top, 4)
             .padding(.bottom, 24)
-            .animation(Motion.change, value: response.stepNumber)
+            .animation(.spring(duration: 0.4, bounce: 0.1), value: response.stepNumber)
         }
         .scrollIndicators(.hidden)
         .background { CarvisBackground() }
@@ -26,28 +58,194 @@ struct JobProgressView: View {
         // A light tick each time the job moves forward.
         .sensoryFeedback(.increase, trigger: response.stepNumber)
     }
+}
 
-    /// The job name, progress, and the swipeable stack of step cards.
-    private var heroCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 8) {
-                LiveDot()
-                Text(session.jobName)
+/// Carvis during a job: the live view from your glasses, what it's hearing, and its
+/// latest answer. Dark, like an instrument panel, so it's the first thing you see.
+private struct AssistantPanel: View {
+    @Environment(CarvisAssistant.self) private var assistant
+    @Environment(GlassesController.self) private var glasses
+
+    private var shown: UIImage? { assistant.photo ?? (assistant.isWorking ? nil : glasses.frame) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(Theme.lime)
+                    .frame(width: 9, height: 9)
+                    .phaseAnimator([false, true]) { dot, on in dot.opacity(on ? 1 : 0.35) } animation: { _ in .easeInOut(duration: 0.9) }
+                Text("Carvis")
                     .font(.headline)
                 Spacer()
-                Text("\(Int((Double(response.stepNumber - 1) / Double(max(response.totalSteps, 1))) * 100))%")
-                    .font(.headline)
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.accent)
-                    .contentTransition(.numericText(value: Double(response.stepNumber)))
+                let isOn = assistant.voiceDisplay.isOn
+                Button(action: assistant.toggleVoice) {
+                    Label(isOn ? "Mute" : (assistant.voiceOn ? "Try again" : "Unmute"),
+                          systemImage: isOn ? "mic.fill" : (assistant.voiceOn ? "arrow.clockwise" : "mic.slash.fill"))
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .background(.white.opacity(0.12), in: Capsule())
+                        .contentTransition(.opacity)
+                }
+                .buttonStyle(PressableCardStyle())
+                .accessibilityLabel(isOn ? "Mute Hey Carvis" : "Turn on Hey Carvis")
             }
-            SegmentedProgress(step: response.stepNumber, total: response.totalSteps)
+            .foregroundStyle(.white)
 
-            StepDeck(response: response,
-                     onNext: { Task { await session.next() } },
-                     onBack: { session.goBack() })
-                .padding(.top, 6)
+            camera
+
+            voiceLine
+
+            if let asked = assistant.askedQuestion, let reply = reply {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\u{201C}\(asked)\u{201D}")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(2)
+                    Text(reply.text)
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(reply.fromManual ? .white : Theme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if reply.fromManual {
+                        Label("From the service manual", systemImage: "book.fill")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(Theme.lime)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+                .transition(.blurReplace)
+                .accessibilityElement(children: .combine)
+            }
         }
+        .padding(18)
+        .carvisGlass(.dark, in: RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
+        .animation(.spring(duration: 0.4, bounce: 0), value: assistant.phase)
+    }
+
+    private var reply: (text: String, fromManual: Bool)? {
+        switch assistant.phase {
+        case .result(.answer(let text, _, _)): (text, true)
+        case .result(.notInManual(let message, _)): ("Not in the manual. \(message)", false)
+        case .failed(let message): ("Couldn\u{2019}t get an answer. \(message)", false)
+        default: nil
+        }
+    }
+
+    /// What the glasses see, live, or the photo Carvis just used.
+    private var camera: some View {
+        ZStack {
+            Rectangle().fill(.black.opacity(0.5))
+            if let shown {
+                Image(uiImage: shown)
+                    .resizable()
+                    .scaledToFill()
+                    .transition(.opacity)
+                    .accessibilityLabel(assistant.photo == nil ? "Live view from your glasses" : "What Carvis looked at")
+            } else if !glasses.isConnected {
+                VStack(spacing: 12) {
+                    Text("Connect your glasses so Carvis can see what you see")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                    Button(action: glasses.connect) {
+                        Text(glasses.status == .connecting ? "Finish in the Meta AI app" : "Connect glasses")
+                            .font(.headline)
+                            .foregroundStyle(Theme.ink)
+                            .padding(.horizontal, 22)
+                            .frame(minHeight: 48)
+                            .background(Theme.lime, in: Capsule())
+                    }
+                    .buttonStyle(PressableCardStyle())
+                    .disabled(glasses.status == .connecting)
+                }
+                .padding(18)
+            } else {
+                VStack(spacing: 10) {
+                    ProgressView().tint(.white)
+                    Text(assistant.isWorking ? "Looking\u{2026}" : "Starting the glasses camera")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 200)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(alignment: .topLeading) {
+            if shown != nil {
+                HStack(spacing: 6) {
+                    if assistant.photo == nil {
+                        Circle().fill(Theme.lime).frame(width: 7, height: 7)
+                        Text("Live from your glasses")
+                    } else {
+                        Image(systemName: "camera.fill")
+                        Text("What Carvis looked at")
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.black.opacity(0.45), in: Capsule())
+                .padding(10)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if assistant.photo != nil, !assistant.isWorking {
+                Button("Back to live view", systemImage: "arrow.uturn.backward") {
+                    withAnimation(.easeOut(duration: 0.25)) { assistant.backToLive() }
+                }
+                .labelStyle(.iconOnly)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.black.opacity(0.45), in: Circle())
+                .padding(6)
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: assistant.photo == nil)
+    }
+
+    /// What Carvis is doing right now: listening, hearing you, looking, answering.
+    private var voiceLine: some View {
+        let display = assistant.voiceDisplay
+        return HStack(spacing: 12) {
+            ZStack {
+                if display.isLive {
+                    Circle()
+                        .fill(Theme.lime.opacity(0.18))
+                        .frame(width: 40, height: 40)
+                        .phaseAnimator([false, true]) { ring, big in ring.scaleEffect(big ? 1.15 : 0.9) } animation: { _ in .easeInOut(duration: 1.1) }
+                    Image(systemName: "waveform")
+                        .font(.headline)
+                        .foregroundStyle(Theme.lime)
+                        .symbolEffect(.variableColor.iterative, isActive: true)
+                } else if assistant.isWorking {
+                    ProgressView().tint(Theme.lime)
+                } else {
+                    Image(systemName: display.isOn ? "ellipsis" : "mic.slash.fill")
+                        .font(.headline)
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            .frame(width: 40, height: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(display.title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text(display.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(2)
+            }
+            .contentTransition(.opacity)
+            Spacer(minLength: 0)
+        }
+        .animation(.easeOut(duration: 0.2), value: display)
+        .accessibilityElement(children: .combine)
     }
 }
 

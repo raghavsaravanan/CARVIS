@@ -23,7 +23,13 @@ final class CarvisWakeListener {
 
     private(set) var isArmed = false
     private(set) var hasMicrophonePermission = false
-    private(set) var state: State = .disarmed
+    private(set) var state: State = .disarmed {
+        didSet { if oldValue != state { stateChanges.send(state) } }
+    }
+    /// Every state change, so screens and the assistant can react (for example, fall back
+    /// to phone speech when glasses speech fails).
+    var stateUpdates: AnyPublisher<State, Never> { stateChanges.eraseToAnyPublisher() }
+    @ObservationIgnored private let stateChanges = PassthroughSubject<State, Never>()
     private(set) var message = "Disarmed"
     private(set) var lastTranscript = ""
     private(set) var transcriptIsFinal = false
