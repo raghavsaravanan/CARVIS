@@ -51,18 +51,30 @@ struct DashboardView: View {
 
                 // 1. The car and its state, under its name
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text("Subaru WRX")
-                            .font(.system(size: 40, weight: .semibold))
-                            .tracking(-1)
-                        Text("2022")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Theme.inkSecondary)
-                            .baselineOffset(20)
+                    if profile.vehicle != nil {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(profile.carName)
+                                .font(.system(size: 40, weight: .semibold))
+                                .tracking(-1)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                            Text(profile.year)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Theme.inkSecondary)
+                                .baselineOffset(20)
+                        }
+                        .padding(.horizontal, 6)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isHeader)
+                    } else {
+                        Button { isEditingCar = true } label: {
+                            Label("Add your car", systemImage: "plus.circle.fill")
+                                .font(.system(size: 30, weight: .semibold))
+                                .frame(minHeight: Theme.buttonHeight)
+                        }
+                        .buttonStyle(PressableCardStyle())
+                        .padding(.horizontal, 6)
                     }
-                    .padding(.horizontal, 6)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityAddTraits(.isHeader)
 
                     DashboardSection(tint: Theme.accent.opacity(0.18)) {
                     CarHero(profile: profile)
@@ -160,7 +172,7 @@ struct DashboardView: View {
         .background { CarvisBackground() }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isShowingNewJob, onDismiss: startPendingJob) {
-            NewJobSheet { name in
+            NewJobSheet(vehicleName: profile.vehicle?.displayName ?? "Your car") { name in
                 pendingJobName = name
                 isShowingNewJob = false
             }
@@ -295,7 +307,19 @@ private struct CarHero: View {
                     ForEach(chips, id: \.self) { Chip(text: $0) }
                 }
             }
-            CarImage()
+            Group {
+                if profile.model.trimmed.lowercased() == "wrx" {
+                    CarImage()
+                } else {
+                    Image(systemName: "car.side.fill")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 96)
+                        .frame(maxWidth: .infinity)
+                        .foregroundStyle(Theme.inkTertiary)
+                        .accessibilityHidden(true)
+                }
+            }
                 .padding(.top, 4)
                 .padding(.bottom, 18)  // room for the floor shadow
                 // As you scroll down, the car drifts and shrinks slightly behind the cards.
@@ -685,6 +709,7 @@ private struct ChatBubble: View {
 private struct TeamToolsCard: View {
     /// Opens Raghav's glasses wake-word test screen (Meta Speech on the glasses).
     let onWakeTest: () -> Void
+    @Environment(CarvisConversationCoordinator.self) private var assistant
     @Environment(AccountStore.self) private var accounts
     @Environment(GlassesController.self) private var glasses
     @State private var health: String?
@@ -738,7 +763,7 @@ private struct TeamToolsCard: View {
 
             DevRow(label: "Glasses", value: glasses.isConnected ? glasses.detail : "Not registered")
             DevRow(label: "Vapi", value: VapiConfig.load() == nil ? "Not configured, built-in voice" : "Configured")
-            DevRow(label: "Vehicle", value: "\(Vehicle.demo.year) / \(Vehicle.demo.make) / \(Vehicle.demo.model)")
+            DevRow(label: "Vehicle", value: garageVehicle)
 
             Button(action: onWakeTest) {
                 Label("Glasses wake test", systemImage: "waveform")
@@ -749,6 +774,10 @@ private struct TeamToolsCard: View {
         }
         .padding(20)
         .carvisGlass(.card, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+
+    private var garageVehicle: String {
+        assistant.vehicle.map { "\($0.year) / \($0.make) / \($0.model)" } ?? "Not set"
     }
 
     private func checkServer() async {

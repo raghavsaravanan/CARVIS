@@ -30,6 +30,8 @@ final class GlassesController {
     private(set) var sessionState: DeviceSessionState = .idle
     private(set) var streamState: StreamState = .stopped
     let wakeListener = CarvisWakeListener()
+    /// The name the Meta SDK reports for the connected glasses.
+    private(set) var activeDeviceName: String?
 
     /// The newest video frame from the glasses.
     private(set) var frame: UIImage?
@@ -106,6 +108,7 @@ final class GlassesController {
             for await device in deviceSelector.activeDeviceStream() {
                 guard let self else { return }
                 self.hasActiveDevice = device != nil
+                self.activeDeviceName = device.flatMap { wearables.deviceForIdentifier($0)?.nameOrId() }
                 // Glasses came back (put on, unfolded): resume video if a screen wants it.
                 if device != nil {
                     self.startSessionIfNeeded()
@@ -186,6 +189,13 @@ final class GlassesController {
     func disarmWakeListener() {
         wakeListener.disarm()
         if !wantsPreview { tearDown() }
+    }
+
+    /// Lets go of glasses speech so a conversation can use the audio. The session and camera
+    /// keep running, and this returns only once Speech is fully stopped.
+    func releaseWakeListener() async {
+        if wakeListener.isArmed { wakeListener.disarm() }
+        await wakeListener.finishCleanup()
     }
 
     /// Call when a screen that shows the camera appears.
@@ -311,15 +321,26 @@ final class GlassesController {
     // MARK: - Photos
 
     /// Takes a JPEG photo with the glasses camera. Needs live video first.
-    func capturePhoto() async throws -> Data {
+    func capturePhoto(timeout: Duration = .seconds(15)) async throws -> Data {
         guard isLive, let stream = camera?.stream else { throw GlassesError.notLive }
         guard photoContinuation == nil else { throw GlassesError.busy }
-        return try await withCheckedThrowingContinuation { continuation in
-            photoContinuation = continuation
-            if !stream.capturePhoto(format: .jpeg) {
-                photoContinuation = nil
-                continuation.resume(throwing: GlassesError.captureFailed)
+        // A photo that never arrives must fail rather than wait forever.
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            self?.failPendingPhoto(with: GlassesError.captureFailed)
+        }
+        defer { watchdog.cancel() }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                photoContinuation = continuation
+                if Task.isCancelled || !stream.capturePhoto(format: .jpeg) {
+                    photoContinuation = nil
+                    continuation.resume(throwing: GlassesError.captureFailed)
+                }
             }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.failPendingPhoto(with: GlassesError.captureFailed) }
         }
     }
 

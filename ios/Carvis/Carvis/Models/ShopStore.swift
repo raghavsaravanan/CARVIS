@@ -253,7 +253,7 @@ extension ShopMechanic {
         let step = current.stepNumber
         return ShopMechanic(
             id: youID, name: "You", colorHex: 0x111418, bay: 0,
-            vehicle: Vehicle.demo.displayName, procedure: .oilChange, step: min(step, Procedure.oilChange.steps.count),
+            vehicle: session.garage.profile.vehicle?.displayName ?? "Your car", procedure: .oilChange, step: min(step, Procedure.oilChange.steps.count),
             jobStartedAt: .now, stepStartedAt: session.stepStartedAt, stepDuration: .infinity, isYou: true
         )
     }

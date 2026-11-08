@@ -8,7 +8,7 @@ struct ContentView: View {
     @State private var accounts: AccountStore
     @State private var chats: ChatHistory
     @State private var shops = ShopStore()
-    @State private var assistant: CarvisAssistant
+    @State private var assistant: CarvisConversationCoordinator
     @Namespace private var zoom
 
     init() {
@@ -17,11 +17,12 @@ struct ContentView: View {
         let glasses = GlassesController()
         let accounts = AccountStore()
         let chats = ChatHistory()
-        _session = State(initialValue: RepairSession(speech: speech))
+        let garage = CarProfileStore()
+        _session = State(initialValue: RepairSession(speech: speech, garage: garage))
         _glasses = State(initialValue: glasses)
         _accounts = State(initialValue: accounts)
         _chats = State(initialValue: chats)
-        _assistant = State(initialValue: CarvisAssistant(glasses: glasses, accounts: accounts, chats: chats, speech: speech))
+        _assistant = State(initialValue: CarvisConversationCoordinator(glasses: glasses, accounts: accounts, chats: chats, garage: garage, speech: speech))
     }
 
     var body: some View {
@@ -46,7 +47,7 @@ struct ContentView: View {
         }
         // Sign-up on first launch, and again after signing out.
         .fullScreenCover(isPresented: Binding(get: { accounts.account == nil }, set: { _ in })) {
-            OnboardingView(accounts: accounts)
+            OnboardingView(accounts: accounts, garage: session.garage)
                 .tint(Theme.ink)
                 .foregroundStyle(Theme.ink)
         }

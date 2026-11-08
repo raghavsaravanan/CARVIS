@@ -26,9 +26,8 @@ Official sources:
 | CameraAccess session | Started |
 | CameraAccess live preview | **Works**, after the Bluetooth Classic fix below |
 | Carvis on device | Builds, installs, launches |
-| Carvis registration, preview, capture, `/vision-query` | **Works** (e.g. wheel nuts → 120 N·m) |
-| Hey Carvis (Apple speech) | Microphone works after the fixes below |
-| Vapi conversation | Built; not yet tested (needs the dashboard setup below) |
+| Carvis registration, preview, capture, `/vision-query` | **Works** |
+| Hey Carvis, Vapi conversation, camera during a call | Built; **not yet tested on glasses**. See [the hands-free test](HANDSFREE_TEST.md) |
 
 ### Two fixes needed with a free Apple team
 
@@ -87,52 +86,39 @@ and job finish time. The views in `ShopViews.swift` only read the store.
 
 ## Voice: Hey Carvis and Vapi
 
-1. **Wake word: glasses first (Meta Speech).** Opening Ask Carvis arms `CarvisWakeListener`,
-   which uses the glasses' own speech recognition (`MWDATSpeech`). "Hey Carvis, <question>"
-   (or a bare "Hey Carvis", then the question within 8 seconds) fills the question, takes a
-   glasses photo, asks `/vision-query`, and speaks the answer. Matching is start-of-sentence
-   only and accepts common misses ("Hey Jarvis", "OK Carver", "Hey car vis"); see
-   `ios/Tests/WakePhraseMatcherTests.swift` (22 checks). Meta marks Speech as experimental;
-   it may need enabling in the Wearables Developer Center. Not yet verified on hardware.
-   - **Backup: phone speech.** If glasses speech fails (or the glasses aren't connected),
-     Apple speech recognition takes over and the row says so. It uses CameraAccess's audio
-     setup (`.playAndRecord`, `.videoRecording`, `[.allowBluetoothHFP, .mixWithOthers]`).
-     Error `561017449` (`!pri`) means another app holds the mic, usually a call. End it.
-   - Meta's toolkit doesn't allow custom wake words outside the app ("Hey Meta" is
-     system-owned), so this only works with Carvis open on the Ask screen.
-2. **Conversation (Vapi).** If `Carvis/Config/VapiConfig.plist` has a public key and assistant
-   ID, "Hey Carvis, …" stops the wake-word listener (it frees the mic) and starts a Vapi call
-   with the [Vapi iOS SDK](https://github.com/VapiAI/client-sdk-ios), pinned to commit
-   `5fdb73d` because it has no release tags. The question said with the wake word is sent as
-   the first user message. When the call ends, the wake-word listener starts again.
-   Without the file, Carvis answers one question at a time with its built-in voice.
+One object owns a hands-free conversation: `CarvisConversationCoordinator`. Its rules are in
+`ConversationMachine`, which has no audio or SDK in it, so they're tested on their own
+(`ios/Tests/ConversationMachineTests.swift`).
 
-### Vapi setup (team dashboard)
+1. **Listening.** Starting a job arms `CarvisWakeListener`, which uses the glasses' own speech
+   recognition (`MWDATSpeech`). If Meta Speech fails, Apple recognition takes over, but only
+   on the glasses' Bluetooth microphone. The phone's microphone is never used; without the
+   glasses, the app pauses and says why.
+2. **Handing over the audio.** On "Hey Carvis", Meta Speech and Apple recognition are released
+   and awaited, while the camera keeps running. `AudioOwnership` then stops anything else
+   from changing the audio setup until the call has completely ended.
+3. **The call.** Vapi and Daily carry the conversation's audio over iOS Bluetooth. The
+   microphone stays muted until both the microphone and speaker are confirmed to be the
+   glasses. If that route is lost, the microphone is muted again until it comes back. A
+   question said with the wake phrase is delivered once.
+4. **Memory.** One session is shared by the app, Vapi, and the backend
+   (`backend/conversation.py`). It holds the confirmed vehicle, component, operation, pending
+   question, and grounded answer. A spoken correction clears whatever depended on it.
+5. **Seeing.** `look_at_part` is a server tool. The backend holds the tool call open and sends
+   the phone a command tied to this session and call. The phone takes a new photo and uploads
+   it, Nemotron identifies the part, and the original tool call gets the result. Commands
+   have deadlines and are deduplicated; late or repeated photos are rejected.
+6. **Specifications.** `lookup_spec` answers come from reviewed records in Qdrant, and the
+   backend gives Vapi the exact sentence to say. The model isn't asked to word it.
 
-Copy `Carvis/Config/VapiConfig.example.plist` to `VapiConfig.plist` and fill in the **public**
-key and assistant ID. `VapiConfig.plist` is git-ignored. The app sends the vehicle as
-`variableValues` and `metadata`: `year`, `make`, `model`, `vehicle`, `session_id`.
+**Known limit:** free-form turns between tool calls are held back only by the system prompt.
+The backend controls what's said for grounded answers, not every word the model says.
 
-The assistant needs (verify these in the Vapi dashboard; they're not testable from this repo):
+### Setup
 
-- **`lookup_spec`**, the existing server tool pointing at `/vapi-tool` with the
-  `X-Vapi-Secret` header, for spoken spec questions.
-- **`look_at_part`**, a function tool with **no server URL**, so Vapi sends the call to the
-  app. Parameter: `question` (string). The app takes a glasses photo, asks `/vision-query`,
-  and adds the result to the conversation as a system message. Mark it async, so the call
-  doesn't wait for a server reply.
-- Client messages that include `transcript`, `speech-update` and `tool-calls`.
-- A system prompt along these lines:
-
-  > You are Carvis, a hands-free assistant for a mechanic working on a {{vehicle}}. Never
-  > guess the vehicle. For any torque value, fluid amount, part number, procedure or safety
-  > step, call `lookup_spec`, or `look_at_part` when the mechanic refers to something they're
-  > looking at ("this", "that bolt"). Say tool results exactly; never add, round or invent a
-  > number. If a tool says it's not in the manual, say so plainly. Keep answers to one or two
-  > sentences.
-
-Open questions to check on hardware: whether Vapi's audio (Daily WebRTC) routes to the glasses
-when they're connected, and whether `add-message` triggers a spoken reply right away.
+Follow [the hands-free test](HANDSFREE_TEST.md). `VapiConfig.plist` is git-ignored and holds
+only the **public** key and assistant ID. The system prompt is in
+`backend/vapi/assistant_prompt.md`, and `backend/vapi_assistant.py` configures the assistant.
 
 ## Safety rules the app keeps
 
@@ -144,6 +130,9 @@ when they're connected, and whether `add-message` triggers a spoken reply right 
   errors (`{error, component}` and `{detail}`) are shown verbatim, never replaced with a guess.
 - The mock oil-change walkthrough contains no torque values, oil amounts, or intervals;
   the WRX oil section isn't loaded, so it points to the service manual instead.
-- Spoken answers are labelled with where they played: the glasses' Bluetooth name, or the
-  phone speaker as a labelled fallback. There's no separate DAT audio-output API; the glasses
-  act as a Bluetooth audio device.
+- Typed Snap-and-ask answers are labelled with where they played: the glasses' Bluetooth name
+  or the phone speaker. Hands-free conversations never use the phone's microphone or speaker
+  on purpose. There's no separate DAT audio-output API; the glasses act as a Bluetooth audio
+  device.
+- The backend must run with `CARVIS_QDRANT_COLLECTION=carvis_specs_v2`. Otherwise it refuses
+  specification questions on purpose.

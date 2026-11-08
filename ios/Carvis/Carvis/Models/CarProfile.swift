@@ -65,6 +65,11 @@ struct CarDetail: Codable, Identifiable, Equatable {
 }
 
 struct CarProfile: Codable, Equatable {
+    var year = ""
+    var make = ""
+    var model = ""
+    var transmission = ""
+    var wheelSize = ""
     var trim = ""
     var color = ""
     var plate = ""
@@ -73,6 +78,17 @@ struct CarProfile: Codable, Equatable {
     var odometerUpdated = Date.now
     var maintenance: [MaintenanceItem] = []
     var details: [CarDetail] = []
+
+    /// The car Carvis talks about. Nil until year, make, and model are filled in.
+    var vehicle: Vehicle? {
+        let (y, mk, md) = (year.trimmed, make.trimmed, model.trimmed)
+        guard y.count == 4, y.allSatisfy(\.isNumber), !mk.isEmpty, !md.isEmpty else { return nil }
+        return Vehicle(year: y, make: mk, model: md, trim: trim.trimmed.nilIfEmpty,
+                       transmission: transmission.trimmed.nilIfEmpty, wheelSize: wheelSize.trimmed.nilIfEmpty)
+    }
+
+    /// "Subaru WRX", for the top of the dashboard.
+    var carName: String { "\(make.trimmed) \(model.trimmed)".trimmed }
 
     var oilChange: MaintenanceItem? { maintenance.first { $0.isOilChange } }
     var otherMaintenance: [MaintenanceItem] { maintenance.filter { !$0.isOilChange } }
@@ -83,7 +99,7 @@ struct CarProfile: Codable, Equatable {
         let day: TimeInterval = 86_400
         return CarProfile(
             trim: "",
-            color: "WR Blue Pearl",
+            color: "",
             plate: "",
             vin: "",
             odometer: 18_240,
@@ -99,12 +115,34 @@ struct CarProfile: Codable, Equatable {
                 MaintenanceItem(name: "Wiper blades", symbol: "windshield.front.and.wiper",
                                 intervalMonths: 12, lastDate: .now - 300 * day),
             ],
-            details: [
-                CarDetail(label: "Engine", value: "2.4L turbo boxer"),
-                CarDetail(label: "Drive", value: "AWD"),
-            ]
+            details: []
         )
     }
+}
+
+extension CarProfile {
+    /// Profiles saved before the car's details were editable are missing those fields.
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        year = try c.decodeIfPresent(String.self, forKey: .year) ?? ""
+        make = try c.decodeIfPresent(String.self, forKey: .make) ?? ""
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+        transmission = try c.decodeIfPresent(String.self, forKey: .transmission) ?? ""
+        wheelSize = try c.decodeIfPresent(String.self, forKey: .wheelSize) ?? ""
+        trim = try c.decodeIfPresent(String.self, forKey: .trim) ?? ""
+        color = try c.decodeIfPresent(String.self, forKey: .color) ?? ""
+        plate = try c.decodeIfPresent(String.self, forKey: .plate) ?? ""
+        vin = try c.decodeIfPresent(String.self, forKey: .vin) ?? ""
+        odometer = try c.decodeIfPresent(Int.self, forKey: .odometer) ?? 0
+        odometerUpdated = try c.decodeIfPresent(Date.self, forKey: .odometerUpdated) ?? .now
+        maintenance = try c.decodeIfPresent([MaintenanceItem].self, forKey: .maintenance) ?? []
+        details = try c.decodeIfPresent([CarDetail].self, forKey: .details) ?? []
+    }
+}
+
+extension String {
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 /// Your car's profile, saved to a small file on the phone.

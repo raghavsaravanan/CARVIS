@@ -191,6 +191,8 @@ class ConversationSession:
         """Record a spoken confirmation or correction. Returns the fields that changed."""
         current = self.vehicle.model_dump()
         changed = {key for key, value in updates.items() if value != current.get(key)}
+        # Filling in a detail that was unknown contradicts nothing; replacing one does.
+        contradicted = {key for key in changed if current.get(key) is not None}
         merged = {**current, **updates}
         if changed & {"year", "make", "model"}:
             # A different car: variants confirmed for the old one don't carry over.
@@ -200,8 +202,8 @@ class ConversationSession:
         vehicle = Vehicle(**merged)  # raises ValueError for an unusable identity
         self.vehicle = vehicle
         self.vehicle_confirmed = True
-        if changed:
-            self.invalidate_work("vehicle corrected: " + ", ".join(sorted(changed)))
+        if contradicted:
+            self.invalidate_work("vehicle corrected: " + ", ".join(sorted(contradicted)))
         self.note("vehicle_confirmed", vehicle=self.vehicle_summary(), changed=sorted(changed))
         return changed
 

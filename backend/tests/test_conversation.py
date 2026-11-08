@@ -232,6 +232,30 @@ def test_spoken_vehicle_correction_invalidates_dependent_memory(api):
     run(scenario())
 
 
+def test_adding_a_missing_detail_keeps_what_was_already_established(api):
+    async def scenario():
+        async with client() as http:
+            phone = await confirmed(http)
+            await vapi(http, ("c1", "lookup_spec", {"query": "ride height tolerance"}))
+            await vapi(http, ("c2", "confirm_vehicle", {"wheel_size": "18-inch"}))
+            state = await phone.state()
+            assert state["vehicle"]["wheel_size"] == "18-inch"
+            assert state["grounded_answer"] is not None
+    run(scenario())
+
+
+def test_changing_a_confirmed_detail_invalidates_what_depended_on_it(api):
+    async def scenario():
+        async with client() as http:
+            phone = await confirmed(http, wheel_size="18-inch")
+            await vapi(http, ("c1", "lookup_spec", {"query": "rear ride height"}))
+            await vapi(http, ("c2", "confirm_vehicle", {"wheel_size": "17-inch"}))
+            state = await phone.state()
+            assert state["vehicle"]["wheel_size"] == "17-inch"
+            assert state["grounded_answer"] is None and state["component"] is None
+    run(scenario())
+
+
 def test_correcting_the_part_invalidates_the_previous_answer(api):
     async def scenario():
         async with client() as http:

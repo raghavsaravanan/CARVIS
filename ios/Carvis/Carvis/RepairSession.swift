@@ -92,7 +92,7 @@ final class RepairSession {
 
         let request = StepRequest(
             sessionID: sessionID,
-            procedure: "oil_change_2022_wrx",
+            procedure: "oil_change",
             stepNumber: current?.stepNumber ?? 0,
             utterance: utterance,
             frameB64: nil

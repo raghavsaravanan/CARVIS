@@ -163,6 +163,12 @@ final class CarvisWakeListener {
         }
     }
 
+    /// Finishes once the Speech capability has been stopped and removed from the session,
+    /// so a conversation can take over the audio without the glasses still listening.
+    func finishCleanup() async {
+        await cleanup?.value
+    }
+
     func disarm() {
         armID = UUID() // Late permission callbacks cannot re-arm the listener.
         isArmed = false

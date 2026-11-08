@@ -63,7 +63,7 @@ struct JobProgressView: View {
 /// Carvis during a job: the live view from your glasses, what it's hearing, and its
 /// latest answer. Dark, like an instrument panel, so it's the first thing you see.
 private struct AssistantPanel: View {
-    @Environment(CarvisAssistant.self) private var assistant
+    @Environment(CarvisConversationCoordinator.self) private var assistant
     @Environment(GlassesController.self) private var glasses
 
     private var shown: UIImage? { assistant.photo ?? (assistant.isWorking ? nil : glasses.frame) }
@@ -79,6 +79,18 @@ private struct AssistantPanel: View {
                     .font(.headline)
                 Spacer()
                 let isOn = assistant.voiceDisplay.isOn
+                if assistant.isInConversation {
+                    Button(action: assistant.endConversation) {
+                        Label("End", systemImage: "phone.down.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 44)
+                            .background(Theme.safetyRed.opacity(0.85), in: Capsule())
+                    }
+                    .buttonStyle(PressableCardStyle())
+                    .accessibilityLabel("End conversation")
+                    .transition(.blurReplace)
+                }
                 Button(action: assistant.toggleVoice) {
                     Label(isOn ? "Mute" : (assistant.voiceOn ? "Try again" : "Unmute"),
                           systemImage: isOn ? "mic.fill" : (assistant.voiceOn ? "arrow.clockwise" : "mic.slash.fill"))
@@ -97,12 +109,14 @@ private struct AssistantPanel: View {
 
             voiceLine
 
-            if let asked = assistant.askedQuestion, let reply = reply {
+            if let reply = reply {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("\u{201C}\(asked)\u{201D}")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(2)
+                    if let asked = reply.asked {
+                        Text("\u{201C}\(asked)\u{201D}")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(2)
+                    }
                     Text(reply.text)
                         .font(.title2.weight(.semibold))
                         .foregroundStyle(reply.fromManual ? .white : Theme.warning)
@@ -125,12 +139,16 @@ private struct AssistantPanel: View {
         .animation(.spring(duration: 0.4, bounce: 0), value: assistant.phase)
     }
 
-    private var reply: (text: String, fromManual: Bool)? {
+    private var reply: (asked: String?, text: String, fromManual: Bool)? {
+        // A conversation's answer comes from the server's memory, so it's what was validated.
+        if let grounded = assistant.serverState?.grounded_answer {
+            return (grounded.query, grounded.text, true)
+        }
         switch assistant.phase {
-        case .result(.answer(let text, _, _)): (text, true)
-        case .result(.notInManual(let message, _)): ("Not in the manual. \(message)", false)
-        case .failed(let message): ("Couldn\u{2019}t get an answer. \(message)", false)
-        default: nil
+        case .result(.answer(let text, _, _)): return (assistant.askedQuestion, text, true)
+        case .result(.notInManual(let message, _)): return (assistant.askedQuestion, "Not in the manual. \(message)", false)
+        case .failed(let message): return (assistant.askedQuestion, "Couldn\u{2019}t get an answer. \(message)", false)
+        default: return nil
         }
     }
 

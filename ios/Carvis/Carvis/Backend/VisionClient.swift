@@ -6,11 +6,19 @@ struct Vehicle: Codable, Equatable {
     let year: String
     let make: String
     let model: String
+    var trim: String?
+    var transmission: String?
+    var wheelSize: String?
 
-    /// The demo car. Carvis only has this car's service manual loaded.
-    static let demo = Vehicle(year: "2022", make: "subaru", model: "wrx")
+    enum CodingKeys: String, CodingKey {
+        case year, make, model, trim, transmission
+        case wheelSize = "wheel_size"
+    }
 
-    var displayName: String { "\(year) Subaru WRX" }
+    var displayName: String {
+        let shortModel = model.count <= 3 ? model.uppercased() : model.capitalized
+        return "\(year) \(make.capitalized) \(shortModel)"
+    }
 }
 
 /// What Carvis thinks the photo shows. This only helps the search;
@@ -71,7 +79,8 @@ struct CarvisVisionClient: VisionClient {
             ("make", vehicle.make),
             ("model", vehicle.model),
             ("session_id", sessionID),
-        ])
+        ] + [("transmission", vehicle.transmission), ("trim", vehicle.trim), ("wheel_size", vehicle.wheelSize)]
+            .compactMap { name, value in value.map { (name, $0) } })
 
         let (data, response): (Data, URLResponse)
         do {
