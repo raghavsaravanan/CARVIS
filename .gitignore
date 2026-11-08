@@ -7,10 +7,10 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-george_mvp_db/
-backend/george_mvp_db/
-.george_parse_cache/
-backend/.george_parse_cache/
+carvis_mvp_db/
+backend/carvis_mvp_db/
+.carvis_parse_cache/
+backend/.carvis_parse_cache/
 .fastembed_cache/
 _ams_*.md
 _llama_parse_preview*.md

@@ -166,7 +166,7 @@ struct AskView: View {
         if client == nil {
             NoticeCard(
                 title: "Server address missing",
-                message: "Add GeorgeBaseURL to Carvis-Info.plist so Carvis knows where to send questions.",
+                message: "Add CarvisBaseURL to Carvis-Info.plist so Carvis knows where to send questions.",
                 systemImage: "exclamationmark.triangle.fill",
                 tint: Theme.safetyRed
             )

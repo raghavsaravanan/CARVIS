@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Wipe George's Qdrant collection for a clean from-scratch re-ingest.
+"""Wipe Carvis's Qdrant collection for a clean from-scratch re-ingest.
 
 Connects to Qdrant Cloud via QDRANT_URL + QDRANT_API_KEY (from .env / env).
-Drops the active george_specs collection and recreates it empty with the
+Drops the active carvis_specs collection and recreates it empty with the
 same vector size and keyword indexes used by ingest.py.
 
 Usage:
@@ -22,7 +22,7 @@ from qdrant_client.http import models as qmodels
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-COLLECTION_NAME = "george_specs"
+COLLECTION_NAME = "carvis_specs"
 VECTOR_SIZE = 384
 INDEX_FIELDS = ("document_ref", "year", "make", "model", "shop_id")
 DEFAULT_SHOP_ID = "shop_demo"

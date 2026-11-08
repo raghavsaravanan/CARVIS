@@ -1,11 +1,11 @@
-# Render Blueprint — George voice webhook API
+# Render Blueprint — Carvis voice webhook API
 # Docs: https://render.com/docs/blueprint-spec
 #
 # Paths are repo-root relative (no rootDir) so existing Render services
 # keep working after the backend/frontend split.
 services:
   - type: web
-    name: george-api
+    name: carvis-api
     runtime: python
     plan: free
     region: oregon

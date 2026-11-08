@@ -15,14 +15,14 @@ type VisionResult = {
   error?: string;
 };
 
-const API_BASE = (import.meta.env.VITE_GEORGE_API_URL || "/api").replace(/\/$/, "");
+const API_BASE = (import.meta.env.VITE_CARVIS_API_URL || "/api").replace(/\/$/, "");
 
 function App() {
   const [photo, setPhoto] = useState<File | null>(null);
   const [question, setQuestion] = useState("What is the torque specification for this component?");
-  const [year, setYear] = useState("2019");
-  const [make, setMake] = useState("chevrolet");
-  const [model, setModel] = useState("silverado");
+  const [year, setYear] = useState("");
+  const [make, setMake] = useState("");
+  const [model, setModel] = useState("");
   const [result, setResult] = useState<VisionResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -64,7 +64,7 @@ function App() {
   return (
     <main className="shell">
       <header>
-        <p className="eyebrow">GEORGE / VISION QUERY</p>
+        <p className="eyebrow">CARVIS / VISION QUERY</p>
         <h1>Look at the part. Ask the manual.</h1>
         <p className="lede">A small vertical slice for the glasses workflow: JPEG context in, manual-backed answer out.</p>
       </header>
@@ -83,11 +83,11 @@ function App() {
           <div className="section-heading"><span>02</span><h2>Confirm vehicle</h2></div>
           <p className="hint">Visual identification never replaces these manual-selection fields.</p>
           <div className="vehicle-grid">
-            <label>Year<input value={year} onChange={(event) => setYear(event.target.value)} /></label>
-            <label>Make<input value={make} onChange={(event) => setMake(event.target.value)} /></label>
-            <label>Model<input value={model} onChange={(event) => setModel(event.target.value)} /></label>
+            <label>Year<input value={year} onChange={(event) => setYear(event.target.value)} placeholder="e.g. 2022" /></label>
+            <label>Make<input value={make} onChange={(event) => setMake(event.target.value)} placeholder="e.g. subaru" /></label>
+            <label>Model<input value={model} onChange={(event) => setModel(event.target.value)} placeholder="e.g. wrx" /></label>
           </div>
-          <button disabled={busy}>{busy ? "Reading manual…" : "Ask George"}</button>
+          <button disabled={busy}>{busy ? "Reading manual…" : "Ask Carvis"}</button>
           {error && <p className="error">{error}</p>}
         </section>
       </form>

@@ -1,12 +1,12 @@
 # Remaining work plan
 
-George is split into three workstreams. They can proceed in parallel after the shared API contract is kept stable.
+Carvis is split into three workstreams. They can proceed in parallel after the shared API contract is kept stable.
 
 ## Workstream 1 — Backend and manual retrieval
 
 Owner: backend/data engineer
 
-Goal: prove that George can safely answer from the correct uploaded manual.
+Goal: prove that Carvis can safely answer from the correct uploaded manual.
 
 ### Tasks
 

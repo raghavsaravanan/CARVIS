@@ -1,4 +1,4 @@
-"""Unit tests for George voice formatting helpers (no Qdrant required)."""
+"""Unit tests for Carvis voice formatting helpers (no Qdrant required)."""
 
 from __future__ import annotations
 

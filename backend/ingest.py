@@ -1,10 +1,10 @@
-"""Offline Phase-1 seeder for Project George.
+"""Offline Phase-1 seeder for Project Carvis.
 
 Parses a binary FSM/service PDF via LlamaParse into Markdown, expands
 mechanical unit abbreviations for voice-safe storage, isolates Markdown
 tables as atomic chunks, embeds them locally with FastEmbed, and upserts
 into Qdrant (cloud when QDRANT_URL + QDRANT_API_KEY are set, otherwise
-the local file-based store at ./george_mvp_db).
+the local file-based store at ./carvis_mvp_db).
 """
 
 from __future__ import annotations
@@ -29,15 +29,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 DEFAULT_PDF_PATH = PROJECT_ROOT / "intake_manifold_guide.pdf.pdf"
-QDRANT_PATH = PROJECT_ROOT / "george_mvp_db"
-PARSE_CACHE_DIR = PROJECT_ROOT / ".george_parse_cache"
-COLLECTION_NAME = "george_specs"
+QDRANT_PATH = PROJECT_ROOT / "carvis_mvp_db"
+PARSE_CACHE_DIR = PROJECT_ROOT / ".carvis_parse_cache"
+COLLECTION_NAME = "carvis_specs"
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 VECTOR_SIZE = 384
 
-DEFAULT_YEAR = "2019"
-DEFAULT_MAKE = "chevrolet"
-DEFAULT_MODEL = "silverado"
+DEFAULT_YEAR = ""
+DEFAULT_MAKE = ""
+DEFAULT_MODEL = ""
 DEFAULT_SHOP_ID = "shop_demo"
 
 # Longer / period-spaced patterns first so partial matches cannot corrupt text.
@@ -708,10 +708,10 @@ async def run_ingest_many(
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Ingest one or more binary PDFs via LlamaParse into George's "
+            "Ingest one or more binary PDFs via LlamaParse into Carvis's "
             "Qdrant store (cloud or local). Each document is replaced by "
             "document_ref within a shop_id tenant; other manuals are preserved. "
-            "Parse results are cached under .george_parse_cache/ to avoid "
+            "Parse results are cached under .carvis_parse_cache/ to avoid "
             "burning LlamaParse credits on every run."
         )
     )

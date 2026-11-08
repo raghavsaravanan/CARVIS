@@ -1,6 +1,6 @@
 # Deferred SpacetimeDB integration plan
 
-SpacetimeDB is deferred for the current HackUTD demo. If the product later needs persistent multi-device state or a live shop workflow, it can become George's operational state layer. It will not replace Qdrant, which remains the source of truth for service-manual chunks and embeddings.
+SpacetimeDB is deferred for the current HackUTD demo. If the product later needs persistent multi-device state or a live shop workflow, it can become Carvis's operational state layer. It will not replace Qdrant, which remains the source of truth for service-manual chunks and embeddings.
 
 ## What SpacetimeDB does
 
@@ -12,17 +12,17 @@ SpacetimeDB should own the data that changes during a mechanic session:
 - source-grounded result metadata and latency;
 - connected-client/demo-dashboard state.
 
-It must not store API keys, raw JPEGs, service-manual PDFs, Qdrant vectors, or unredacted credentials. The image is sent to George for inference and is discarded after the request.
+It must not store API keys, raw JPEGs, service-manual PDFs, Qdrant vectors, or unredacted credentials. The image is sent to Carvis for inference and is discarded after the request.
 
 ## Request flow
 
 ```text
 Web/native client
   ├─ connect to SpacetimeDB and create/update session state
-  └─ POST JPEG + question + explicit vehicle identity to George
+  └─ POST JPEG + question + explicit vehicle identity to Carvis
        ├─ Nemotron proposes visual component context
        ├─ Qdrant retrieves matching manual content
-       └─ George returns source-grounded answer
+       └─ Carvis returns source-grounded answer
   └─ record sanitized result and subscribe to live state
 ```
 
@@ -70,12 +70,12 @@ The browser/native client is the simplest SpacetimeDB client because the officia
 ```env
 VITE_SPACETIMEDB_ENABLED=true
 VITE_SPACETIMEDB_URI=https://maincloud.spacetimedb.com
-VITE_SPACETIMEDB_DB_NAME=george-hackutd
+VITE_SPACETIMEDB_DB_NAME=carvis-hackutd
 ```
 
 Do not put `NVIDIA_API_KEY`, `QDRANT_API_KEY`, `LLAMA_CLOUD_API_KEY`, `VAPI_WEBHOOK_SECRET`, or an admin token in Vite environment variables. Use the SDK's supported anonymous/authenticated flow. If authentication is added, tokens are obtained at runtime and are not committed or hard-coded.
 
-George remains the trusted boundary for Nemotron and Qdrant. The client writes only lifecycle metadata before and after the API call. The returned answer is displayed and spoken only after George marks it `source_grounded`.
+Carvis remains the trusted boundary for Nemotron and Qdrant. The client writes only lifecycle metadata before and after the API call. The returned answer is displayed and spoken only after Carvis marks it `source_grounded`.
 
 ## Backend contract changes
 
@@ -86,7 +86,7 @@ Keep `/vapi-tool`, `/upload`, and the current `/vision-query` inputs backward-co
 3. Return a sanitized `status` value such as `answered`, `refused`, or `failed`.
 4. Keep SpacetimeDB credentials out of the FastAPI process for the first implementation; the client can record state through reducers.
 
-If a trusted server-side writer becomes necessary, add a separate adapter and a server-only `SPACETIMEDB_TOKEN`. Do not make the answer path depend on SpacetimeDB availability: if the state service is unavailable, George must still answer from the matching manual and the UI must show degraded telemetry.
+If a trusted server-side writer becomes necessary, add a separate adapter and a server-only `SPACETIMEDB_TOKEN`. Do not make the answer path depend on SpacetimeDB availability: if the state service is unavailable, Carvis must still answer from the matching manual and the UI must show degraded telemetry.
 
 ## Future implementation phases
 
@@ -96,7 +96,7 @@ If a trusted server-side writer becomes necessary, add a separate adapter and a 
 - Authenticate with `spacetime login`.
 - Create `spacetime/` from the official TypeScript module template.
 - Define the tables and reducers above.
-- Run the local module and publish the database as `george-hackutd` or another lowercase, hyphenated name.
+- Run the local module and publish the database as `carvis-hackutd` or another lowercase, hyphenated name.
 
 Acceptance: the module starts locally, publishes successfully, and a generated TypeScript client can connect and subscribe.
 
@@ -113,7 +113,7 @@ Acceptance: opening two clients shows the same active session/query state withou
 ### S3 — Make the API correlation-safe
 
 - Add `query_id` to `/vision-query` responses.
-- Correlate the SpacetimeDB `vision_query` row with the George request.
+- Correlate the SpacetimeDB `vision_query` row with the Carvis request.
 - Record only the detected component, confidence, status, source label, and latency.
 - Preserve manual-match refusal behavior and existing `/vapi-tool` behavior.
 
@@ -124,7 +124,7 @@ Acceptance: a successful answer, missing-manual refusal, provider failure, and v
 - Add a small live session/query panel to the web app.
 - Show `identifying → retrieving → answered/refused/failed`.
 - Make telemetry writes best-effort with visible degraded-state logging.
-- Never block a source-grounded George answer because a dashboard subscription is down.
+- Never block a source-grounded Carvis answer because a dashboard subscription is down.
 
 Acceptance: the demo can be run with SpacetimeDB online, and the core answer path fails safely when SpacetimeDB is temporarily unavailable.
 
@@ -143,5 +143,5 @@ Acceptance: the demo can be run with SpacetimeDB online, and the core answer pat
 - [SpacetimeDB TypeScript quickstart](https://spacetimedb.com/docs/quickstarts/typescript)
 - [SpacetimeDB client SDKs](https://spacetimedb.com/docs/clients/)
 - [SpacetimeDB authorization](https://spacetimedb.com/docs/http/authorization/)
-- [George architecture](./architecture.md)
+- [Carvis architecture](./architecture.md)
 - [Nemotron and SpacetimeDB decisions](./nemotron-spacetime.md)

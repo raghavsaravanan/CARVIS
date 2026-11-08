@@ -15,7 +15,7 @@
 			</array>
 		</dict>
 	</array>
-	<key>GeorgeBaseURL</key>
+	<key>CarvisBaseURL</key>
 	<string>http://Gabriels-MacBook-Pro-2.local:8000</string>
 	<key>MWDAT</key>
 	<dict>

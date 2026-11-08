@@ -1,8 +1,8 @@
-"""Live Phase-2 webhook for Project George.
+"""Live Phase-2 webhook for Project Carvis.
 
 FastAPI endpoint that accepts Vapi custom tool-call webhooks, embeds the
 technician query locally with FastEmbed, applies a strict year/make/model
-Qdrant metadata filter against the offline-seeded george_specs collection,
+Qdrant metadata filter against the offline-seeded carvis_specs collection,
 and returns a single-line 1-2 sentence spoken result for headset TTS.
 """
 
@@ -46,10 +46,10 @@ from ingest import (
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-logger = logging.getLogger("george.main")
+logger = logging.getLogger("carvis.main")
 
-QDRANT_PATH = PROJECT_ROOT / "george_mvp_db"
-COLLECTION_NAME = "george_specs"
+QDRANT_PATH = PROJECT_ROOT / "carvis_mvp_db"
+COLLECTION_NAME = "carvis_specs"
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 DEFAULT_SHOP_ID = "shop_demo"
 # Cosine similarity floor for shop-scoped semantic fallback (Pass 3).
@@ -1195,7 +1195,7 @@ async def lifespan(app: FastAPI):
             format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
         )
     logger.setLevel(logging.INFO)
-    logger.info("George webhook starting up")
+    logger.info("Carvis webhook starting up")
 
     # On Render, cloud Qdrant is mandatory — never fall back to a missing local path.
     on_render = bool((os.getenv("RENDER") or "").strip())
@@ -1236,11 +1236,11 @@ async def lifespan(app: FastAPI):
     finally:
         client.close()
         invalidate_shop_catalog()
-        logger.info("George webhook shut down")
+        logger.info("Carvis webhook shut down")
 
 
 app = FastAPI(
-    title="George Vapi Tool Webhook",
+    title="Carvis Vapi Tool Webhook",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -1257,7 +1257,7 @@ app.add_middleware(
 @app.get("/health")
 async def health() -> dict[str, str]:
     """Liveness endpoint for Render / load balancers."""
-    return {"status": "ok", "service": "george"}
+    return {"status": "ok", "service": "carvis"}
 
 
 class VisionConfigurationError(RuntimeError):
@@ -1552,7 +1552,7 @@ async def _ingest_upload_job(
         try:
             temp_path.unlink(missing_ok=True)
             parent = temp_path.parent
-            if parent.name.startswith("george_upload_"):
+            if parent.name.startswith("carvis_upload_"):
                 parent.rmdir()
         except OSError:
             logger.warning("could not delete temp upload %s", temp_path)
@@ -1583,7 +1583,7 @@ async def upload_manual(
         )
 
     safe_name = Path(filename).name
-    tmp_dir = Path(tempfile.mkdtemp(prefix="george_upload_"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="carvis_upload_"))
     temp_path = tmp_dir / safe_name
     try:
         with temp_path.open("wb") as out:

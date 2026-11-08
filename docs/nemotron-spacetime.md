@@ -4,12 +4,12 @@
 
 Use NVIDIA Nemotron for visual component context and Qdrant as the manual retrieval store. SpacetimeDB is deferred and is not part of the current runtime.
 
-NVIDIA's current Nemotron 3 Nano Omni model accepts image and text input and exposes an OpenAI-compatible chat-completions endpoint. George's adapter uses that endpoint, so the iPhone/web client contract stays unchanged:
+NVIDIA's current Nemotron 3 Nano Omni model accepts image and text input and exposes an OpenAI-compatible chat-completions endpoint. Carvis's adapter uses that endpoint, so the iPhone/web client contract stays unchanged:
 
 ```text
 JPEG + explicit vehicle context + question
   → Nemotron component context
-  → George query enrichment
+  → Carvis query enrichment
   → Qdrant manual retrieval
   → existing source-grounded formatter
 ```
@@ -55,10 +55,10 @@ NEMOTRON_BASE_URL=https://integrate.api.nvidia.com/v1
 If a future scope requires SpacetimeDB, its frontend values would be:
 
 ```env
-VITE_GEORGE_API_URL=/api
+VITE_CARVIS_API_URL=/api
 VITE_SPACETIMEDB_ENABLED=true
 VITE_SPACETIMEDB_URI=https://maincloud.spacetimedb.com
-VITE_SPACETIMEDB_DB_NAME=george-hackutd
+VITE_SPACETIMEDB_DB_NAME=carvis-hackutd
 ```
 
 Do not add a SpacetimeDB admin token to the frontend environment. This configuration is intentionally not present in the current [`frontend/.env`](../frontend/.env).

@@ -1,19 +1,19 @@
 import Foundation
 
-/// The car the photo questions are about. Sent to George on every question,
+/// The car the photo questions are about. Sent to Carvis on every question,
 /// because a photo alone must never decide which car it is.
 struct Vehicle: Codable, Equatable {
     let year: String
     let make: String
     let model: String
 
-    /// The demo car. George only has this car's service manual loaded.
+    /// The demo car. Carvis only has this car's service manual loaded.
     static let demo = Vehicle(year: "2022", make: "subaru", model: "wrx")
 
     var displayName: String { "\(year) Subaru WRX" }
 }
 
-/// What George thinks the photo shows. This only helps the search;
+/// What Carvis thinks the photo shows. This only helps the search;
 /// it never decides the answer.
 struct VisionComponent: Codable, Equatable {
     let component: String
@@ -31,11 +31,11 @@ struct VisionComponent: Codable, Equatable {
 enum VisionResult: Equatable {
     /// Found in the service manual.
     case answer(text: String, component: VisionComponent, vehicle: Vehicle)
-    /// George looked and the manual doesn't have it, so it refused instead of guessing.
+    /// Carvis looked and the manual doesn't have it, so it refused instead of guessing.
     case notInManual(message: String, component: VisionComponent?)
 }
 
-/// Sends a photo and a question to George's /vision-query.
+/// Sends a photo and a question to Carvis's /vision-query.
 protocol VisionClient {
     func ask(photo jpeg: Data, question: String, vehicle: Vehicle, sessionID: String) async throws -> VisionResult
 }
@@ -45,18 +45,18 @@ struct VisionClientError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// Talks to the George backend over HTTP. No API keys live in the app;
+/// Talks to the Carvis backend over HTTP. No API keys live in the app;
 /// the backend holds them.
-struct GeorgeVisionClient: VisionClient {
+struct CarvisVisionClient: VisionClient {
     let baseURL: URL
     var session: URLSession = .shared
 
-    /// Reads the backend address from Info.plist (key GeorgeBaseURL).
-    static func fromInfoPlist() -> GeorgeVisionClient? {
-        guard let text = Bundle.main.object(forInfoDictionaryKey: "GeorgeBaseURL") as? String,
+    /// Reads the backend address from Info.plist (key CarvisBaseURL).
+    static func fromInfoPlist() -> CarvisVisionClient? {
+        guard let text = Bundle.main.object(forInfoDictionaryKey: "CarvisBaseURL") as? String,
               let url = URL(string: text.trimmingCharacters(in: .whitespaces)), url.scheme != nil
         else { return nil }
-        return GeorgeVisionClient(baseURL: url)
+        return CarvisVisionClient(baseURL: url)
     }
 
     func ask(photo jpeg: Data, question: String, vehicle: Vehicle, sessionID: String) async throws -> VisionResult {
@@ -92,7 +92,7 @@ struct GeorgeVisionClient: VisionClient {
             let body = try decoder.decode(Success.self, from: data)
             return .answer(text: body.answer, component: body.component, vehicle: body.vehicle)
         case 404:
-            // George's refusal: {"error": "...", "component": {...}}
+            // Carvis's refusal: {"error": "...", "component": {...}}
             struct Refusal: Decodable {
                 let error: String
                 let component: VisionComponent?

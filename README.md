@@ -1,4 +1,4 @@
-# George
+# Carvis
 
 Hands-free AI mechanic copilot for manual-grounded automotive answers.
 
@@ -11,12 +11,12 @@ docs/       architecture, integration plans, and platform decisions
 ios/        Meta CameraAccess native integration handoff
 ```
 
-Hands-free voice RAG for automotive technicians. Ask torque and install specs out loud; George answers in one or two clear sentences from shop manuals — not from guesswork.
+Hands-free voice RAG for automotive technicians. Ask torque and install specs out loud; Carvis answers in one or two clear sentences from shop manuals — not from guesswork.
 
 ```text
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │ Manual PDFs │ ──► │ backend/ingest.py│ ──► │ Qdrant Cloud    │
-│ (local only)│     │ LlamaParse +     │     │ george_specs    │
+│ (local only)│     │ LlamaParse +     │     │ carvis_specs    │
 └─────────────┘     │ FastEmbed        │     │ + shop_id       │
                     └──────────────────┘     └────────┬────────┘
                                                       │
@@ -37,11 +37,11 @@ Decoupled on purpose: eating manuals is slow and credit-sensitive; answering mus
 ## Repository map
 
 ```text
-George/
+Carvis/
 ├── backend/                 # FastAPI + ingest + Qdrant tooling
 │   ├── main.py              # /vapi-tool, /upload, /health
 │   ├── ingest.py            # PDF → chunks → Qdrant Cloud
-│   ├── purge_db.py          # Wipe/recreate empty george_specs
+│   ├── purge_db.py          # Wipe/recreate empty carvis_specs
 │   ├── setup.sh             # Prerequisite check
 │   ├── requirements.txt
 │   ├── Procfile             # Backend-local Render start command
@@ -50,8 +50,8 @@ George/
 │   ├── tests/
 │   ├── .env.example
 │   ├── *.pdf                # Local manuals only (gitignored)
-│   ├── george_mvp_db/       # Optional local Qdrant (gitignored)
-│   └── .george_parse_cache/ # Parse cache (gitignored)
+│   ├── carvis_mvp_db/       # Optional local Qdrant (gitignored)
+│   └── .carvis_parse_cache/ # Parse cache (gitignored)
 ├── frontend/                # Vite/React vision-query demo client
 ├── docs/                    # Architecture and integration decisions
 ├── ios/                     # Meta CameraAccess handoff
@@ -215,9 +215,9 @@ The live webhook is [`backend/main.py`](backend/main.py). Ingest stays on your l
 
 | Layer | Choice |
 | --- | --- |
-| Parse | LlamaParse (`cost_effective`) + local `backend/.george_parse_cache/` |
+| Parse | LlamaParse (`cost_effective`) + local `backend/.carvis_parse_cache/` |
 | Embed | FastEmbed local CPU (also on Render) |
-| Store | Qdrant Cloud `george_specs` (local `backend/george_mvp_db` for offline only) |
+| Store | Qdrant Cloud `carvis_specs` (local `backend/carvis_mvp_db` for offline only) |
 | API | FastAPI on Render |
 | Voice | Vapi (WebRTC + STT/TTS) |
 | Tunnel | Ngrok (local dev only) |

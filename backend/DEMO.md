@@ -1,4 +1,4 @@
-# George shop-demo runbook
+# Carvis shop-demo runbook
 
 Keep this path green before building a frontend.
 
@@ -9,9 +9,9 @@ Keep this path green before building a frontend.
 | `intake_manifold_guide.pdf.pdf` | `intake_manifold_guide` | 2019 | chevrolet | silverado |
 | `AMS Performance VR30 Guide.pdf` | `ams_performance_vr30_guide` | 2016 | nissan | vr30 |
 
-The PDFs are local-only inputs and are not tracked in Git. Confirm that the files exist and that the Qdrant `george_specs` collection contains points before starting the API. The configured cloud database is currently empty until these manuals are ingested.
+The PDFs are local-only inputs and are not tracked in Git. Confirm that the files exist and that the Qdrant `carvis_specs` collection contains points before starting the API. The configured cloud database is currently empty until these manuals are ingested.
 
-Parse Markdown is cached in `.george_parse_cache/` (gitignored). Re-ingest does **not** call LlamaParse unless you pass `--force-parse`.
+Parse Markdown is cached in `.carvis_parse_cache/` (gitignored). Re-ingest does **not** call LlamaParse unless you pass `--force-parse`.
 
 ## Start for a Call test (3 terminals)
 
@@ -25,7 +25,7 @@ cd /Users/raghav.s18/Documents/Projects/HackUTD26/backend
 ngrok http 8000
 ```
 
-Vapi → George assistant → tool `lookup_spec` → Server URL:
+Vapi → Carvis assistant → tool `lookup_spec` → Server URL:
 
 ```text
 # Local demo
@@ -76,7 +76,7 @@ If the tech says “AMS VR30”, the API infers `nissan` / `vr30` / `2016`. If t
 ### Paste into Assistant **System Prompt**
 
 ```text
-You are George, a hands-free shop-floor automotive voice assistant for technicians wearing headphones.
+You are Carvis, a hands-free shop-floor automotive voice assistant for technicians wearing headphones.
 
 MISSION
 Answer torque, fastener, gasket, and install-spec questions ONLY from the lookup_spec tool. You do not invent specs. The tool result is the source of truth.

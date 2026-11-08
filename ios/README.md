@@ -1,7 +1,7 @@
-# Carvis iOS app (Meta glasses + George)
+# Carvis iOS app (Meta glasses + Carvis)
 
 `ios/Carvis` is the iPhone app. The phone is the dashboard; the Meta glasses provide live
-video. The **Ask Carvis** screen takes a photo with the glasses camera, sends it to George's
+video. The **Ask Carvis** screen takes a photo with the glasses camera, sends it to Carvis's
 `POST /vision-query` with the question and the explicit vehicle (2022 / subaru / wrx), and
 shows and speaks the manual-grounded answer or refusal.
 
@@ -51,8 +51,8 @@ phone can hold only 3 free-team apps at once.
 1. Open `ios/Carvis/Carvis.xcodeproj` in Xcode. Swift Package Manager fetches
    `meta-wearables-dat-ios`.
 2. Select the Carvis target, choose your team, and keep or change the bundle ID.
-3. In `Carvis-Info.plist`, set `GeorgeBaseURL` to the backend. It defaults to a Mac on the same
-   Wi-Fi (`http://<mac-name>.local:8000`); for that, run George with
+3. In `Carvis-Info.plist`, set `CarvisBaseURL` to the backend. It defaults to a Mac on the same
+   Wi-Fi (`http://<mac-name>.local:8000`); for that, run Carvis with
    `uvicorn main:app --host 0.0.0.0 --port 8000` from `backend/`. Use the HTTPS Render URL once
    deployed.
 4. Run on the iPhone. On the dashboard, tap **Connect glasses** and approve in the Meta AI app
@@ -61,10 +61,10 @@ phone can hold only 3 free-team apps at once.
 
 ## Safety rules the app keeps
 
-- No API keys in the app; George holds them.
+- No API keys in the app; Carvis holds them.
 - Captured photos stay in memory and are never saved or committed.
 - The vehicle is always sent explicitly; the photo never decides which car it is.
-- The answer text is shown exactly as George returns it. Refusals ("not in the manual") and
+- The answer text is shown exactly as Carvis returns it. Refusals ("not in the manual") and
   errors (`{error, component}` and `{detail}`) are shown verbatim, never replaced with a guess.
 - The mock oil-change walkthrough contains no torque values, oil amounts, or intervals;
   the WRX oil section isn't loaded, so it points to the service manual instead.

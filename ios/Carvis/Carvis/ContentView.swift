@@ -36,7 +36,7 @@ struct ContentView: View {
                 DoneView(session: session, response: response)
             }
         case .ask:
-            AskView(vehicle: .demo, client: GeorgeVisionClient.fromInfoPlist(), speech: askSpeech)
+            AskView(vehicle: .demo, client: CarvisVisionClient.fromInfoPlist(), speech: askSpeech)
         }
     }
 }
