@@ -140,6 +140,7 @@ def test_call_variables_carry_the_profile_and_no_specifications(api):
             await phone.call()
             assert phone.variables["owner_first_name"] == "Gabriel"
             assert phone.variables["vehicle_summary"] == "2022 Subaru WRX"
+            assert phone.variables["vehicle_model"] == "WRX"
             assert phone.variables["vehicle_confirmed"] == "no"
             assert phone.variables["carvis_session_id"] == phone.id
     run(scenario())
@@ -253,6 +254,18 @@ def test_changing_a_confirmed_detail_invalidates_what_depended_on_it(api):
             state = await phone.state()
             assert state["vehicle"]["wheel_size"] == "17-inch"
             assert state["grounded_answer"] is None and state["component"] is None
+    run(scenario())
+
+
+def test_spoken_answers_do_not_repeat_the_vehicle(api):
+    async def scenario():
+        async with client() as http:
+            phone = await confirmed(http, wheel_size="18-inch")
+            reply = await vapi(http, ("c1", "lookup_spec", {"query": "rear ride height"}))
+            spoken = reply[0]["message"]["content"]
+            assert "subaru" not in spoken.lower() and "wrx" not in spoken.lower() and "2022" not in spoken
+            assert "minus 9 millimeters" in spoken
+            assert (await phone.state())["grounded_answer"]["text"] == spoken
     run(scenario())
 
 

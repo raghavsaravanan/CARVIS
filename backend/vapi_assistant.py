@@ -35,7 +35,8 @@ LOOKUP_TIMEOUT_SECONDS = 15
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str], server: dict, timeout: int) -> dict:
-    return {"type": "function", "async": False,
+    # Without a request-start message, Vapi says stock lines like "Hold on a sec" on every tool call.
+    return {"type": "function", "async": False, "messages": [{"type": "request-start", "content": ""}],
             "function": {"name": name, "description": description,
                          "parameters": {"type": "object", "properties": properties, "required": required}},
             "server": {**server, "timeoutSeconds": timeout}}
@@ -82,7 +83,9 @@ def assistant_config(public_url: str, secret: str) -> dict:
         "model": {"provider": "openai", "model": MODEL, "temperature": 0.3,
                   "messages": [{"role": "system", "content": PROMPT_PATH.read_text().strip()}],
                   "tools": tools(server)},
-        "voice": {"provider": "vapi", "voiceId": "Elliot"},
+        # ElevenLabs' stock British voice "Daniel", with a British Azure voice if it's unavailable.
+        "voice": {"provider": "11labs", "voiceId": "onwK4e9ZLuTAKqWW03F9", "model": "eleven_turbo_v2_5",
+                  "fallbackPlan": {"voices": [{"provider": "azure", "voiceId": "en-GB-RyanNeural"}]}},
         "transcriber": {"provider": "deepgram", "model": "nova-3", "language": "en", "keyterm": ["Carvis"]},
         "clientMessages": ["transcript", "speech-update", "status-update", "user-interrupted"],
         "serverMessages": ["tool-calls", "status-update", "end-of-call-report"],

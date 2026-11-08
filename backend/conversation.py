@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from spec_extract import COMPONENTS
-from spec_retrieval import LookupResult, SpecificationRefusal, ungrounded_numbers
+from spec_retrieval import LookupResult, SpecificationRefusal, format_records, ungrounded_numbers
 from spec_schema import VARIANTS, Vehicle
 
 logger = logging.getLogger("carvis.conversation")
@@ -121,10 +121,13 @@ class ConversationSession:
     def owner_first_name(self) -> str:
         return (self.owner_name.split() or [""])[0]
 
+    def vehicle_model(self) -> str:
+        model = self.vehicle.model
+        return model.upper() if len(model) <= 4 else model.title()
+
     def vehicle_summary(self) -> str:
         v = self.vehicle
-        model = v.model.upper() if len(v.model) <= 4 else v.model.title()
-        details = [f"{v.year} {v.make.title()} {model}"]
+        details = [f"{v.year} {v.make.title()} {self.vehicle_model()}"]
         if v.trim:
             details.append(v.trim.title())
         if v.transmission:
@@ -516,7 +519,9 @@ class ConversationTools:
         except Exception as exc:  # noqa: BLE001 - a lookup outage is reported, never guessed around
             logger.error("Carvis lookup failed: %s", type(exc).__name__)
             return self._entry(name, call_id, {"status": "lookup_failed", "source_grounded": False})
-        extra = ungrounded_numbers(result.answer, result.records)
+        # The vehicle was confirmed at the start of the job, so answers don't repeat it.
+        spoken = format_records(result.records, include_vehicle=False)
+        extra = ungrounded_numbers(spoken, result.records)
         if extra:
             logger.error("Refused to speak ungrounded numbers: %s", extra)
             session.note("speech_rejected", numbers=extra)
@@ -527,10 +532,10 @@ class ConversationTools:
             session.grounded_answer = None
         session.component, session.operation, session.spec_type = record.component, record.operation, record.spec_type
         session.pending_question = None
-        session.grounded_answer = {"query": query, "text": result.answer, "sources": result.sources}
+        session.grounded_answer = {"query": query, "text": spoken, "sources": result.sources}
         session.note("lookup_answered", component=record.component, spec_type=record.spec_type, page=record.source_page)
-        return self._entry(name, call_id, {"status": "answered", "source_grounded": True, "answer": result.answer,
-                                           "source": result.source}, spoken=result.answer)
+        return self._entry(name, call_id, {"status": "answered", "source_grounded": True, "answer": spoken,
+                                           "source": result.source}, spoken=spoken)
 
     async def _look_at_part(self, session, name, call_id, args) -> dict:
         question = _text(args, "question")

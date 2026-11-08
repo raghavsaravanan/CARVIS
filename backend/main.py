@@ -1730,6 +1730,7 @@ async def start_conversation_call(session_id: str, body: CallStartBody,
         "carvis_session_id": session.session_id,
         "owner_first_name": session.owner_first_name,
         "vehicle_summary": session.vehicle_summary(),
+        "vehicle_model": session.vehicle_model(),
         "vehicle_confirmed": "yes" if session.vehicle_confirmed else "no",
         "memory_summary": carried,
     }}

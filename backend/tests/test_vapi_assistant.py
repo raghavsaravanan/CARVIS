@@ -30,7 +30,7 @@ def test_prompt_contains_no_specification_values_or_vehicles():
 
 def test_prompt_uses_the_session_variables_the_server_sends():
     prompt = vapi_assistant.PROMPT_PATH.read_text()
-    for variable in ("owner_first_name", "vehicle_summary", "vehicle_confirmed", "memory_summary"):
+    for variable in ("owner_first_name", "vehicle_summary", "vehicle_model", "vehicle_confirmed", "memory_summary"):
         assert "{{" + variable + "}}" in prompt
 
 
@@ -41,7 +41,7 @@ def test_every_tool_is_a_real_authenticated_server_tool():
         assert tool["server"]["url"] == "https://example.test/vapi-tool"
         assert tool["server"]["headers"] == {"x-vapi-secret": "test-secret"}
         assert tool["async"] is False
-        assert "messages" not in tool, "no scripted tool speech"
+        assert all(not message.get("content") for message in tool.get("messages", [])), "no scripted tool speech"
 
 
 def test_vapi_waits_longer_than_the_server_camera_deadline():
@@ -56,3 +56,9 @@ def test_look_at_part_is_no_longer_a_client_side_tool():
 
 def test_dry_run_output_hides_the_secret():
     assert "test-secret" not in str(vapi_assistant.redacted(config()))
+
+
+def test_tool_calls_do_not_trigger_stock_filler_lines():
+    config = vapi_assistant.assistant_config("https://example.test", "secret")
+    functions = [tool for tool in config["model"]["tools"] if tool["type"] == "function"]
+    assert functions and all(tool["messages"] == [{"type": "request-start", "content": ""}] for tool in functions)

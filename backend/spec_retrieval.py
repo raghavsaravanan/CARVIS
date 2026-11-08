@@ -171,23 +171,22 @@ def _spoken_quantity(r: SpecRecord) -> str:
     return spoken
 
 
-def _spoken_label(r: SpecRecord) -> str:
-    vehicle = f"{r.year} {r.make.title()} {r.model.upper()}"
+def _spoken_label(r: SpecRecord, include_vehicle: bool = True) -> str:
+    vehicle = f"{r.year} {r.make.title()} {r.model.upper()}" if include_vehicle else ""
     if r.component and r.component.startswith("suspension_height"):
         axle = r.component.removeprefix("suspension_height").strip("_")
         name = " ".join(part for part in (axle, "suspension height", "tolerance" if r.spec_type == "tolerance" else "") if part)
         return ", ".join(part for part in (vehicle, f"{r.wheel_size} model" if r.wheel_size else "", name) if part)
-    label = f"{vehicle}, {r.component.replace('_', ' ')} ({r.operation.replace('_', ' ')})"
-    return label
+    return ", ".join(part for part in (vehicle, f"{r.component.replace('_', ' ')} ({r.operation.replace('_', ' ')})") if part)
 
 
-def format_records(records: list[SpecRecord]) -> str:
+def format_records(records: list[SpecRecord], include_vehicle: bool = True) -> str:
     sentences = []
     for r in records:
         if evidence_errors(r):
             raise SpecificationRefusal("Source evidence failed verification.", "unverified")
         prefix = f"Step {r.step_order}: " if r.step_order else ""
-        label = _spoken_label(r)
+        label = _spoken_label(r, include_vehicle)
         if r.transmission:
             label += f", {r.transmission.upper()}"
         sentences.append(f"{prefix}{label}: {_spoken_quantity(r)}.")
