@@ -20,6 +20,7 @@ final class RepairSession {
     private(set) var seenSteps: [Int: StepResponse] = [:]
 
     let history: JobHistory
+    let garage: CarProfileStore
 
     private let backend: any BackendClient
     private let speech: any SpeechOutput
@@ -28,10 +29,12 @@ final class RepairSession {
 
     init(backend: any BackendClient = MockBackendClient(),
          speech: any SpeechOutput = SystemSpeechOutput(),
-         history: JobHistory = JobHistory()) {
+         history: JobHistory = JobHistory(),
+         garage: CarProfileStore = CarProfileStore()) {
         self.backend = backend
         self.speech = speech
         self.history = history
+        self.garage = garage
     }
 
     /// True while a job is started and not finished yet.
@@ -90,7 +93,16 @@ final class RepairSession {
 
             if response.done {
                 if let summary = response.summary {
-                    history.add(JobRecord(name: jobName, finishedAt: .now, summary: summary))
+                    // Log it at your real odometer reading, and restart the oil change count.
+                    let log = summary.serviceLog
+                    let logged = Summary(
+                        serviceLog: ServiceLog(date: log.date, mileage: garage.profile.odometer,
+                                               oil: log.oil, filter: log.filter),
+                        nextService: summary.nextService,
+                        nextStep: summary.nextStep
+                    )
+                    history.add(JobRecord(name: jobName, finishedAt: .now, summary: logged))
+                    garage.markOilChangeDone()
                 }
                 path = [.done]   // replaces the progress screen
             } else {

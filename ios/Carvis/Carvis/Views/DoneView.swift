@@ -15,15 +15,17 @@ struct DoneView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 80, weight: .semibold))
                     .symbolRenderingMode(.palette)
-                    .foregroundStyle(Color.white, Theme.amber)
-                    .shadow(color: Theme.amber.opacity(0.4), radius: 16, y: 6)
+                    .foregroundStyle(Color.white, Theme.accent)
+                    .shadow(color: Theme.accent.opacity(0.4), radius: 16, y: 6)
                     .scaleEffect(hasCelebrated || reduceMotion ? 1 : 0.7)
                     .opacity(hasCelebrated ? 1 : 0)
                     .symbolEffect(.bounce, value: hasCelebrated)
                     .padding(.top, 24)
                     .accessibilityHidden(true)
 
-                SummaryCard(title: response.displayText, summary: response.summary)
+                // The saved record carries your real odometer reading.
+                SummaryCard(title: response.displayText,
+                            summary: session.history.records.first?.summary ?? response.summary)
                     .appearAnimation(index: 2)
 
                 if let nextStep = response.summary?.nextStep {

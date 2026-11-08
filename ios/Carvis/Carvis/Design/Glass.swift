@@ -10,6 +10,7 @@ enum GlassKind {
     case card               // secondary cards and buttons
     case tinted(Color)      // a lightly colored card, like the safety banner
     case prominent(Color)   // the main button
+    case dark               // the dark stat tile
 }
 
 extension View {
@@ -29,23 +30,29 @@ struct CarvisGlassModifier<S: Shape>: ViewModifier {
     let shape: S
 
     func body(content: Content) -> some View {
-        if #available(iOS 26, *) {
+        if case .dark = kind {
+            // Solid, like the instrument panel it imitates. Glass would wash it out.
             content
-                .background(shape.fill(nativeFill))   // extra white makes the hero panel more opaque
+                .background(shape.fill(Theme.tile))
+                .shadow(color: Theme.ink.opacity(0.18), radius: 18, y: 10)
+        } else if #available(iOS 26, *) {
+            content
+                .background(shape.fill(nativeFill))   // mostly white, so cards read as solid bento tiles
                 .glassEffect(nativeGlass, in: shape)
+                .shadow(color: Theme.ink.opacity(0.05), radius: 14, y: 6)
         } else {
             content
                 .background(shape.fill(fallbackFill))
                 .background(.ultraThinMaterial, in: shape)
-                .overlay(shape.stroke(Color.white.opacity(0.7), lineWidth: 1))
-                .shadow(color: Theme.ink.opacity(0.08), radius: 16, y: 6)
+                .overlay(shape.stroke(Color.white.opacity(0.9), lineWidth: 1))
+                .shadow(color: Theme.ink.opacity(0.06), radius: 16, y: 6)
         }
     }
 
     @available(iOS 26, *)
     private var nativeGlass: Glass {
         switch kind {
-        case .hero, .card: .regular
+        case .hero, .card, .dark: .regular
         case .tinted(let color): .regular.tint(color.opacity(0.25))
         case .prominent(let color): .regular.tint(color)
         }
@@ -53,18 +60,19 @@ struct CarvisGlassModifier<S: Shape>: ViewModifier {
 
     private var nativeFill: Color {
         switch kind {
-        case .hero: Color.white.opacity(0.55)
-        case .card: Color.white.opacity(0.15)
-        case .tinted, .prominent: Color.clear
+        case .hero: Color.white.opacity(0.92)
+        case .card: Color.white.opacity(0.8)
+        case .tinted, .prominent, .dark: Color.clear
         }
     }
 
     private var fallbackFill: Color {
         switch kind {
-        case .hero: Color.white.opacity(0.6)
-        case .card: Color.white.opacity(0.25)
+        case .hero: Color.white.opacity(0.95)
+        case .card: Color.white.opacity(0.85)
         case .tinted(let color): color.opacity(0.16)
-        case .prominent(let color): color.opacity(0.85)
+        case .prominent(let color): color.opacity(0.95)
+        case .dark: Theme.tile
         }
     }
 }
@@ -76,7 +84,8 @@ struct CarvisButtonModifier: ViewModifier {
         if #available(iOS 26, *) {
             // Apple's glass button styles include their own press animation.
             if prominent {
-                content.buttonStyle(.glassProminent).tint(Theme.amber)
+                // White label: the app-wide ink text color would otherwise make it black on black.
+                content.buttonStyle(.glassProminent).tint(Theme.ink).foregroundStyle(.white)
             } else {
                 content.buttonStyle(.glass)
             }
@@ -94,7 +103,8 @@ struct FallbackGlassButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 20)
-            .carvisGlass(prominent ? .prominent(Theme.amber) : .card, in: Capsule())
+            .foregroundStyle(prominent ? Color.white : Theme.ink)
+            .carvisGlass(prominent ? .prominent(Theme.ink) : .card, in: Capsule())
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.6),
                        value: configuration.isPressed)
@@ -116,8 +126,8 @@ struct CarvisGlassGroup<Content: View>: View {
     }
 }
 
-/// The soft, light background the glass sits on.
-/// The amber glow is at the bottom, behind the main buttons.
+/// The cool grey "garage floor" behind everything, with a faint blue glow
+/// near the top where the car sits.
 struct CarvisBackground: View {
     var body: some View {
         ZStack {
@@ -128,18 +138,18 @@ struct CarvisBackground: View {
                     height: 3,
                     points: [
                         [0, 0], [0.5, 0], [1, 0],
-                        [0, 0.5], [0.6, 0.45], [1, 0.5],
+                        [0, 0.45], [0.55, 0.35], [1, 0.4],
                         [0, 1], [0.5, 1], [1, 1]
                     ],
                     colors: [
-                        Theme.sky, Theme.pearl, Theme.sky,
-                        Theme.pearl, Theme.pearl, Theme.sky.opacity(0.8),
-                        Theme.sky.opacity(0.7), Theme.amber.opacity(0.22), Theme.amber.opacity(0.3)
+                        Theme.sky, Theme.sky, Theme.accent.opacity(0.10),
+                        Theme.pearl, Theme.sky, Theme.accent.opacity(0.06),
+                        Theme.pearl, Theme.pearl, Theme.pearl
                     ]
                 )
             } else {
                 LinearGradient(
-                    colors: [Theme.sky, Theme.pearl, Theme.amber.opacity(0.22)],
+                    colors: [Theme.sky, Theme.pearl],
                     startPoint: .top,
                     endPoint: .bottom
                 )

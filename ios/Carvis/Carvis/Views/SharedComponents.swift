@@ -21,7 +21,7 @@ struct ProgressCapsule: View {
             .background(alignment: .leading) {
                 GeometryReader { geometry in
                     Capsule()
-                        .fill(Theme.amber.opacity(0.6))
+                        .fill(Theme.accent.opacity(0.6))
                         .frame(width: geometry.size.width * fraction)
                 }
             }
@@ -38,12 +38,12 @@ struct LiveDot: View {
 
     var body: some View {
         Circle()
-            .fill(Theme.amber)
+            .fill(Theme.accent)
             .frame(width: size, height: size)
             .background {
                 if !reduceMotion {
                     Circle()
-                        .fill(Theme.amber)
+                        .fill(Theme.accent)
                         .phaseAnimator([false, true]) { ring, expanded in
                             ring
                                 .scaleEffect(expanded ? 2.8 : 1)

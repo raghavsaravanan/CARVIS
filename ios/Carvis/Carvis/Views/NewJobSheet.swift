@@ -68,9 +68,9 @@ struct NewJobSheet: View {
         VStack(spacing: 16) {
             Image(systemName: "eyeglasses")
                 .font(.system(size: 52, weight: .medium))
-                .foregroundStyle(Theme.amber)
+                .foregroundStyle(Theme.accent)
                 .frame(width: 104, height: 104)
-                .background(Theme.amber.opacity(0.12), in: Circle())
+                .background(Theme.accent.opacity(0.12), in: Circle())
                 .symbolEffect(.bounce, value: isAskingForGlasses)
                 .accessibilityHidden(true)
 
@@ -96,7 +96,7 @@ struct NewJobSheet: View {
             } else {
                 Label("Glasses connected", systemImage: "checkmark.circle.fill")
                     .font(.headline)
-                    .foregroundStyle(Theme.amber)
+                    .foregroundStyle(Theme.accent)
                     .transition(.blurReplace)
             }
 

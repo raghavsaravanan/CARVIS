@@ -90,7 +90,7 @@ private struct StepTimeline: View {
                 Text("Steps")
             } icon: {
                 Image(systemName: "list.bullet")
-                    .foregroundStyle(Theme.amber)
+                    .foregroundStyle(Theme.accent)
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(Theme.inkSecondary)
@@ -143,7 +143,7 @@ private struct TimelineRow: View {
         .background(alignment: .leading) {
             if !isLast {
                 Rectangle()
-                    .fill(state == .done ? Theme.amber : Theme.ink.opacity(0.1))
+                    .fill(state == .done ? Theme.accent : Theme.ink.opacity(0.1))
                     .frame(width: 3)
                     .padding(.top, nodeSize + 2)
                     .padding(.leading, (nodeSize - 3) / 2)
@@ -159,7 +159,7 @@ private struct TimelineRow: View {
         switch state {
         case .done:
             Circle()
-                .fill(Theme.amber)
+                .fill(Theme.accent)
                 .overlay {
                     Image(systemName: "checkmark")
                         .font(.caption.weight(.bold))
@@ -168,8 +168,8 @@ private struct TimelineRow: View {
                 .transition(.scale(scale: 0.7).combined(with: .opacity))
         case .current:
             Circle()
-                .fill(Theme.amber.opacity(0.2))
-                .overlay(Circle().strokeBorder(Theme.amber, lineWidth: 3))
+                .fill(Theme.accent.opacity(0.2))
+                .overlay(Circle().strokeBorder(Theme.accent, lineWidth: 3))
                 .overlay(LiveDot(size: 10))
                 .transition(.scale(scale: 0.7).combined(with: .opacity))
         case .upcoming:

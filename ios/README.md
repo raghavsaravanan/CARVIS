@@ -26,7 +26,9 @@ Official sources:
 | CameraAccess session | Started |
 | CameraAccess live preview | **Works**, after the Bluetooth Classic fix below |
 | Carvis on device | Builds, installs, launches |
-| Carvis registration / preview / capture / `/vision-query` / glasses audio | Not yet verified on hardware |
+| Carvis registration, preview, capture, `/vision-query` | **Works** (e.g. wheel nuts → 120 N·m) |
+| Hey Carvis (Apple speech) | Microphone works after the fixes below |
+| Vapi conversation | Built; not yet tested (needs the dashboard setup below) |
 
 ### Two fixes needed with a free Apple team
 
@@ -59,9 +61,58 @@ phone can hold only 3 free-team apps at once.
    (`carvis://` brings you back). Then **Ask about a part**, type a question, and tap
    **Snap and ask**.
 
+## Dashboard
+
+The car hero, an oil change countdown, odometer, next-due item, maintenance list, and your own
+specs. Everything is edited on the phone and saved locally (`car-profile.json`). The pre-filled
+intervals and mileage are demo placeholders; set them from the owner's manual.
+
+## Voice: Hey Carvis and Vapi
+
+1. **Wake word (on the phone).** Opening Ask Carvis starts Apple speech recognition on the
+   glasses' Bluetooth mic, set up like CameraAccess's `AudioInputHandler`
+   (`.playAndRecord`, `.videoRecording`, `[.allowBluetoothHFP, .mixWithOthers]`). Meta's
+   toolkit doesn't allow custom wake words on the glasses ("Hey Meta" is system-owned).
+   - Error `561017449` (`!pri`, insufficient priority) means another app holds the mic,
+     usually a call (phone, FaceTime, Discord, Zoom). End it.
+2. **Conversation (Vapi).** If `Carvis/Config/VapiConfig.plist` has a public key and assistant
+   ID, "Hey Carvis, …" stops the wake-word listener (it frees the mic) and starts a Vapi call
+   with the [Vapi iOS SDK](https://github.com/VapiAI/client-sdk-ios), pinned to commit
+   `5fdb73d` because it has no release tags. The question said with the wake word is sent as
+   the first user message. When the call ends, the wake-word listener starts again.
+   Without the file, Carvis answers one question at a time with its built-in voice.
+
+### Vapi setup (team dashboard)
+
+Copy `Carvis/Config/VapiConfig.example.plist` to `VapiConfig.plist` and fill in the **public**
+key and assistant ID. `VapiConfig.plist` is git-ignored. The app sends the vehicle as
+`variableValues` and `metadata`: `year`, `make`, `model`, `vehicle`, `session_id`.
+
+The assistant needs (verify these in the Vapi dashboard; they're not testable from this repo):
+
+- **`lookup_spec`**, the existing server tool pointing at `/vapi-tool` with the
+  `X-Vapi-Secret` header, for spoken spec questions.
+- **`look_at_part`**, a function tool with **no server URL**, so Vapi sends the call to the
+  app. Parameter: `question` (string). The app takes a glasses photo, asks `/vision-query`,
+  and adds the result to the conversation as a system message. Mark it async, so the call
+  doesn't wait for a server reply.
+- Client messages that include `transcript`, `speech-update` and `tool-calls`.
+- A system prompt along these lines:
+
+  > You are Carvis, a hands-free assistant for a mechanic working on a {{vehicle}}. Never
+  > guess the vehicle. For any torque value, fluid amount, part number, procedure or safety
+  > step, call `lookup_spec`, or `look_at_part` when the mechanic refers to something they're
+  > looking at ("this", "that bolt"). Say tool results exactly; never add, round or invent a
+  > number. If a tool says it's not in the manual, say so plainly. Keep answers to one or two
+  > sentences.
+
+Open questions to check on hardware: whether Vapi's audio (Daily WebRTC) routes to the glasses
+when they're connected, and whether `add-message` triggers a spoken reply right away.
+
 ## Safety rules the app keeps
 
-- No API keys in the app; Carvis holds them.
+- No backend API keys in the app; the Carvis backend holds them. The only Vapi value in the
+  app is the client-side public key, kept out of git.
 - Captured photos stay in memory and are never saved or committed.
 - The vehicle is always sent explicitly; the photo never decides which car it is.
 - The answer text is shown exactly as Carvis returns it. Refusals ("not in the manual") and

@@ -22,6 +22,7 @@ final class GlassesController {
         case startingCamera
         case live              // video is coming in
         case paused            // someone tapped the glasses; tap again to resume
+        case needsCameraAccess // waiting for camera approval in the Meta AI app
     }
 
     private(set) var registrationState: RegistrationState
@@ -35,6 +36,25 @@ final class GlassesController {
     /// The exact message from Meta's SDK when something fails. Shown as-is.
     var errorMessage: String?
 
+    /// True while we wait for camera approval in the Meta AI app.
+    private(set) var isAskingForCameraAccess = false
+
+    /// The SDK's own session and camera states, for the small status line.
+    var detail: String {
+        "Session \(sessionState.description) · camera \(streamStateText)"
+    }
+
+    private var streamStateText: String {
+        switch streamState {
+        case .streaming: "streaming"
+        case .starting: "starting"
+        case .waitingForDevice: "waiting for glasses"
+        case .stopping: "stopping"
+        case .stopped: "off"
+        case .paused: "paused"
+        }
+    }
+
     var status: Status {
         if registrationState == .registering { return .connecting }
         guard registrationState == .registered else { return .notConnected }
@@ -44,7 +64,9 @@ final class GlassesController {
         case .starting, .waitingForDevice: return .startingCamera
         case .stopping, .stopped: break
         }
-        if sessionState == .starting { return .startingCamera }
+        if isAskingForCameraAccess { return .needsCameraAccess }
+        if sessionState == .paused { return .paused }
+        if sessionState == .starting || (wantsPreview && sessionState == .started) { return .startingCamera }
         return hasActiveDevice ? .ready : .lookingForGlasses
     }
 
@@ -58,7 +80,7 @@ final class GlassesController {
     @ObservationIgnored private let sessionTokens = ListenerTokenBag()
     @ObservationIgnored private let streamTokens = ListenerTokenBag()
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
-    @ObservationIgnored private var wantsPreview = false
+    private var wantsPreview = false
     @ObservationIgnored private var photoContinuation: CheckedContinuation<Data, any Error>?
 
     init(wearables: any WearablesInterface = Wearables.shared) {
@@ -126,6 +148,7 @@ final class GlassesController {
 
     /// Call when a screen that shows the camera appears.
     func startPreview() {
+        log("start preview (registered: \(isConnected), glasses found: \(hasActiveDevice), session: \(sessionState.description))")
         wantsPreview = true
         guard isConnected else { return }
         startSessionIfNeeded()
@@ -142,7 +165,10 @@ final class GlassesController {
             Task { await startCameraIfAllowed() }
             return
         }
-        guard session == nil else { return } // already starting
+        guard session == nil else {
+            log("session exists in state \(session?.state.description ?? "?"), waiting")
+            return
+        }
         do throws(DeviceSessionError) {
             let newSession = try wearables.createSession(deviceSelector: deviceSelector)
             session = newSession
@@ -150,6 +176,7 @@ final class GlassesController {
             sessionState = .starting
             try newSession.start()
         } catch {
+            log("session error: \(error)")
             errorMessage = error.localizedDescription
             sessionState = .idle
             clearSession()
@@ -160,15 +187,20 @@ final class GlassesController {
         guard wantsPreview, camera == nil, let session, session.state == .started else { return }
         do {
             var permission = try await wearables.checkPermissionStatus(.camera)
+            log("camera permission: \(permission)")
             if permission != .granted {
                 // Opens the Meta AI app to ask, then comes back.
+                isAskingForCameraAccess = true
+                defer { isAskingForCameraAccess = false }
                 permission = try await wearables.requestPermission(.camera)
+                log("camera permission after asking: \(permission)")
             }
             guard permission == .granted else {
                 errorMessage = "Camera access was turned down in the Meta AI app."
                 return
             }
         } catch {
+            log("permission error: \(error)")
             errorMessage = error.localizedDescription
             return
         }
@@ -182,6 +214,7 @@ final class GlassesController {
                 errorMessage = "Couldn't start the glasses camera. Try again."
                 return
             }
+            log("camera added, starting stream")
             camera = newCamera
             observe(newCamera.stream)
             streamState = .starting
@@ -190,6 +223,10 @@ final class GlassesController {
             camera = nil
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func log(_ message: String) {
+        print("[Glasses] \(message)")
     }
 
     private func tearDown() {
@@ -226,12 +263,16 @@ final class GlassesController {
         }.store(in: sessionTokens)
         session.errorPublisher.listen { [weak self] error in
             guard let self else { return }
-            Task { @MainActor in self.errorMessage = error.localizedDescription }
+            Task { @MainActor in
+                self.log("session error: \(error)")
+                self.errorMessage = error.localizedDescription
+            }
         }.store(in: sessionTokens)
     }
 
     private func sessionChanged(to state: DeviceSessionState, for changed: DeviceSession) {
         guard changed === session else { return }
+        log("session -> \(state.description)")
         sessionState = state
         switch state {
         case .started:
@@ -274,6 +315,7 @@ final class GlassesController {
                 if error == .photoCaptureFailed {
                     self.failPendingPhoto(with: GlassesError.captureFailed)
                 } else {
+                    self.log("camera error: \(error)")
                     self.errorMessage = error.localizedDescription
                 }
             }
@@ -282,6 +324,7 @@ final class GlassesController {
 
     private func streamChanged(to state: StreamState) {
         streamState = state
+        log("camera -> \(streamStateText)")
         if state == .stopped { clearStream() }
     }
 

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Copy this file to VapiConfig.plist (same folder) and fill in both values from the
+     Vapi dashboard. VapiConfig.plist is ignored by git. Use the PUBLIC key, never the
+     private one. Leave the values empty to use Carvis's built-in voice instead of Vapi. -->
+<dict>
+	<key>PublicKey</key>
+	<string></string>
+	<key>AssistantID</key>
+	<string></string>
+</dict>
+</plist>

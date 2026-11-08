@@ -33,8 +33,8 @@ struct ArcGauge: View {
 
             // Amber fill for how far you've come, with a soft glow.
             arc(to: sweep * shownFraction)
-                .stroke(Theme.amber, style: strokeStyle)
-                .shadow(color: Theme.amber.opacity(0.35), radius: 8)
+                .stroke(Theme.accent, style: strokeStyle)
+                .shadow(color: Theme.accent.opacity(0.35), radius: 8)
 
             // Thin white notches split the arc into steps.
             ForEach(1..<max(total, 1), id: \.self) { index in
@@ -46,7 +46,7 @@ struct ArcGauge: View {
                 Circle()
                     .fill(Color.white)
                     .frame(width: lineWidth - 8, height: lineWidth - 8)
-                    .shadow(color: Theme.amber.opacity(0.6), radius: 4)
+                    .shadow(color: Theme.accent.opacity(0.6), radius: 4)
                     .offset(y: -size / 2)
                     .rotationEffect(.degrees(225 + 270 * shownFraction))
             }

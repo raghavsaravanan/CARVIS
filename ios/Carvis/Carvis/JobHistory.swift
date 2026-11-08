@@ -19,6 +19,11 @@ final class JobHistory {
         save()
     }
 
+    func clear() {
+        records = []
+        save()
+    }
+
     private func load() {
         guard let data = try? Data(contentsOf: fileURL),
               let saved = try? JSONDecoder().decode([JobRecord].self, from: data)

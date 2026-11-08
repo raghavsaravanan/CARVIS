@@ -1,6 +1,23 @@
 {
-  "originHash" : "9dd38f857db7479f1816015771b37a83ed7849590400ca2677a9c5f1b5014407",
+  "originHash" : "ae01cc02f52f4201a49d4a80bc250ff233126edf27bf8f24c58f0b78273ebbc5",
   "pins" : [
+    {
+      "identity" : "client-sdk-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/VapiAI/client-sdk-ios",
+      "state" : {
+        "revision" : "5fdb73d8a4475bc1d97d351e31426f3682f4663e"
+      }
+    },
+    {
+      "identity" : "daily-client-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/daily-co/daily-client-ios",
+      "state" : {
+        "revision" : "c164ac9b26d173e8c032e528a5d4cfff05893666",
+        "version" : "0.41.0"
+      }
+    },
     {
       "identity" : "meta-wearables-dat-ios",
       "kind" : "remoteSourceControl",
