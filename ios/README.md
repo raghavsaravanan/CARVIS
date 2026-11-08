@@ -27,7 +27,7 @@ Official sources:
 | CameraAccess live preview | **Works**, after the Bluetooth Classic fix below |
 | Carvis on device | Builds, installs, launches |
 | Carvis registration, preview, capture, `/vision-query` | **Works** |
-| Hey Carvis, Vapi conversation, camera during a call | Built; **not yet tested on glasses**. See [the hands-free test](HANDSFREE_TEST.md) |
+| Hey Carvis, Vapi conversation, camera during a call | Built; **not yet tested on glasses**. See [the hands-free test](../docs/testing/handsfree.md) |
 
 ### Two fixes needed with a free Apple team
 
@@ -50,7 +50,7 @@ phone can hold only 3 free-team apps at once.
 ## Run it
 
 For the new foreground **Hi Carvis / Hey Carvis** glasses-speech experiment, follow
-[the wake-listener hardware test](WAKE_TEST.md). It adds a dedicated diagnostic
+[the wake-listener hardware test](../docs/testing/wake-listener.md). It adds a dedicated diagnostic
 screen and emits wake events; it does not integrate Vapi. Physical detection and
 camera concurrency are not yet verified. Locked-screen listening is intentionally
 paused in this build.
@@ -116,7 +116,7 @@ The backend controls what's said for grounded answers, not every word the model 
 
 ### Setup
 
-Follow [the hands-free test](HANDSFREE_TEST.md). `VapiConfig.plist` is git-ignored and holds
+Follow [the hands-free test](../docs/testing/handsfree.md). `VapiConfig.plist` is git-ignored and holds
 only the **public** key and assistant ID. The system prompt is in
 `backend/vapi/assistant_prompt.md`, and `backend/vapi_assistant.py` configures the assistant.
 

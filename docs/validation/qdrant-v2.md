@@ -75,6 +75,6 @@ CARVIS_QDRANT_COLLECTION=carvis_specs_v2 ../.venv/bin/uvicorn main:app \
 
 Use explicit year/make/model and transmission; say whether the filter is replaced.
 The default legacy collection path deliberately returns `migration_pending` in
-the new code. Follow [the migration runbook](qdrant-v2-migration.md) for review,
+the new code. Follow [the migration runbook](../qdrant-v2-migration.md) for review,
 production activation and rollback, rather than deploying this code with unchanged
 legacy retrieval configuration.

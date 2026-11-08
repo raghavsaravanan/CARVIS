@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="ios/Carvis/Carvis/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" alt="Carvis app icon" width="112" />
-
 # Carvis
 
 ### Eyes on the job. Answers in your ear.
@@ -61,6 +59,8 @@ A generic chatbot can answer quickly, but speed is not enough when a wrong fluid
 
 ## Features
 
+The native iOS app is Carvis's primary product interface. The web workspace is retained supporting code and is not used in the current glasses demonstration.
+
 - **Hands-free voice interface.** Wake-phrase recognition, conversational follow-ups, audio routing checks, and spoken responses over connected Meta glasses.
 - **First-person visual inspection.** A voice-triggered camera request bridges Vapi's server-side tool call to a real iPhone/glasses capture; NVIDIA Nemotron supplies the visual interpretation.
 - **Vehicle-aware memory.** Confirmed year, make, model, transmission, wheel size, active component and operation stay associated with the conversation. Corrections clear stale context.
@@ -68,7 +68,7 @@ A generic chatbot can answer quickly, but speed is not enough when a wrong fluid
 - **Refusal instead of guesswork.** Unsupported wheel torque, conflicting variants, unverified OCR, and missing source material don't become confident-sounding answers.
 - **Manual ingestion with provenance.** LlamaParse-assisted extraction, content-hash caching, structured records, source-page/table/row references, explicit review status, and duplicate-safe writes.
 - **Connected shop workspace.** SpacetimeDB supports manager, mechanic, and personal roles; shops, memberships, invitations, and shared web query history with citations and latency metadata.
-- **Two purpose-built interfaces.** The native SwiftUI app focuses on the mechanic and the glasses; the React dashboard focuses on review, access, and shop visibility.
+- **Native iPhone experience.** The SwiftUI app provides the mechanic's interface and glasses integration. The existing React workspace is preserved for shop administration and development, outside the current demo.
 
 ## One product, three track perspectives
 
@@ -200,7 +200,9 @@ CARVIS_QDRANT_COLLECTION=carvis_specs_v2 ../.venv/bin/uvicorn main:app \
 
 `backend/.env` supplies `QDRANT_URL`, `QDRANT_API_KEY`, `NVIDIA_API_KEY` and `VAPI_WEBHOOK_SECRET`; `LLAMA_CLOUD_API_KEY` is for new document ingestion. For a deployed service, set `CARVIS_QDRANT_COLLECTION` in the host's environment. Do not switch to an unvalidated collection simply to make queries return data.
 
-### 2. Run the web workspace
+### 2. Optional: run the retained web workspace
+
+This workspace is not required to build the iOS app or run the glasses voice workflow.
 
 In another terminal:
 
@@ -225,7 +227,7 @@ To update an existing assistant rather than create another, set `VAPI_ASSISTANT_
 
 In `ios/Carvis/Carvis/Config/`, copy `VapiConfig.example.plist` to the git-ignored `VapiConfig.plist` and add the **Vapi public key** and **Assistant ID**. Open `ios/Carvis/Carvis.xcodeproj` in Xcode, supply your Meta App ID and Client Token, select your signing team, and run Carvis on the paired iPhone.
 
-See [iOS setup](ios/README.md), [wake-phrase checks](ios/WAKE_TEST.md), and [the complete hands-free hardware test](ios/HANDSFREE_TEST.md). Device permission and audio-route verification are essential; an automated test cannot prove the glasses are actually carrying the audio.
+See [iOS setup](ios/README.md), [wake-phrase checks](docs/testing/wake-listener.md), and [the complete hands-free hardware test](docs/testing/handsfree.md). Device permission and audio-route verification are essential; an automated test cannot prove the glasses are actually carrying the audio.
 
 ## Configuration
 
@@ -255,13 +257,29 @@ backend/          FastAPI, conversation state, Vapi tools, Nemotron adapter,
   ingest.py          Manual ingestion and staging
 carvis-module/
   spacetimedb/     Shop profiles, roles, invites, calls and results module
-frontend/         React/TypeScript web query and connected-shop dashboard
+frontend/         Retained web workspace; not required by the native glasses demo
 ios/
   Carvis/         SwiftUI iPhone app, Meta glasses, Vapi, camera, Bluetooth
-  HANDSFREE_TEST.md   Physical-device acceptance walkthrough
-docs/             Architecture, source validation, migration and design notes
+  README.md       Native setup and signing instructions
+docs/             Architecture, source validation, and database migration runbooks
+  testing/        Backend demo, hands-free acceptance, and wake diagnostics
+  validation/     Recorded source-review and Qdrant acceptance evidence
 render.yaml       Example backend deployment blueprint
 ```
+
+### Documentation
+
+| Guide | Purpose |
+| --- | --- |
+| [iOS setup](ios/README.md) | Native app configuration, SDK setup and signing |
+| [Hardware acceptance](docs/testing/handsfree.md) | Physical-device verification and recovery checks |
+| [Wake diagnostics](docs/testing/wake-listener.md) | Focused wake-listener troubleshooting |
+| [Architecture](docs/architecture.md) | Backend contracts and retrieval design |
+| [Qdrant migration](docs/qdrant-v2-migration.md) | Source review, collection configuration, activation and rollback |
+| [Source validation](docs/validation/qdrant-v2.md) | Recorded manual evidence and acceptance results |
+| [Backend demo checks](docs/testing/backend-demo.md) | Reviewed specification examples and refusal checks |
+
+Runtime source, public API routes, database modules, project paths and deployment entry points are preserved. Obsolete implementation plans are omitted; operational guides and the Vapi runtime prompt remain in place.
 
 ## Development and testing
 
@@ -272,7 +290,7 @@ npm run build --prefix frontend
 
 Local validation on November 8, 2026 passed **113 backend tests**, **66 conversation-rule checks**, **29 wake-phrase checks**, the frontend production build and the SpacetimeDB module TypeScript check. The team also reported physical-glasses demonstrations of connection, camera capture and a spoken, source-backed ride-height question. Those test counts are software validation—not a statistical claim about recognition accuracy on hardware. Full audio, photo-in-call, interruption and locked-screen behavior should be reported from their respective physical runs, not inferred from mocks. A full Xcode build was unavailable on the auditing Mac.
 
-For manual review and database migration guidance, see [Qdrant v2 validation](docs/qdrant-v2-validation.md) and [migration instructions](docs/qdrant-v2-migration.md).
+For manual review and database migration guidance, see [Qdrant v2 validation](docs/validation/qdrant-v2.md) and [migration instructions](docs/qdrant-v2-migration.md).
 
 ## Limitations and design boundaries
 
