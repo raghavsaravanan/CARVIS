@@ -18,13 +18,16 @@ from typing import Any, Sequence
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastembed import TextEmbedding
+from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
+from conversation import (SESSION_ONLY_TOOLS, ConversationSession, ConversationStore, ConversationTools,
+                          StaleCameraResult, tool_name)
 from ingest import expand_mechanical_units, run_ingest
 from qdrant_v2 import READ_COLLECTION, STAGING_COLLECTION
 from spec_schema import Vehicle, VARIANTS
@@ -1288,6 +1291,7 @@ async def vision_query(
     engine_code: str | None = Form(None),
     trim: str | None = Form(None),
     market: str | None = Form(None),
+    wheel_size: str | None = Form(None),
     component: str | None = Form(None),
     operation: str | None = Form(None),
     spec_type: str | None = Form(None),
@@ -1299,7 +1303,8 @@ async def vision_query(
         raise HTTPException(status_code=400, detail="question and session_id are required.")
     try:
         vehicle = Vehicle(shop_id=shop_id, year=year, make=make, model=model,
-                          transmission=transmission, engine_code=engine_code, trim=trim, market=market)
+                          transmission=transmission, engine_code=engine_code, trim=trim, market=market,
+                          wheel_size=wheel_size)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Confirm explicit year, make, model and vehicle variants.") from exc
     image_bytes = await file.read(MAX_VISION_IMAGE_BYTES + 1)
@@ -1522,6 +1527,166 @@ def _infer_vehicle_fields(
     return make_out, model_out, year_out
 
 
+conversations = ConversationStore()
+
+
+async def _conversation_lookup(query: str, session: ConversationSession, context: dict) -> LookupResult:
+    v = session.vehicle
+    return await search_top_chunk(app.state.qdrant, app.state.embedder, query,
+                                  v.year, v.make, v.model, v.shop_id, context)
+
+
+async def _conversation_identify(image: bytes, question: str, session: ConversationSession) -> dict:
+    v = session.vehicle
+    return await identify_component(image, question, v.year, v.make, v.model)
+
+
+conversation_tools = ConversationTools(_conversation_lookup, _conversation_identify)
+
+
+class VehicleBody(BaseModel):
+    year: str
+    make: str
+    model: str
+    trim: str | None = None
+    engine_code: str | None = None
+    transmission: str | None = None
+    market: str | None = None
+    wheel_size: str | None = None
+    shop_id: str = DEFAULT_SHOP_ID
+
+    def to_vehicle(self) -> Vehicle:
+        try:
+            return Vehicle(**self.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="A four-digit year, make, and model are required.") from exc
+
+
+class SessionCreateBody(BaseModel):
+    owner_name: str
+    vehicle: VehicleBody
+
+
+class CallStartBody(BaseModel):
+    opening_question: str | None = None
+
+
+class CallBindBody(BaseModel):
+    vapi_call_id: str
+
+
+class CallEndBody(BaseModel):
+    reason: str = "app"
+
+
+class CameraFailureBody(BaseModel):
+    reason: str
+
+
+def _session_or_401(session_id: str, authorization: str | None) -> ConversationSession:
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    session = conversations.authenticate(session_id, token) if token else None
+    if session is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return session
+
+
+@app.post("/conversation/sessions")
+async def create_conversation(body: SessionCreateBody) -> dict[str, Any]:
+    session, token = conversations.create(body.owner_name, body.vehicle.to_vehicle())
+    return {"session_id": session.session_id, "device_token": token, "state": session.view()}
+
+
+@app.get("/conversation/sessions/{session_id}")
+async def conversation_state(session_id: str, authorization: str | None = Header(None)) -> dict[str, Any]:
+    return _session_or_401(session_id, authorization).view()
+
+
+@app.put("/conversation/sessions/{session_id}/vehicle")
+async def update_conversation_vehicle(session_id: str, body: VehicleBody,
+                                      authorization: str | None = Header(None)) -> dict[str, Any]:
+    session = _session_or_401(session_id, authorization)
+    session.apply_app_vehicle(body.to_vehicle())
+    return session.view()
+
+
+@app.post("/conversation/sessions/{session_id}/calls")
+async def start_conversation_call(session_id: str, body: CallStartBody,
+                                  authorization: str | None = Header(None)) -> dict[str, Any]:
+    session = _session_or_401(session_id, authorization)
+    question = (body.opening_question or "").strip() or None
+    generation = session.begin_call(question)
+    # The memory is summarized before this call's own opening question is delivered by the
+    # app, so the model hears it once as the mechanic's words rather than again in the prompt.
+    carried = session.memory_summary() if not question else session.memory_summary().replace(
+        f"Unanswered question from earlier: {question}", "").strip()
+    return {"generation": generation, "variable_values": {
+        "carvis_session_id": session.session_id,
+        "owner_first_name": session.owner_first_name,
+        "vehicle_summary": session.vehicle_summary(),
+        "vehicle_confirmed": "yes" if session.vehicle_confirmed else "no",
+        "memory_summary": carried,
+    }}
+
+
+@app.post("/conversation/sessions/{session_id}/calls/{generation}/bind")
+async def bind_conversation_call(session_id: str, generation: int, body: CallBindBody,
+                                 authorization: str | None = Header(None)) -> dict[str, bool]:
+    session = _session_or_401(session_id, authorization)
+    if not conversations.bind_call(session, generation, body.vapi_call_id):
+        raise HTTPException(status_code=409, detail="stale call")
+    return {"bound": True}
+
+
+@app.post("/conversation/sessions/{session_id}/calls/{generation}/end")
+async def end_conversation_call(session_id: str, generation: int, body: CallEndBody,
+                                authorization: str | None = Header(None)) -> dict[str, bool]:
+    session = _session_or_401(session_id, authorization)
+    return {"ended": session.end_call(body.reason, generation)}
+
+
+@app.get("/conversation/sessions/{session_id}/camera/next")
+async def next_camera_command(session_id: str, wait: float = 20.0,
+                              authorization: str | None = Header(None)) -> Response:
+    session = _session_or_401(session_id, authorization)
+    command = await session.next_camera_command(min(max(wait, 0.0), 25.0))
+    if command is None:
+        return Response(status_code=204)
+    return JSONResponse(content={
+        "request_id": command.request_id, "generation": command.generation, "question": command.question,
+        "seconds_remaining": max(0.0, command.deadline - time.monotonic()),
+    })
+
+
+@app.post("/conversation/sessions/{session_id}/camera/{request_id}/photo")
+async def receive_camera_photo(session_id: str, request_id: str, file: UploadFile = File(...),
+                               authorization: str | None = Header(None)) -> dict[str, Any]:
+    session = _session_or_401(session_id, authorization)
+    image_bytes = await file.read(MAX_VISION_IMAGE_BYTES + 1)
+    await file.close()
+    _validate_jpeg(image_bytes, file.content_type)
+    try:
+        visual = await conversation_tools.receive_photo(session, request_id, image_bytes)
+    except StaleCameraResult as exc:
+        raise HTTPException(status_code=409, detail="This photo's request is no longer active.") from exc
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Identifying the part took too long.") from exc
+    except VisionConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"status": "identified", "visual": visual}
+
+
+@app.post("/conversation/sessions/{session_id}/camera/{request_id}/failure")
+async def report_camera_failure(session_id: str, request_id: str, body: CameraFailureBody,
+                                authorization: str | None = Header(None)) -> dict[str, bool]:
+    session = _session_or_401(session_id, authorization)
+    try:
+        conversation_tools.report_camera_failure(session, request_id, body.reason)
+    except StaleCameraResult as exc:
+        raise HTTPException(status_code=409, detail="This request is no longer active.") from exc
+    return {"recorded": True}
+
+
 @app.post("/vapi-tool")
 async def vapi_tool(request: Request) -> JSONResponse:
     """Accept Vapi lookup requests; reuse only explicitly confirmed session identity."""
@@ -1564,6 +1729,20 @@ async def vapi_tool(request: Request) -> JSONResponse:
                 ]
             },
         )
+
+    message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
+    if message.get("type") in ("end-of-call-report", "status-update"):
+        conversations.handle_call_event(payload)
+        return JSONResponse(content={})
+
+    tool_calls = extract_tool_call_list(payload)
+    if tool_calls:
+        session, stale = conversations.session_for_webhook(payload)
+        if session is not None or any(tool_name(call) in SESSION_ONLY_TOOLS for call in tool_calls):
+            # A model turn can request several tools at once; each gets its own correlated result.
+            results = await asyncio.gather(*(conversation_tools.handle(session, stale, call, index)
+                                             for index, call in enumerate(tool_calls)))
+            return JSONResponse(content={"results": list(results)})
 
     fields = normalize_vapi_lookup_payload(payload)
     query = fields["query"]

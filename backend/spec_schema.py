@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 VECTOR_SIZE = 384
 EXTRACTION_VERSION = "carvis-specs-2.1"
-VARIANTS = ("transmission", "engine_code", "trim", "market")
+VARIANTS = ("transmission", "engine_code", "trim", "market", "wheel_size")
 
 
 def digest(value: object) -> str:
@@ -31,6 +31,9 @@ class Vehicle(BaseModel):
     engine_code: str | None = None
     transmission: str | None = None
     market: str | None = None
+    # As the manual names it, e.g. "17-inch". Separate from trim: the manual never maps
+    # wheel sizes to trim names, so inferring one from the other would be a guess.
+    wheel_size: str | None = None
 
     @field_validator("shop_id", "year", "make", "model", mode="before")
     @classmethod
@@ -113,15 +116,23 @@ class SpecRecord(Vehicle):
             raise ValueError("reversed range")
         return self
 
+    def _identity_dump(self, exclude: set[str]) -> dict:
+        data = self.model_dump(exclude=exclude)
+        # Added after the first records were reviewed. Absent means "not wheel-specific",
+        # so leaving it out keeps earlier review signatures and point IDs valid.
+        if data.get("wheel_size") is None:
+            data.pop("wheel_size", None)
+        return data
+
     def evidence_digest(self) -> str:
-        return digest(self.model_dump(exclude={"verification_status", "verified_by",
-                                              "verified_at", "verification_digest"}))
+        return digest(self._identity_dump({"verification_status", "verified_by",
+                                           "verified_at", "verification_digest"}))
 
     def point_id(self) -> str:
         if self.extraction_version == "carvis-specs-2.0":
             return str(uuid.uuid5(uuid.NAMESPACE_URL, "carvis:spec:v2:" + self.evidence_digest()))
         # Renaming/moving identical source bytes cannot duplicate a specification.
-        identity = self.model_dump(exclude={"verification_status", "verified_by", "verified_at",
+        identity = self._identity_dump({"verification_status", "verified_by", "verified_at",
             "verification_digest", "source_file", "document_ref", "search_text"})
         return str(uuid.uuid5(uuid.NAMESPACE_URL, "carvis:spec:v2:" + digest(identity)))
 
@@ -141,10 +152,18 @@ UNIT_PATTERNS = {
 }
 NUMBER = r"[+-]?\d+(?:\.\d+)?"
 VALUE = rf"(?P<first>{NUMBER})(?:\s*[–—-]\s*(?P<last>{NUMBER}))?"
+# An asymmetric tolerance such as "+24 mm -12 mm (+0.94 in -0.47 in)". Both signs are
+# required: an unsigned pair is a range or two values, never a tolerance.
+SIGNED_TOLERANCE = re.compile(
+    r"\s*(?P<upper>\+\d+(?:\.\d+)?)\s*(?P<unit>mm)\s*(?P<lower>-\d+(?:\.\d+)?)\s*(?P=unit)\s*(?:\([^()]*\))?\s*$")
 
 
 def parse_quantity(raw: str, unit_hint: str | None = None) -> dict:
     """Read a leading quantity only. Never synthesize or convert a value/unit."""
+    tolerance = SIGNED_TOLERANCE.fullmatch(raw)
+    if tolerance:
+        # Stored as signed offsets from nominal; the signs come from the source cell.
+        return {"value_min": tolerance["lower"], "value_max": tolerance["upper"], "unit": tolerance["unit"]}
     match = re.match(rf"\s*{VALUE}\s*(?P<tail>.*)$", raw)
     if not match:
         return {}
@@ -204,11 +223,17 @@ def evidence_errors(record: SpecRecord, *, require_review: bool = True) -> list[
             errors.append("unit does not match the source unit column")
         if record.source_unit and "unit" not in lowered and record.source_unit not in record.source_excerpt:
             errors.append("unit hint is not in the source row")
-        for variant in ("transmission", "engine_code", "trim", "market"):
+        for variant in VARIANTS:
             if variant in lowered:
                 source_variant = row[lowered.index(variant)].strip().lower()
                 if source_variant and source_variant not in ("—", "-", "n/a") and getattr(record, variant) != source_variant:
                     errors.append(f"{variant} does not match the source row")
+    if record.wheel_size and record.wheel_size not in record.source_excerpt.lower():
+        errors.append("wheel size does not match the source row")
+    if record.component and record.component.startswith("suspension_height_"):
+        axle = record.component.rsplit("_", 1)[1]
+        if (record.source_value_column or "").strip().lower() != axle:
+            errors.append("axle does not match its source column")
     if record.record_kind == "procedure_step" and not all((record.procedure_id, record.step_order, record.step_count)):
         errors.append("incomplete procedure metadata")
     if require_review and (record.verification_status != "verified" or not record.verified_by

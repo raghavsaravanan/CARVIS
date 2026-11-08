@@ -20,7 +20,7 @@ ACTIVE_ALIAS = "carvis_specs_active"
 READ_COLLECTION = os.getenv("CARVIS_QDRANT_COLLECTION", LEGACY_COLLECTION)
 KEYWORD_FIELDS = ("shop_id", "year", "make", "model", "document_ref", "component",
                   "spec_type", "operation", "transmission", "record_kind",
-                  "verification_status", "engine_code", "trim", "market")
+                  "verification_status", "engine_code", "trim", "market", "wheel_size")
 
 
 def open_client() -> QdrantClient:

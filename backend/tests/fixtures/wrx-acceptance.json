@@ -174,5 +174,152 @@
       "make": "subaru",
       "model": "wrx"
     }
+  },
+  {
+    "name": "WRX suspension height tolerance",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    },
+    "query": "what is the ride height tolerance",
+    "expected": {
+      "component": "suspension_height",
+      "operation": "inspection",
+      "spec_type": "tolerance",
+      "transmission": null,
+      "unit": "mm",
+      "source_document_hash": "e1f73d6ea5d91d186a179f4e55bac994248b08970ee1f78be4a256844001d3c2",
+      "source_file": "02_Suspension.pdf",
+      "source_page": 14,
+      "value_min": "-12",
+      "value_max": "+24"
+    }
+  },
+  {
+    "name": "WRX 17-inch front suspension height",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx",
+      "wheel_size": "17-inch"
+    },
+    "query": "front ride height",
+    "expected": {
+      "component": "suspension_height_front",
+      "operation": "inspection",
+      "spec_type": "dimension",
+      "transmission": null,
+      "unit": "mm",
+      "source_document_hash": "e1f73d6ea5d91d186a179f4e55bac994248b08970ee1f78be4a256844001d3c2",
+      "source_file": "02_Suspension.pdf",
+      "source_page": 14,
+      "numeric_value": "133",
+      "wheel_size": "17-inch"
+    }
+  },
+  {
+    "name": "WRX 17-inch rear suspension height",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx",
+      "wheel_size": "17-inch"
+    },
+    "query": "rear ride height",
+    "expected": {
+      "component": "suspension_height_rear",
+      "operation": "inspection",
+      "spec_type": "dimension",
+      "transmission": null,
+      "unit": "mm",
+      "source_document_hash": "e1f73d6ea5d91d186a179f4e55bac994248b08970ee1f78be4a256844001d3c2",
+      "source_file": "02_Suspension.pdf",
+      "source_page": 14,
+      "numeric_value": "-14",
+      "wheel_size": "17-inch"
+    }
+  },
+  {
+    "name": "WRX 18-inch front suspension height",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx",
+      "wheel_size": "18-inch"
+    },
+    "query": "front ride height",
+    "expected": {
+      "component": "suspension_height_front",
+      "operation": "inspection",
+      "spec_type": "dimension",
+      "transmission": null,
+      "unit": "mm",
+      "source_document_hash": "e1f73d6ea5d91d186a179f4e55bac994248b08970ee1f78be4a256844001d3c2",
+      "source_file": "02_Suspension.pdf",
+      "source_page": 14,
+      "numeric_value": "138",
+      "wheel_size": "18-inch"
+    }
+  },
+  {
+    "name": "WRX 18-inch rear suspension height",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx",
+      "wheel_size": "18-inch"
+    },
+    "query": "rear ride height",
+    "expected": {
+      "component": "suspension_height_rear",
+      "operation": "inspection",
+      "spec_type": "dimension",
+      "transmission": null,
+      "unit": "mm",
+      "source_document_hash": "e1f73d6ea5d91d186a179f4e55bac994248b08970ee1f78be4a256844001d3c2",
+      "source_file": "02_Suspension.pdf",
+      "source_page": 14,
+      "numeric_value": "-9",
+      "wheel_size": "18-inch"
+    }
+  },
+  {
+    "name": "Ride height needs an axle",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    },
+    "query": "what is the ride height",
+    "refusal": "clarification"
+  },
+  {
+    "name": "Rear ride height needs a wheel size",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    },
+    "query": "what is the rear ride height",
+    "refusal": "clarification"
+  },
+  {
+    "name": "Ride height for another year is refused",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    },
+    "query": "2019 ride height tolerance",
+    "refusal": "ambiguous"
   }
 ]
