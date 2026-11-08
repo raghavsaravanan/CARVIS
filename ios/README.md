@@ -1,41 +1,73 @@
-# Phase 1 — Meta CameraAccess bootstrap
+# Carvis iOS app (Meta glasses + George)
 
-This directory intentionally contains the handoff/runbook until Xcode is available. The app must be based on Meta's official sample, not an independently invented SDK wrapper.
+`ios/Carvis` is the iPhone app. The phone is the dashboard; the Meta glasses provide live
+video. The **Ask Carvis** screen takes a photo with the glasses camera, sends it to George's
+`POST /vision-query` with the question and the explicit vehicle (2022 / subaru / wrx), and
+shows and speaks the manual-grounded answer or refusal.
+
+The glasses code follows Meta's official CameraAccess sample and the Wearables Device Access
+Toolkit (`MWDATCore`, `MWDATCamera`) 1.0.1 interfaces. No SDK calls are invented.
 
 Official sources:
 
-- <https://github.com/meta/meta-wearables-dat-ios>
-- <https://github.com/meta/meta-wearables-dat-ios/tree/main/samples/CameraAccess>
+- <https://github.com/facebook/meta-wearables-dat-ios>
+- <https://github.com/facebook/meta-wearables-dat-ios/tree/main/samples/CameraAccess>
 - <https://wearables.developer.meta.com/docs/develop/>
 
-## Local prerequisite status
+## Hardware checkpoint (tested 2026-11-07)
 
-The current development host reports no active Xcode developer tools (`xcode-select` cannot locate Xcode), so the project cannot be built or signed from this workspace yet. The official sample currently documents iOS 17.2+, Xcode 26.4+, and Swift 6.3+.
+| Item | Result |
+| --- | --- |
+| Xcode / iOS SDK | Xcode 27.0 (27A266a), iOS SDK 27.0 |
+| iPhone | iPhone 14 Pro, iOS 27.0.1 |
+| Glasses | Ray-Ban Meta Wayfarer Gen 2, Developer Mode on in the Meta AI app |
+| Apple signing | **Free (personal) Apple Developer team** — no paid account |
+| CameraAccess registration | Succeeded |
+| CameraAccess session | Started |
+| CameraAccess live preview | **Works**, after the Bluetooth Classic fix below |
+| Carvis on device | Builds, installs, launches |
+| Carvis registration / preview / capture / `/vision-query` / glasses audio | Not yet verified on hardware |
 
-## Continue in Xcode
+### Two fixes needed with a free Apple team
 
-1. Install the current Xcode release meeting the sample prerequisite and select it with `xcode-select`.
-2. Clone/download the official repository and open `samples/CameraAccess/CameraAccess.xcodeproj`.
-3. Select the CameraAccess app target, choose the team's Apple development team, and use a unique bundle identifier.
-4. Build with `Cmd+B` for an iPhone simulator first. Resolve only signing/dependency/toolchain issues; do not replace Meta SDK calls.
-5. For a physical run, enable Developer Mode in the Meta AI app and pair the Ray-Ban Meta Gen 2 glasses.
-6. Run on the iPhone. Complete the sample's registration/connect flow. If the release-channel configuration requires it, use the Meta Wearables Developer Center values for `META_APP_ID` and `CLIENT_TOKEN`; never commit them.
-7. Tap **Start Session**, then **Preview**. Confirm that the live camera stream is visible.
-8. Tap **Capture** and verify that a JPEG is produced and can be previewed/shared by the sample.
-9. Background the app while previewing, return to it, and verify the sample returns to a clean idle state before starting again.
-10. If prompted, complete the official firmware or app-on-glasses update flow, then repeat steps 7–8.
+1. **Remove the Wi-Fi entitlements.** CameraAccess ships with
+   `com.apple.developer.networking.HotspotConfiguration` and `...wifi-info`. Personal teams
+   can't sign those ("Personal development teams ... do not support the Access Wi-Fi
+   Information and Hotspot capabilities"). Meta's BirdSpotter sample captures photos and
+   streams without them.
+2. **Declare Bluetooth Classic.** Without the entitlements, CameraAccess's preview failed with
+   `Device is not connected: <id>`. Meta's guide says camera streaming uses Bluetooth Classic,
+   which needs the `external-accessory` background mode and
+   `UISupportedExternalAccessoryProtocols = [com.meta.ar.wearable]`. CameraAccess doesn't
+   declare them (BirdSpotter does). After adding both, preview streamed.
 
-## Hardware checkpoint
+Carvis's `Carvis-Info.plist` and `Carvis.entitlements` already include both fixes.
 
-Stop and report these results before adding George networking:
+Free-team limits: the build expires after 7 days (reinstall from Xcode before judging), and a
+phone can hold only 3 free-team apps at once.
 
-- Xcode version and iOS SDK version;
-- iPhone model/iOS version;
-- glasses firmware/app status;
-- whether registration succeeded;
-- whether preview streamed from the glasses;
-- whether capture produced a JPEG and its approximate byte size;
-- any exact error text or required update.
+## Run it
 
-Do not upload or commit the captured image. The next implementation step is a small George-specific adapter around the sample's already-working capture output.
+1. Open `ios/Carvis/Carvis.xcodeproj` in Xcode. Swift Package Manager fetches
+   `meta-wearables-dat-ios`.
+2. Select the Carvis target, choose your team, and keep or change the bundle ID.
+3. In `Carvis-Info.plist`, set `GeorgeBaseURL` to the backend. It defaults to a Mac on the same
+   Wi-Fi (`http://<mac-name>.local:8000`); for that, run George with
+   `uvicorn main:app --host 0.0.0.0 --port 8000` from `backend/`. Use the HTTPS Render URL once
+   deployed.
+4. Run on the iPhone. On the dashboard, tap **Connect glasses** and approve in the Meta AI app
+   (`carvis://` brings you back). Then **Ask about a part**, type a question, and tap
+   **Snap and ask**.
 
+## Safety rules the app keeps
+
+- No API keys in the app; George holds them.
+- Captured photos stay in memory and are never saved or committed.
+- The vehicle is always sent explicitly; the photo never decides which car it is.
+- The answer text is shown exactly as George returns it. Refusals ("not in the manual") and
+  errors (`{error, component}` and `{detail}`) are shown verbatim, never replaced with a guess.
+- The mock oil-change walkthrough contains no torque values, oil amounts, or intervals;
+  the WRX oil section isn't loaded, so it points to the service manual instead.
+- Spoken answers are labelled with where they played: the glasses' Bluetooth name, or the
+  phone speaker as a labelled fallback. There's no separate DAT audio-output API; the glasses
+  act as a Bluetooth audio device.
