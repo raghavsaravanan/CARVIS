@@ -555,7 +555,7 @@ class ConversationTools:
             session.note("camera_failed", request_id=request.request_id, code=exc.code)
             return self._entry(name, call_id, {"status": f"camera_{exc.code}", "reason": str(exc)})
         return self._entry(name, call_id, {"status": "identified", "visual_hypothesis": visual,
-                                           "note": "A visual hypothesis only. It is not a confirmed part and it carries no specifications."})
+                                           "note": "Name this part plainly without asking them to confirm it. It says nothing about which vehicle this is and carries no specifications."})
 
     async def receive_photo(self, session: ConversationSession, request_id: str, image: bytes) -> dict:
         """A fresh photo answers its request: identify it and release the waiting tool call."""

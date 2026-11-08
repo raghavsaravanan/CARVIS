@@ -84,6 +84,11 @@ final class CarvisConversationCoordinator {
     @ObservationIgnored private var backToLiveTask: Task<Void, Never>?
     /// Set once Meta's Speech has failed in this session, so it isn't retried on every wake.
     @ObservationIgnored private var glassesSpeechFailed = false
+    /// Starts a bare "Hey Carvis" without waiting for the glasses to finish the sentence.
+    @ObservationIgnored private var earlyWake: Task<Void, Never>?
+    /// Creates the server session ahead of time, so "Hey Carvis" doesn't wait for it.
+    @ObservationIgnored private var sessionWarmup: Task<Void, Never>?
+    @ObservationIgnored private var wakeTime: ContinuousClock.Instant?
     private static let voiceKey = "carvis.voiceOn"
 
     private var api: ConversationClient? { client.map { ConversationClient(baseURL: $0.baseURL) } }
@@ -100,7 +105,10 @@ final class CarvisConversationCoordinator {
         self.agent = VapiConfig.load().map(VapiAgent.init)
         if !voiceOn { _ = machine.handle(.mute) }
 
-        agent?.onConnected = { [weak self] in self?.send(.callConnected) }
+        agent?.onConnected = { [weak self] in
+            self?.mark("assistant connected")
+            self?.send(.callConnected)
+        }
         agent?.onEnded = { [weak self] error in self?.send(.callEnded(error: error)) }
 
         let wake = glasses.wakeListener
@@ -109,6 +117,9 @@ final class CarvisConversationCoordinator {
             .store(in: &cancellables)
         wake.stateUpdates
             .sink { [weak self] state in self?.glassesSpeechChanged(state) }
+            .store(in: &cancellables)
+        wake.transcripts
+            .sink { [weak self] heard in self?.glassesTranscript(heard) }
             .store(in: &cancellables)
         listener.onHeard = { [weak self] text in
             guard let self, self.wakeSource == .glassesBluetooth else { return }
@@ -130,6 +141,7 @@ final class CarvisConversationCoordinator {
         handleVehicle = nil
         serverState = nil
         glassesSpeechFailed = false
+        sessionWarmup = Task { [weak self] in _ = try? await self?.createOrUpdateSession() }
         glasses.startPreview()   // the camera stays live so Carvis can see what you see
         send(.activate)
     }
@@ -271,6 +283,22 @@ final class CarvisConversationCoordinator {
         }
     }
 
+    /// The glasses take a moment to finish a sentence. If they've heard only "Hey Carvis" and
+    /// nothing more follows shortly, start now. Any further words cancel this and wait for
+    /// the finished sentence, so a question said in one breath is kept.
+    private func glassesTranscript(_ heard: CarvisWakeListener.Heard) {
+        earlyWake?.cancel()
+        earlyWake = nil
+        guard !heard.isFinal, conversationPhase == .listening, wakeSource == .glassesSpeech,
+              WakePhraseMatcher.question(after: heard.text) == "" else { return }
+        earlyWake = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard let self, !Task.isCancelled else { return }
+            self.earlyWake = nil
+            self.wakeHeard(question: "")
+        }
+    }
+
     /// The glasses report the wake on a finished sentence, so the transcript already holds
     /// anything said after "Hey Carvis".
     private func heardWakeOnGlasses() {
@@ -281,6 +309,7 @@ final class CarvisConversationCoordinator {
     /// with the call and is delivered once.
     private func wakeHeard(question: String) {
         print("[Conversation] wake heard, question: \(!question.isEmpty)")
+        wakeTime = .now
         send(.wake(question: question.isEmpty ? nil : question))
     }
 
@@ -294,11 +323,17 @@ final class CarvisConversationCoordinator {
             await glasses.releaseWakeListener()   // the camera keeps running
             await listener.stopAndRelease()
             print("[Conversation] wake listeners released")
+            mark("wake released")
             send(.wakeReleased)
         }
     }
 
     private func ensureSession() async throws -> ConversationHandle {
+        await sessionWarmup?.value
+        return try await createOrUpdateSession()
+    }
+
+    private func createOrUpdateSession() async throws -> ConversationHandle {
         guard let api, let vehicle else {
             throw ConversationSetupError.message("Carvis needs a server address and your car's details first.")
         }
@@ -339,15 +374,17 @@ final class CarvisConversationCoordinator {
                 }
                 let handle = try await ensureSession()
                 try stillStarting()
+                // Done side by side, because each one otherwise waits on the other.
+                async let serverCall = api.startCall(handle, openingQuestion: openingQuestion)
                 try await prepareGlassesAudio()
-                try stillStarting()
-                let call = try await api.startCall(handle, openingQuestion: openingQuestion)
+                let call = try await serverCall
                 activeCall = ActiveCall(handle: handle, generation: call.generation)
                 try stillStarting()
                 var overrides: [String: Any] = ["variableValues": call.variableValues]
                 // With a question, its delivery is the first turn. Otherwise Carvis greets.
                 if openingQuestion != nil { overrides["firstMessageMode"] = "assistant-waits-for-user" }
                 let callID = try await agent.start(metadata: ["carvis_session_id": handle.sessionID], overrides: overrides)
+                mark("call requested")
                 // Ended while connecting: the agent is already hanging up, so start nothing else.
                 guard isCallRunning else { return }
                 try? await api.bindCall(handle, generation: call.generation, vapiCallID: callID)
@@ -403,25 +440,25 @@ final class CarvisConversationCoordinator {
             while !Task.isCancelled {
                 guard let self else { return }
                 switch self.conversationPhase {
-                case .verifyingRoute:
-                    await self.agent?.preferBluetooth()
-                case .routeLost:
-                    if attempts % 3 == 0 { await self.agent?.preferBluetooth() }
+                case .verifyingRoute, .routeLost:
+                    if attempts % 10 == 0 { await self.agent?.preferBluetooth() }
                 default:
                     return
                 }
-                try? await Task.sleep(for: .milliseconds(500))
                 guard !Task.isCancelled else { return }
                 let status = self.routeStatus()
-                print("[Conversation] route check: \(status)")
                 if case .ready = status {
+                    print("[Conversation] route check: \(status)")
+                    self.mark("route verified")
                     self.send(.routeVerified)
                     return
                 }
+                if attempts % 10 == 0 { print("[Conversation] route check: \(status)") }
                 attempts += 1
-                if attempts == 8, self.conversationPhase == .verifyingRoute {
+                if attempts == 40, self.conversationPhase == .verifyingRoute {   // four seconds
                     self.send(.routeLost(self.describe(status)))
                 }
+                try? await Task.sleep(for: .milliseconds(100))
             }
         }
     }
@@ -647,6 +684,13 @@ final class CarvisConversationCoordinator {
     }
 
     // MARK: - Helpers
+
+    /// How long after the wake phrase each stage happened. Goes to the log only.
+    private func mark(_ stage: String) {
+        guard let wakeTime else { return }
+        let elapsed = wakeTime.duration(to: .now).components
+        print("[Timing] \(stage): \(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000) ms after wake")
+    }
 
     /// Runs `action` whenever `value` changes, using the Observation framework.
     private func watch<T: Equatable>(_ value: @escaping () -> T?, action: @escaping (T?) -> Void) {

@@ -1262,7 +1262,8 @@ async def identify_component(
     if _VISION_CLIENT is None:
         _VISION_CLIENT = AsyncOpenAI(
             api_key=api_key, base_url=NEMOTRON_BASE_URL if VISION_PROVIDER == "nemotron" else None,
-            timeout=35.0, max_retries=0,
+            # Two short tries fit inside the camera tool's deadline; one long hang would not.
+            timeout=12.0, max_retries=1,
         )
     client = _VISION_CLIENT
     try:
@@ -1271,6 +1272,9 @@ async def identify_component(
                 model=NEMOTRON_MODEL_NAME,
                 temperature=0,
                 max_tokens=int(os.getenv("NEMOTRON_MAX_TOKENS", "2048")),
+                # Reasoning took this model past half a minute on a real glasses photo, and the
+                # mechanic is waiting on a live call. Without it the same photo takes seconds.
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                 messages=[
                     {"role": "system", "content": instructions},
                     {
