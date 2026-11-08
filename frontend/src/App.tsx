@@ -23,6 +23,7 @@ function App() {
   const [year, setYear] = useState("");
   const [make, setMake] = useState("");
   const [model, setModel] = useState("");
+  const [transmission, setTransmission] = useState("");
   const [result, setResult] = useState<VisionResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -44,13 +45,14 @@ function App() {
     body.append("year", year);
     body.append("make", make);
     body.append("model", model);
+    if (transmission) body.append("transmission", transmission);
     body.append("session_id", sessionId);
     try {
       const response = await fetch(`${API_BASE}/vision-query`, { method: "POST", body });
       const payload = (await response.json()) as VisionResult;
       if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
       setResult(payload);
-      if (payload.answer && "speechSynthesis" in window) {
+      if (payload.source_grounded && payload.answer && "speechSynthesis" in window) {
         window.speechSynthesis.cancel();
         window.speechSynthesis.speak(new SpeechSynthesisUtterance(payload.answer));
       }
@@ -86,6 +88,11 @@ function App() {
             <label>Year<input value={year} onChange={(event) => setYear(event.target.value)} placeholder="e.g. 2022" /></label>
             <label>Make<input value={make} onChange={(event) => setMake(event.target.value)} placeholder="e.g. subaru" /></label>
             <label>Model<input value={model} onChange={(event) => setModel(event.target.value)} placeholder="e.g. wrx" /></label>
+            <label>Transmission<select value={transmission} onChange={(event) => setTransmission(event.target.value)}>
+              <option value="">Confirm when required</option>
+              <option value="6mt">6MT</option>
+              <option value="cvt">CVT</option>
+            </select></label>
           </div>
           <button disabled={busy}>{busy ? "Reading manual…" : "Ask Carvis"}</button>
           {error && <p className="error">{error}</p>}

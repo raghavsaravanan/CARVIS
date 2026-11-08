@@ -11,6 +11,13 @@ carvis_mvp_db/
 backend/carvis_mvp_db/
 .carvis_parse_cache/
 backend/.carvis_parse_cache/
+# Legacy cache name from the pre-Carvis checkout.
+.george_parse_cache/
+backend/.george_parse_cache/
+# Source-review exports, backups and migration artifacts are local only.
+.carvis_review/
+.carvis_migration/
+tmp/pdfs/
 .fastembed_cache/
 _ams_*.md
 _llama_parse_preview*.md

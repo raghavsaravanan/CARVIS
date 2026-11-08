@@ -12,7 +12,7 @@ h1 { max-width: 760px; margin: 14px 0; font-size: clamp(38px, 7vw, 72px); line-h
 .section-heading span { color: #6fb28b; font-variant-numeric: tabular-nums; }
 h2 { margin: 0; font-size: 18px; }
 label { display: grid; gap: 8px; margin-top: 16px; color: #b8c7bd; font-size: 13px; font-weight: 700; }
-input, textarea { width: 100%; border: 1px solid #3a5144; border-radius: 10px; background: #15201c; color: #f1f8f2; padding: 12px; font: inherit; }
+input, textarea, select { width: 100%; border: 1px solid #3a5144; border-radius: 10px; background: #15201c; color: #f1f8f2; padding: 12px; font: inherit; }
 textarea { resize: vertical; }
 .dropzone { position: relative; display: grid; place-items: center; min-height: 260px; margin: 0; overflow: hidden; border: 1px dashed #5c9271; border-radius: 14px; background: #16251f; text-align: center; color: #a9c6b2; }
 .dropzone img { width: 100%; height: 260px; object-fit: cover; }

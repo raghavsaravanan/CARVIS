@@ -1,10 +1,4 @@
-"""Live Phase-2 webhook for Project Carvis.
-
-FastAPI endpoint that accepts Vapi custom tool-call webhooks, embeds the
-technician query locally with FastEmbed, applies a strict year/make/model
-Qdrant metadata filter against the offline-seeded carvis_specs collection,
-and returns a single-line 1-2 sentence spoken result for headset TTS.
-"""
+"""Carvis API: visual context and exact, source-reviewed specification retrieval."""
 
 from __future__ import annotations
 
@@ -31,17 +25,11 @@ from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from ingest import (
-    VehicleMetadata,
-    build_points,
-    collect_spec_chunks,
-    delete_points_for_document,
-    document_ref_from_path,
-    ensure_collection,
-    expand_mechanical_units,
-    load_api_key,
-    parse_pdf_to_markdown,
-)
+from ingest import expand_mechanical_units, run_ingest
+from qdrant_v2 import READ_COLLECTION, STAGING_COLLECTION
+from spec_schema import Vehicle, VARIANTS
+from spec_retrieval import LookupResult, SpecificationRefusal, lookup, normalize_request
+from spec_extract import COMPONENTS, component_from_text
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -49,15 +37,10 @@ load_dotenv(PROJECT_ROOT / ".env")
 logger = logging.getLogger("carvis.main")
 
 QDRANT_PATH = PROJECT_ROOT / "carvis_mvp_db"
-COLLECTION_NAME = "carvis_specs"
+COLLECTION_NAME = READ_COLLECTION
+_VISION_CLIENT = None
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 DEFAULT_SHOP_ID = "shop_demo"
-# Cosine similarity floor for shop-scoped semantic fallback (Pass 3).
-# Tuned so in-corpus AMS/Chevy hits (~0.71–0.75) pass and unrelated
-# vehicles (Ford/Honda ~0.63–0.66) refuse → SPEC_NOT_FOUND.
-MIN_SEMANTIC_SCORE = 0.68
-# Soft vehicle match (Pass 2) may score a bit lower; still refuse junk.
-MIN_FILTERED_SCORE = 0.60
 MAX_VISION_IMAGE_BYTES = 8 * 1024 * 1024
 VISION_MODEL_NAME = os.getenv("VISION_MODEL", "gpt-5.5")
 VISION_PROVIDER = (os.getenv("VISION_PROVIDER") or "nemotron").strip().lower()
@@ -338,6 +321,10 @@ def _apply_session_vehicle_fields(
     if session is None:
         return make, model, year
 
+    if any((value and value != getattr(session, field)) for field, value in
+           (("make", make), ("model", model), ("year", year))):
+        # Switching cars requires a complete new identity; never mix sessions.
+        return make, model, year
     make_out = make or session.make
     model_out = model or session.model
     year_out = year or session.year
@@ -571,7 +558,9 @@ def _compose_warning_sentence(caution_text: str) -> str:
 
 
 def format_voice_answer(chunk_text: str, query: str) -> str:
-    """Convert a Markdown table chunk into a 1-2 sentence spoken string."""
+    """Format v2 results directly; retain the legacy formatter for offline compatibility tests."""
+    if isinstance(chunk_text, LookupResult):
+        return chunk_text.answer
     expanded_chunk = expand_mechanical_units(chunk_text)
     table_rows, caution_text = _parse_table_and_caution(expanded_chunk)
 
@@ -700,6 +689,8 @@ def _vehicle_fields_in_catalog(
         return False
     if year and year not in catalog.years:
         return False
+    if year and make and model:
+        return (year, make, model) in catalog.triples
     if make and model:
         if not any(t[1] == make and t[2] == model for t in catalog.triples):
             return False
@@ -790,7 +781,7 @@ def _search_points(
     client: QdrantClient,
     query_vector: list[float],
     query_filter: qmodels.Filter | None,
-    limit: int = 1,
+    limit: int = 16,
 ) -> list[Any]:
     response = client.query_points(
         collection_name=COLLECTION_NAME,
@@ -813,159 +804,22 @@ def _shop_id_condition(shop_id: str) -> qmodels.FieldCondition:
 
 
 def _search_top_chunk_sync(
-    client: QdrantClient,
-    embedder: TextEmbedding,
-    query: str,
-    year: str,
-    make: str,
-    model: str,
-    shop_id: str = DEFAULT_SHOP_ID,
-) -> str | None:
-    """Hybrid retrieval: exact metadata first, then soft match, then semantic.
-
-    ``shop_id`` is a mandatory must-filter on every pass so tenants cannot
-    retrieve each other's manuals. Pass 3 (and soft Pass 2) refuse low-score
-    nearest neighbors so unknown vehicles do not inherit AMS/Chevy leftovers.
-    Sync — call via ``search_top_chunk`` so FastAPI never blocks the event loop.
-    """
-    tenant = (shop_id or DEFAULT_SHOP_ID).strip().lower() or DEFAULT_SHOP_ID
-    shop_must = [_shop_id_condition(tenant)]
-    catalog = get_shop_vehicle_catalog(client, tenant)
-
-    # Empty shop brain (post-purge / no uploads) → hard miss, no semantic gambling.
-    if catalog.is_empty:
-        logger.info("refuse search: empty shop catalog shop_id=%r", tenant)
-        return None
-
-    # Explicit vehicle fields must exist in this shop's uploaded brain.
-    if (make or model or year) and not _vehicle_fields_in_catalog(
-        catalog, year, make, model
-    ):
-        logger.info(
-            "refuse search: fields not in shop catalog shop_id=%r "
-            "year=%r make=%r model=%r",
-            tenant,
-            year or None,
-            make or None,
-            model or None,
-        )
-        return None
-
-    query_vector = _query_vector_for(embedder, query, year, make, model)
-    if query_vector is None:
-        return None
-
-    # Pass 1 — strict AND filter (character-for-character metadata match).
-    if year and make and model:
-        strict_filter = qmodels.Filter(
-            must=[
-                *shop_must,
-                qmodels.FieldCondition(
-                    key="year",
-                    match=qmodels.MatchValue(value=year),
-                ),
-                qmodels.FieldCondition(
-                    key="make",
-                    match=qmodels.MatchValue(value=make),
-                ),
-                qmodels.FieldCondition(
-                    key="model",
-                    match=qmodels.MatchValue(value=model),
-                ),
-            ]
-        )
-        hits = _search_points(client, query_vector, strict_filter, limit=1)
-        if hits:
-            # Strict metadata already scoped the vehicle; score floor is not required.
-            text = _accept_hit(
-                hits[0],
-                min_score=None,
-                year=year,
-                make=make,
-                model=model,
-                pass_name="strict",
-            )
-            if text:
-                return text
-
-    # Pass 2 — soft OR on vehicle fields, still locked to shop_id.
-    soft_should: list[qmodels.FieldCondition] = []
-    if year:
-        soft_should.append(
-            qmodels.FieldCondition(
-                key="year",
-                match=qmodels.MatchValue(value=year),
-            )
-        )
-    if make:
-        soft_should.append(
-            qmodels.FieldCondition(
-                key="make",
-                match=qmodels.MatchValue(value=make),
-            )
-        )
-    if model:
-        soft_should.append(
-            qmodels.FieldCondition(
-                key="model",
-                match=qmodels.MatchValue(value=model),
-            )
-        )
-    if soft_should:
-        soft_filter = qmodels.Filter(
-            must=shop_must,
-            min_should=qmodels.MinShould(
-                conditions=soft_should,
-                min_count=1,
-            ),
-        )
-        hits = _search_points(client, query_vector, soft_filter, limit=1)
-        if hits:
-            text = _accept_hit(
-                hits[0],
-                min_score=MIN_FILTERED_SCORE,
-                year=year,
-                make=make,
-                model=model,
-                pass_name="soft",
-            )
-            if text:
-                return text
-
-    # Pass 3 — semantic fallback still restricted to this shop's corpus.
-    tenant_filter = qmodels.Filter(must=shop_must)
-    hits = _search_points(client, query_vector, query_filter=tenant_filter, limit=1)
-    if not hits:
-        return None
-    return _accept_hit(
-        hits[0],
-        min_score=MIN_SEMANTIC_SCORE,
-        year=year,
-        make=make,
-        model=model,
-        pass_name="semantic",
-    )
+    client, embedder, query: str, year: str, make: str, model: str,
+    shop_id: str = DEFAULT_SHOP_ID, context: dict | None = None,
+) -> LookupResult:
+    try:
+        vehicle = Vehicle(shop_id=shop_id, year=year, make=make, model=model)
+    except ValueError as exc:
+        raise SpecificationRefusal("Please confirm the exact year, make, and model.", "clarification") from exc
+    return lookup(client, embedder, COLLECTION_NAME, query, vehicle, context)
 
 
 async def search_top_chunk(
-    client: QdrantClient,
-    embedder: TextEmbedding,
-    query: str,
-    year: str,
-    make: str,
-    model: str,
-    shop_id: str = DEFAULT_SHOP_ID,
-) -> str | None:
-    """Run hybrid retrieval off the event loop (embed + Qdrant are sync)."""
+    client, embedder, query: str, year: str, make: str, model: str,
+    shop_id: str = DEFAULT_SHOP_ID, context: dict | None = None,
+) -> LookupResult:
     return await asyncio.to_thread(
-        _search_top_chunk_sync,
-        client,
-        embedder,
-        query,
-        year,
-        make,
-        model,
-        shop_id,
+        _search_top_chunk_sync, client, embedder, query, year, make, model, shop_id, context,
     )
 
 
@@ -1016,6 +870,7 @@ def extract_tool_arguments(tool_call: dict[str, Any]) -> dict[str, str]:
         "model": _coerce_string(raw_args.get("model")).lower(),
         "year": _coerce_string(raw_args.get("year")).lower(),
         "shop_id": _coerce_string(raw_args.get("shop_id")).lower(),
+        **{k: _coerce_string(raw_args.get(k)).lower() for k in (*VARIANTS, "component", "operation", "spec_type")},
     }
 
 
@@ -1040,6 +895,12 @@ def normalize_vapi_lookup_payload(payload: dict[str, Any]) -> dict[str, str]:
             year = year or args.get("year") or ""
             shop_id = shop_id or args.get("shop_id") or ""
 
+    optional = {k: _coerce_string(payload.get(k)).lower() for k in (*VARIANTS, "component", "operation", "spec_type")}
+    calls = extract_tool_call_list(payload)
+    if calls:
+        arguments = extract_tool_arguments(calls[0])
+        optional = {k: v or arguments.get(k, "") for k, v in optional.items()}
+
     # Some apiRequest configs nest fields under "parameters".
     if not query:
         nested = payload.get("parameters")
@@ -1051,6 +912,7 @@ def normalize_vapi_lookup_payload(payload: dict[str, Any]) -> dict[str, str]:
             except json.JSONDecodeError:
                 nested = {}
         if isinstance(nested, dict):
+            optional = {k: v or _coerce_string(nested.get(k)).lower() for k, v in optional.items()}
             query = str(nested.get("query") or "").strip()
             make = make or str(nested.get("make") or "").strip().lower()
             model = model or str(nested.get("model") or "").strip().lower()
@@ -1064,6 +926,7 @@ def normalize_vapi_lookup_payload(payload: dict[str, Any]) -> dict[str, str]:
         "year": year,
         "shop_id": shop_id or DEFAULT_SHOP_ID,
         "tool_call_id": tool_call_id or "vapi-call",
+        **optional,
     }
 
 
@@ -1160,7 +1023,8 @@ def handle_tool_call(
             year=args["year"],
             make=args["make"],
             model=args["model"],
-            shop_id=DEFAULT_SHOP_ID,
+            shop_id=args.get("shop_id") or DEFAULT_SHOP_ID,
+            context={k: args.get(k) for k in (*VARIANTS, "component", "operation", "spec_type")},
         )
     except Exception as exc:  # noqa: BLE001 - surface as Vapi tool error string
         return SpokenAnswer(
@@ -1234,6 +1098,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        global _VISION_CLIENT
+        if _VISION_CLIENT is not None:
+            await _VISION_CLIENT.close()
+            _VISION_CLIENT = None
         client.close()
         invalidate_shop_catalog()
         logger.info("Carvis webhook shut down")
@@ -1301,11 +1169,21 @@ def _parse_vision_result(raw_text: str) -> dict[str, Any]:
         confidence = 0.0
     if not component or not visual_context:
         raise VisionConfigurationError("Vision model omitted component context.")
+    proposed = parsed.get("request_interpretation")
+    interpretation = {}
+    if isinstance(proposed, dict):
+        allowed = {"component": set(COMPONENTS),
+                   "operation": {"oil_and_filter", "oil_only", "overhaul_fill", "installation", "alignment", "inspection"},
+                   "spec_type": {"torque", "fluid_capacity", "dimension"}}
+        for key, options in allowed.items():
+            if isinstance(proposed.get(key), str) and proposed[key] in options:
+                interpretation[key] = proposed[key]
     return {
         "component": component[:120],
         "confidence": max(0.0, min(1.0, confidence)),
         "visual_context": visual_context[:500],
         "uncertainty": uncertainty[:300],
+        "request_interpretation": interpretation,
     }
 
 
@@ -1333,27 +1211,34 @@ async def identify_component(
     image_data_url = "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode("ascii")
     instructions = (
         "You identify automotive components from a mechanic's JPEG. "
-        "Return JSON only with keys component, confidence, visual_context, uncertainty. "
+        "Return JSON only with keys component, confidence, visual_context, uncertainty, request_interpretation. "
         "Do not infer or claim vehicle year, make, or model from the image. "
         "Do not provide torque values, repair steps, safety instructions, or part numbers. "
-        "Use a confidence number from 0 to 1 and plainly describe uncertainty."
+        "Use a confidence number from 0 to 1 and plainly describe uncertainty. "
+        "Interpret the mechanic's wording in request_interpretation using nullable keys component, operation, spec_type. "
+        f"Component vocabulary: {', '.join(COMPONENTS)}. "
+        "Operations: oil_and_filter, oil_only, overhaul_fill, installation, alignment, inspection. "
+        "Specification types: torque, fluid_capacity, dimension. "
+        "These are unconfirmed proposals only. Never infer filter replacement or vehicle variants from the photo."
     )
     prompt = (
         f"Question: {question}\n"
         f"Explicit vehicle context supplied by the mechanic: {year} {make} {model}.\n"
         "Describe only the likely visible component and useful visual search context."
     )
-    client = (
-        AsyncOpenAI(api_key=api_key, base_url=NEMOTRON_BASE_URL)
-        if VISION_PROVIDER == "nemotron"
-        else AsyncOpenAI(api_key=api_key)
-    )
+    global _VISION_CLIENT
+    if _VISION_CLIENT is None:
+        _VISION_CLIENT = AsyncOpenAI(
+            api_key=api_key, base_url=NEMOTRON_BASE_URL if VISION_PROVIDER == "nemotron" else None,
+            timeout=35.0, max_retries=0,
+        )
+    client = _VISION_CLIENT
     try:
         if VISION_PROVIDER == "nemotron":
             response = await client.chat.completions.create(
                 model=NEMOTRON_MODEL_NAME,
                 temperature=0,
-                max_tokens=300,
+                max_tokens=int(os.getenv("NEMOTRON_MAX_TOKENS", "2048")),
                 messages=[
                     {"role": "system", "content": instructions},
                     {
@@ -1386,10 +1271,6 @@ async def identify_component(
             raw_text = response.output_text
     except Exception as exc:  # noqa: BLE001 - provider errors become safe API errors
         raise VisionConfigurationError("Vision model request failed.") from exc
-    finally:
-        close = getattr(client, "close", None)
-        if close is not None:
-            await close()
     return _parse_vision_result(raw_text)
 
 
@@ -1403,83 +1284,67 @@ async def vision_query(
     model: str = Form(...),
     session_id: str = Form(...),
     shop_id: str = Form(DEFAULT_SHOP_ID),
+    transmission: str | None = Form(None),
+    engine_code: str | None = Form(None),
+    trim: str | None = Form(None),
+    market: str | None = Form(None),
+    component: str | None = Form(None),
+    operation: str | None = Form(None),
+    spec_type: str | None = Form(None),
 ) -> JSONResponse:
-    """Identify a visible component, then answer only from the matching manual."""
-    question = question.strip()
-    year = year.strip().lower()
-    make = make.strip().lower()
-    model = model.strip().lower()
-    session_id = session_id.strip()
-    shop_id = (shop_id or DEFAULT_SHOP_ID).strip().lower() or DEFAULT_SHOP_ID
-    if not question:
-        raise HTTPException(status_code=400, detail="question is required.")
-    if not all((year, make, model)):
-        raise HTTPException(
-            status_code=400,
-            detail="year, make, and model are required; visual context cannot establish vehicle identity.",
-        )
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required.")
-
+    """Recognize context when needed; authoritative values require verified v2 evidence."""
+    started = time.perf_counter()
+    question, session_id = question.strip(), session_id.strip()
+    if not question or not session_id:
+        raise HTTPException(status_code=400, detail="question and session_id are required.")
+    try:
+        vehicle = Vehicle(shop_id=shop_id, year=year, make=make, model=model,
+                          transmission=transmission, engine_code=engine_code, trim=trim, market=market)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Confirm explicit year, make, model and vehicle variants.") from exc
     image_bytes = await file.read(MAX_VISION_IMAGE_BYTES + 1)
     await file.close()
     _validate_jpeg(image_bytes, file.content_type)
-
+    context = {k: getattr(vehicle, k) for k in VARIANTS}
+    context.update(component=component, operation=operation, spec_type=spec_type)
+    inference_ms = 0.0
+    visual = {"component": component or "not analyzed", "confidence": 0.0,
+              "visual_context": "Explicit request used; image inference skipped.",
+              "uncertainty": "Vehicle and component require mechanic confirmation."}
     try:
-        visual = await identify_component(image_bytes, question, year, make, model)
+        try:
+            slots = normalize_request(question, context)
+            visual["component"] = slots["component"]
+        except SpecificationRefusal:
+            if component or component_from_text(question):
+                # Missing operation/variant cannot be established by a photo.
+                raise
+            # Vision can propose a component, but its hypothesis never supplies exact filters.
+            inference_start = time.perf_counter()
+            visual = await identify_component(image_bytes, question, vehicle.year, vehicle.make, vehicle.model)
+            inference_ms = (time.perf_counter() - inference_start) * 1000
+            normalize_request(question, context)
+        result = await search_top_chunk(
+            request.app.state.qdrant, request.app.state.embedder, question,
+            vehicle.year, vehicle.make, vehicle.model, vehicle.shop_id, context)
+    except SpecificationRefusal as exc:
+        return JSONResponse(status_code=404, content={
+            "session_id": session_id, "error": str(exc), "status": exc.code,
+            "component": visual, "source_grounded": False,
+            "timings_ms": {"inference": inference_ms, "total": (time.perf_counter()-started)*1000}})
     except VisionConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    client: QdrantClient = request.app.state.qdrant
-    embedder: TextEmbedding = request.app.state.embedder
-    catalog = await asyncio.to_thread(get_shop_vehicle_catalog, client, shop_id)
-    if not _vehicle_fields_in_catalog(catalog, year, make, model):
-        return JSONResponse(
-            status_code=404,
-            content={
-                "session_id": session_id,
-                "error": "No uploaded manual matches the explicit year, make, and model.",
-                "component": visual,
-            },
-        )
-
-    enriched_query = (
-        f"{question}\nLikely visible component: {visual['component']}\n"
-        f"Visual context: {visual['visual_context']}"
-    )
-    chunk_text = await search_top_chunk(
-        client=client,
-        embedder=embedder,
-        query=query_normalizer(enriched_query),
-        year=year,
-        make=make,
-        model=model,
-        shop_id=shop_id,
-    )
-    if chunk_text is None:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "session_id": session_id,
-                "error": "I don't see that specification anywhere in the matching manuals.",
-                "component": visual,
-            },
-        )
-
-    answer = await asyncio.to_thread(format_voice_answer, chunk_text, question)
-    if not answer:
-        raise HTTPException(status_code=422, detail="Matching manual text could not be formatted.")
-    return JSONResponse(
-        status_code=200,
-        content={
-            "session_id": session_id,
-            "vehicle": {"year": year, "make": make, "model": model},
-            "component": visual,
-            "answer": answer,
-            "source_grounded": True,
-            "source": "matching uploaded service-manual chunk",
-        },
-    )
+    except Exception as exc:
+        logger.error("Carvis specification lookup unavailable: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Specification lookup is temporarily unavailable.") from exc
+    timings = {**result.timings_ms, "inference": inference_ms,
+               "total": (time.perf_counter()-started)*1000}
+    logger.info("Carvis vision-query timings_ms=%s", timings)
+    return JSONResponse(content={
+        "session_id": session_id, "vehicle": vehicle.model_dump(), "component": visual,
+        "answer": result.answer, "source_grounded": True, "source": result.source,
+        "sources": result.sources, "status": "answered", "timings_ms": timings,
+    })
 
 
 async def _ingest_upload_job(
@@ -1490,55 +1355,16 @@ async def _ingest_upload_job(
     shop_id: str,
     embedder: TextEmbedding,
     client: QdrantClient,
+    variants: dict | None = None,
 ) -> None:
     """Background: LlamaParse → chunks → embed → Qdrant upsert, then delete temp."""
     tenant = (shop_id or DEFAULT_SHOP_ID).strip().lower() or DEFAULT_SHOP_ID
     try:
-        api_key = load_api_key()
-        logger.info("upload job start path=%s shop_id=%s", temp_path.name, tenant)
-        markdown = await parse_pdf_to_markdown(
-            temp_path,
-            api_key,
-            force_parse=True,
-            premium_mode=False,
+        count = await run_ingest(
+            temp_path, year, make, model, embedding_model=embedder, shop_id=tenant,
+            client=client, collection=STAGING_COLLECTION, **(variants or {}),
         )
-        markdown = expand_mechanical_units(markdown)
-        chunks = collect_spec_chunks(markdown)
-        if not chunks:
-            logger.error(
-                "upload job produced no chunks for %s — nothing upserted",
-                temp_path.name,
-            )
-            return
-
-        metadata = VehicleMetadata(
-            year=year,
-            make=make,
-            model=model,
-            document_ref=document_ref_from_path(temp_path),
-            shop_id=tenant,
-        )
-
-        def _sync_upsert() -> int:
-            ensure_collection(client)
-            delete_points_for_document(
-                client,
-                document_ref=metadata.document_ref,
-                shop_id=tenant,
-            )
-            points = build_points(chunks, metadata, embedder)
-            if points:
-                client.upsert(collection_name=COLLECTION_NAME, points=list(points))
-            invalidate_shop_catalog(tenant)
-            return len(points)
-
-        count = await asyncio.to_thread(_sync_upsert)
-        logger.info(
-            "upload job done document_ref=%s shop_id=%s points=%d",
-            metadata.document_ref,
-            tenant,
-            count,
-        )
+        logger.info("Carvis upload staged %d records for source review", count)
     except SystemExit as exc:
         logger.error(
             "upload job aborted path=%s shop_id=%s err=%s",
@@ -1567,6 +1393,10 @@ async def upload_manual(
     make: str = Form(...),
     model: str = Form(...),
     shop_id: str = Form(DEFAULT_SHOP_ID),
+    transmission: str | None = Form(None),
+    engine_code: str | None = Form(None),
+    trim: str | None = Form(None),
+    market: str | None = Form(None),
 ) -> JSONResponse:
     """Accept a PDF and ingest it into Qdrant in the background."""
     if not year.strip() or not make.strip() or not model.strip():
@@ -1575,6 +1405,11 @@ async def upload_manual(
             content={"detail": "year, make, and model are required."},
         )
 
+    try:
+        validated = Vehicle(shop_id=shop_id, year=year, make=make, model=model,
+                            transmission=transmission, engine_code=engine_code, trim=trim, market=market)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid vehicle metadata.") from exc
     filename = (file.filename or "upload.pdf").strip()
     if not filename.lower().endswith(".pdf"):
         return JSONResponse(
@@ -1606,12 +1441,14 @@ async def upload_manual(
         (shop_id or DEFAULT_SHOP_ID).strip() or DEFAULT_SHOP_ID,
         embedder,
         client,
+        {k: getattr(validated, k) for k in VARIANTS},
     )
     return JSONResponse(
         status_code=202,
         content={
             "status": "accepted",
-            "message": "Manual queued for ingest.",
+            "message": "Manual queued for staging and source review.",
+            "verification_status": "pending_review",
             "filename": safe_name,
             "shop_id": (shop_id or DEFAULT_SHOP_ID).strip().lower() or DEFAULT_SHOP_ID,
             "year": year.strip().lower(),
@@ -1687,13 +1524,7 @@ def _infer_vehicle_fields(
 
 @app.post("/vapi-tool")
 async def vapi_tool(request: Request) -> JSONResponse:
-    """Accept flat apiRequest body: {query, make, model, year, callId?}.
-
-    Only ``query`` is required. Missing vehicle fields are filled from the
-    in-memory call session when ``callId`` is present, then inferred from the
-    query when possible so the voice agent does not need to interrogate the
-    tech for year/make/model on every turn.
-    """
+    """Accept Vapi lookup requests; reuse only explicitly confirmed session identity."""
     started = time.perf_counter()
     outcome = "error"
 
@@ -1740,7 +1571,8 @@ async def vapi_tool(request: Request) -> JSONResponse:
     model = fields["model"]
     year = fields["year"]
     shop_id = fields["shop_id"] or DEFAULT_SHOP_ID
-    call_id = _extract_call_id(payload)
+    raw_call_id = _extract_call_id(payload)
+    call_id = f"{shop_id}:{raw_call_id}" if raw_call_id else ""
     tool_call_id = fields["tool_call_id"]
 
     logger.info(
@@ -1768,107 +1600,32 @@ async def vapi_tool(request: Request) -> JSONResponse:
         )
 
     try:
-        query = query_normalizer(query)
+        query = query.strip()
         make, model, year = _apply_session_vehicle_fields(call_id, make, model, year)
-
-        if not make or not model or not year:
-            logger.warning(
-                "context-less lookup call_id=%r query=%r make=%r model=%r year=%r",
-                call_id or None,
-                query,
-                make or None,
-                model or None,
-                year or None,
-            )
-
-        client: QdrantClient = request.app.state.qdrant
-        embedder: TextEmbedding = request.app.state.embedder
-        catalog = await asyncio.to_thread(
-            get_shop_vehicle_catalog, client, shop_id
-        )
-        make, model, year = _infer_vehicle_fields(
-            query, make, model, year, catalog
-        )
-        _update_session_vehicle_fields(call_id, make, model, year)
-
+        context = {key: fields.get(key) for key in (*VARIANTS, "component", "operation", "spec_type")}
         try:
-            chunk_text = await search_top_chunk(
-                client=client,
-                embedder=embedder,
-                query=query,
-                year=year,
-                make=make,
-                model=model,
-                shop_id=shop_id,
-            )
-        except Exception as exc:  # noqa: BLE001 - surface as tool error string
+            result = await search_top_chunk(
+                request.app.state.qdrant, request.app.state.embedder, query,
+                year, make, model, shop_id, context)
+        except SpecificationRefusal as exc:
+            outcome = exc.code
+            return JSONResponse(content={"results": [{
+                "toolCallId": tool_call_id, "result": str(exc),
+                "status": exc.code, "source_grounded": False,
+            }]})
+        except Exception as exc:
             outcome = "lookup_failed"
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "results": [
-                        {
-                            "toolCallId": tool_call_id,
-                            "error": f"Specification lookup failed: {exc}.",
-                        }
-                    ]
-                },
-            )
-
-        if chunk_text is None:
-            # Catch-all miss: empty DB, unknown vehicle, or below score floors.
-            # toolCallId is fixed to "vapi-call" for the stable empty-corpus contract
-            # (Vapi ignores mismatch when the tool was invoked as a single call).
-            outcome = "not_found"
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "results": [
-                        {
-                            "toolCallId": "vapi-call",
-                            "result": (
-                                "I don't see that specification anywhere "
-                                "in my current manuals."
-                            ),
-                        }
-                    ]
-                },
-            )
-
-        spoken_result = await asyncio.to_thread(
-            format_voice_answer, chunk_text, query
-        )
-        if not spoken_result:
-            outcome = "format_failed"
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "results": [
-                        {
-                            "toolCallId": tool_call_id,
-                            "error": (
-                                "Specification found but could not be formatted "
-                                "for speech."
-                            ),
-                        }
-                    ]
-                },
-            )
-
+            logger.error("Carvis lookup failed: %s", type(exc).__name__)
+            return JSONResponse(content={"results": [{
+                "toolCallId": tool_call_id, "error": "Specification lookup is temporarily unavailable.",
+            }]})
+        _update_session_vehicle_fields(call_id, make, model, year)
         outcome = "ok"
-        return JSONResponse(
-            status_code=200,
-            content={
-                "results": [
-                    {
-                        "toolCallId": tool_call_id,
-                        "result": format_number_for_speech(
-                            to_single_line(spoken_result)
-                        ),
-                    }
-                ]
-            },
-        )
+        return JSONResponse(content={"results": [{
+            "toolCallId": tool_call_id, "result": result.answer,
+            "source": result.source, "sources": result.sources, "source_grounded": True,
+            "timings_ms": result.timings_ms,
+        }]})
     finally:
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         logger.info(

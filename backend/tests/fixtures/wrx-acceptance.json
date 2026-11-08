@@ -1,0 +1,178 @@
+[
+  {
+    "name": "WRX 6MT oil_and_filter",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    },
+    "query": "engine oil capacity with filter 6mt",
+    "expected": {
+      "component": "engine_oil",
+      "operation": "oil_and_filter",
+      "spec_type": "fluid_capacity",
+      "transmission": "6mt",
+      "numeric_value": "4.5",
+      "unit": "L",
+      "source_document_hash": "3ac3c9be7a509cfb52656b9043a3796f3fbe6afc4b3b759f150c5fdcaae25d33",
+      "source_file": "wrxOilAmount.pdf",
+      "source_page": 1,
+      "source_row": 3
+    }
+  },
+  {
+    "name": "WRX 6MT oil_only",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    },
+    "query": "engine oil capacity without filter 6mt",
+    "expected": {
+      "component": "engine_oil",
+      "operation": "oil_only",
+      "spec_type": "fluid_capacity",
+      "transmission": "6mt",
+      "numeric_value": "4.3",
+      "unit": "L",
+      "source_document_hash": "3ac3c9be7a509cfb52656b9043a3796f3fbe6afc4b3b759f150c5fdcaae25d33",
+      "source_file": "wrxOilAmount.pdf",
+      "source_page": 1,
+      "source_row": 4
+    }
+  },
+  {
+    "name": "WRX CVT oil_and_filter",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    },
+    "query": "engine oil capacity with filter cvt",
+    "expected": {
+      "component": "engine_oil",
+      "operation": "oil_and_filter",
+      "spec_type": "fluid_capacity",
+      "transmission": "cvt",
+      "numeric_value": "4.5",
+      "unit": "L",
+      "source_document_hash": "3ac3c9be7a509cfb52656b9043a3796f3fbe6afc4b3b759f150c5fdcaae25d33",
+      "source_file": "wrxOilAmount.pdf",
+      "source_page": 1,
+      "source_row": 3
+    }
+  },
+  {
+    "name": "WRX CVT oil_only",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    },
+    "query": "engine oil capacity without filter cvt",
+    "expected": {
+      "component": "engine_oil",
+      "operation": "oil_only",
+      "spec_type": "fluid_capacity",
+      "transmission": "cvt",
+      "numeric_value": "4.3",
+      "unit": "L",
+      "source_document_hash": "3ac3c9be7a509cfb52656b9043a3796f3fbe6afc4b3b759f150c5fdcaae25d33",
+      "source_file": "wrxOilAmount.pdf",
+      "source_page": 1,
+      "source_row": 4
+    }
+  },
+  {
+    "name": "Missing transmission",
+    "query": "engine oil capacity with filter",
+    "refusal": "clarification",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    }
+  },
+  {
+    "name": "Missing filter context",
+    "query": "engine oil capacity 6MT",
+    "refusal": "clarification",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    }
+  },
+  {
+    "name": "Wheel torque unavailable in supplied documents",
+    "query": "wheel bolt torque",
+    "refusal": "unavailable",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    }
+  },
+  {
+    "name": "Camber torque unavailable in supplied documents",
+    "query": "camber bolt torque",
+    "refusal": "unavailable",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    }
+  },
+  {
+    "name": "Wrong vehicle year",
+    "query": "engine oil capacity with filter 6MT",
+    "refusal": "unavailable",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2021",
+      "make": "subaru",
+      "model": "wrx"
+    }
+  },
+  {
+    "name": "Wrong vehicle model",
+    "query": "engine oil capacity with filter 6MT",
+    "refusal": "unavailable",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "forester"
+    }
+  },
+  {
+    "name": "Year contradicts confirmed vehicle",
+    "query": "2021 engine oil capacity with filter 6MT",
+    "refusal": "ambiguous",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    }
+  },
+  {
+    "name": "Conflicting transmission request",
+    "query": "engine oil capacity with filter 6MT and CVT",
+    "refusal": "clarification",
+    "vehicle": {
+      "shop_id": "shop_demo",
+      "year": "2022",
+      "make": "subaru",
+      "model": "wrx"
+    }
+  }
+]

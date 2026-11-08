@@ -23,7 +23,7 @@ QDRANT_API_KEY="$(echo "${QDRANT_API_KEY}" | xargs)"
 if [[ -n "${QDRANT_URL}" && -n "${QDRANT_API_KEY}" ]]; then
   echo "Cloud Qdrant configured: ${QDRANT_URL}"
   echo "Runtime DB is Qdrant Cloud. Local carvis_mvp_db/ is optional."
-  echo "Empty wipe:  ../.venv/bin/python purge_db.py"
+  echo "Staging:     ../.venv/bin/python qdrant_v2.py"
   echo "Re-seed:     ../.venv/bin/python ingest.py <pdf> --shop-id shop_demo ..."
   exit 0
 fi

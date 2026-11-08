@@ -1,46 +1,34 @@
-"""Offline Phase-1 seeder for Project Carvis.
-
-Parses a binary FSM/service PDF via LlamaParse into Markdown, expands
-mechanical unit abbreviations for voice-safe storage, isolates Markdown
-tables as atomic chunks, embeds them locally with FastEmbed, and upserts
-into Qdrant (cloud when QDRANT_URL + QDRANT_API_KEY are set, otherwise
-the local file-based store at ./carvis_mvp_db).
-"""
-
+"""Carvis PDF ingestion: explicit applicability, content caching, reviewed v2 records."""
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import asyncio
+import hashlib
+import json
 import os
 import re
-import sys
-import uuid
-from dataclasses import dataclass
+import tempfile
+from importlib.metadata import version
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from dotenv import load_dotenv
-from fastembed import TextEmbedding
-from llama_parse import LlamaParse
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qmodels
+
+from qdrant_v2 import STAGING_COLLECTION, open_client, upsert_records
+from spec_extract import extract_records
+from spec_schema import EMBEDDING_MODEL, Vehicle, digest
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
-
-DEFAULT_PDF_PATH = PROJECT_ROOT / "intake_manifold_guide.pdf.pdf"
-QDRANT_PATH = PROJECT_ROOT / "carvis_mvp_db"
 PARSE_CACHE_DIR = PROJECT_ROOT / ".carvis_parse_cache"
-COLLECTION_NAME = "carvis_specs"
-EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
-VECTOR_SIZE = 384
+PARSER_VERSION = os.getenv("CARVIS_PARSER_VERSION", "latest")
+PARSE_PROMPT = (
+    "Transcribe the manual faithfully as Markdown, preserving all numerical values, "
+    "units, table columns, variant headers, ordered steps, warnings and footnotes. "
+    "Do not synthesize torque tables, infer missing cells, convert units, or fill missing values."
+)
 
-DEFAULT_YEAR = ""
-DEFAULT_MAKE = ""
-DEFAULT_MODEL = ""
-DEFAULT_SHOP_ID = "shop_demo"
-
-# Longer / period-spaced patterns first so partial matches cannot corrupt text.
 _UNIT_EXPANSION_RULES: Sequence[tuple[re.Pattern[str], str]] = (
     (re.compile(r"\blb\.\s*ft\.", re.IGNORECASE), "foot-pounds"),
     (re.compile(r"\blb\.\s*ft\b", re.IGNORECASE), "foot-pounds"),
@@ -62,723 +50,183 @@ _UNIT_EXPANSION_RULES: Sequence[tuple[re.Pattern[str], str]] = (
     (re.compile(r"\bNm\b"), "newton-meters"),
 )
 
-_TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
-_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?(?:\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$")
-_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*$")
-_CAUTION_LABELS = ("warning", "caution", "note", "important")
-_CAUTION_START_RE = re.compile(
-    r"^\s*(?:\*{0,2})(?:WARNING|CAUTION|NOTE|IMPORTANT)(?:\*{0,2})?\s*[:\-–]?",
-    re.IGNORECASE,
-)
-_DAMAGE_LINE_RE = re.compile(
-    r"damage can occur|cracking or breaking|do not confuse",
-    re.IGNORECASE,
-)
-_LLAMAPARSE_SYSTEM_PROMPT = (
-    "OCR all pages carefully when the source is scanned or image-based. "
-    "Extract all technical content as Markdown. "
-    "Convert every fastener, torque, and specification listing into a strict "
-    "Markdown pipe table using | column | syntax with a separator row. "
-    "Prefer columns such as Application, Torque, and Notes when present. "
-    "Preserve WARNING, CAUTION, and NOTE text immediately after the related "
-    "table. Do not omit numeric torque values or unit abbreviations such as "
-    "lb. ft., lb-ft, ft lbs, lb. in., lb-in, Nm, or N·m."
-)
-
-
-@dataclass(frozen=True)
-class VehicleMetadata:
-    year: str
-    make: str
-    model: str
-    document_ref: str
-    shop_id: str = DEFAULT_SHOP_ID
-
-    def normalized(self) -> "VehicleMetadata":
-        return VehicleMetadata(
-            year=self.year.strip().lower(),
-            make=self.make.strip().lower(),
-            model=self.model.strip().lower(),
-            document_ref=self.document_ref.strip().lower(),
-            shop_id=self.shop_id.strip().lower() or DEFAULT_SHOP_ID,
-        )
-
-
-@dataclass(frozen=True)
-class SpecChunk:
-    text: str
-    section: str
-
-
-def load_api_key() -> str:
-    raw = os.getenv("LLAMA_CLOUD_API_KEY")
-    if raw is None:
-        raise SystemExit(
-            "LLAMA_CLOUD_API_KEY is missing from the environment / .env file."
-        )
-    api_key = raw.strip().strip('"').strip("'")
-    if not api_key:
-        raise SystemExit(
-            "LLAMA_CLOUD_API_KEY is empty after stripping whitespace. "
-            "Set a valid LlamaParse API key in .env."
-        )
-    return api_key
-
-
-def open_qdrant_client() -> tuple[QdrantClient, str]:
-    """Return a Qdrant client and a human-readable location label.
-
-    Prefer cloud when both ``QDRANT_URL`` and ``QDRANT_API_KEY`` are set;
-    otherwise use the local file-backed store at ``QDRANT_PATH``.
-    """
-    qdrant_url = (os.getenv("QDRANT_URL") or "").strip()
-    qdrant_api_key = (os.getenv("QDRANT_API_KEY") or "").strip()
-
-    if qdrant_url and qdrant_api_key:
-        return (
-            QdrantClient(url=qdrant_url, api_key=qdrant_api_key),
-            qdrant_url,
-        )
-
-    QDRANT_PATH.mkdir(parents=True, exist_ok=True)
-    return QdrantClient(path=str(QDRANT_PATH)), str(QDRANT_PATH)
-
 
 def expand_mechanical_units(text: str) -> str:
-    """Rewrite torque / unit abbreviations into spelled-out plain text."""
-    expanded = text
     for pattern, replacement in _UNIT_EXPANSION_RULES:
-        expanded = pattern.sub(replacement, expanded)
-    return expanded
+        text = pattern.sub(replacement, text)
+    return text
 
 
 def document_ref_from_path(path: Path) -> str:
-    name = path.name
-    while name.lower().endswith(".pdf"):
-        name = name[: -len(".pdf")]
-        if name.endswith("."):
-            name = name[:-1]
-    ref = name.strip().lower().replace(" ", "_")
-    return ref or path.stem.lower()
-
-
-def _is_table_row(line: str) -> bool:
-    stripped = line.rstrip()
-    if not stripped:
-        return False
-    if _TABLE_ROW_RE.match(stripped):
-        return True
-    if _TABLE_SEPARATOR_RE.match(stripped):
-        return True
-    return False
-
-
-def _extract_heading_text(line: str) -> str | None:
-    match = _HEADING_RE.match(line.strip())
-    if match:
-        return match.group(1).strip()
-    return None
-
-
-def _is_caution_heading(heading: str) -> bool:
-    label = heading.strip().lower().rstrip(":").strip()
-    return label in _CAUTION_LABELS
-
-
-def _is_caution_body_line(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped:
-        return False
-    if _is_table_row(stripped):
-        return False
-    heading = _extract_heading_text(stripped)
-    if heading is not None:
-        return False
-    if _CAUTION_START_RE.match(stripped):
-        return True
-    if _DAMAGE_LINE_RE.search(stripped):
-        return True
-    if stripped.startswith("*") and not stripped.startswith("**"):
-        return True
-    return True
-
-
-def _lookahead_nonempty(lines: Sequence[str], start: int) -> int | None:
-    index = start
-    while index < len(lines):
-        if lines[index].strip():
-            return index
-        index += 1
-    return None
-
-
-def _should_attach_after_table(lines: Sequence[str], index: int) -> bool:
-    look = _lookahead_nonempty(lines, index)
-    if look is None:
-        return False
-    candidate = lines[look].strip()
-    if _is_table_row(candidate):
-        return False
-    heading = _extract_heading_text(candidate)
-    if heading is not None:
-        return _is_caution_heading(heading)
-    if _CAUTION_START_RE.match(candidate):
-        return True
-    if _DAMAGE_LINE_RE.search(candidate):
-        return True
-    if candidate.startswith("*") and not candidate.startswith("**"):
-        return True
-    return False
-
-
-def isolate_markdown_tables(markdown: str) -> list[SpecChunk]:
-    """Isolate each Markdown table plus immediately following caution lines.
-
-    Never splits a contiguous table row run across chunk boundaries.
-    WARNING/CAUTION/NOTE headings that immediately follow a table stay attached.
-    """
-    lines = markdown.splitlines()
-    chunks: list[SpecChunk] = []
-    current_section = ""
-    index = 0
-    total = len(lines)
-
-    while index < total:
-        line = lines[index]
-        heading = _extract_heading_text(line)
-        if heading is not None:
-            if not _is_caution_heading(heading):
-                current_section = heading
-            index += 1
-            continue
-
-        if not _is_table_row(line):
-            index += 1
-            continue
-
-        table_lines: list[str] = []
-        while index < total and _is_table_row(lines[index]):
-            table_lines.append(lines[index].rstrip())
-            index += 1
-
-        caution_lines: list[str] = []
-        while index < total and _should_attach_after_table(lines, index):
-            candidate = lines[index]
-            if not candidate.strip():
-                caution_lines.append("")
-                index += 1
-                continue
-
-            heading = _extract_heading_text(candidate)
-            if heading is not None and _is_caution_heading(heading):
-                caution_lines.append(candidate.rstrip())
-                index += 1
-                while index < total:
-                    body = lines[index]
-                    if not body.strip():
-                        next_idx = _lookahead_nonempty(lines, index + 1)
-                        if next_idx is None:
-                            break
-                        next_line = lines[next_idx]
-                        next_heading = _extract_heading_text(next_line)
-                        if next_heading is not None:
-                            break
-                        if _is_table_row(next_line):
-                            break
-                        caution_lines.append("")
-                        index += 1
-                        continue
-                    if _is_table_row(body):
-                        break
-                    next_heading = _extract_heading_text(body)
-                    if next_heading is not None:
-                        break
-                    if not _is_caution_body_line(body):
-                        break
-                    caution_lines.append(body.rstrip())
-                    index += 1
-                continue
-
-            if _is_caution_body_line(candidate):
-                caution_lines.append(candidate.rstrip())
-                index += 1
-                continue
-            break
-
-        while caution_lines and not caution_lines[-1].strip():
-            caution_lines.pop()
-
-        parts = table_lines + ([""] + caution_lines if caution_lines else [])
-        chunk_text = "\n".join(parts).strip()
-        if chunk_text:
-            chunks.append(SpecChunk(text=chunk_text, section=current_section))
-
-    return chunks
-
-
-_TORQUE_SPEC_LINE_RE = re.compile(
-    r"^\s*(?:\*{0,2})\s*(.+?)\s*Torque\s+Spec\s*:\s*(.+?)\s*(?:\*{0,2})\s*$",
-    re.IGNORECASE,
-)
-_INLINE_TORQUE_RE = re.compile(
-    r"(?P<label>[A-Za-z][A-Za-z0-9 /_-]{2,80}?)\s*[:\-–]\s*"
-    r"(?P<value>\d+(?:\s*-\s*\d+)?\s*(?:N\s*[·•\.]?\s*m|Nm|ft\.?\s*-?\s*lbs?|"
-    r"lb\.?\s*-?\s*fts?|inch-pounds|foot-pounds|newton-meters)"
-    r"(?:[^.\n]{0,60})?)",
-    re.IGNORECASE,
-)
-
-
-def isolate_torque_spec_chunks(markdown: str) -> list[SpecChunk]:
-    """Fallback for scanned manuals: synthesize a Markdown torque table.
-
-    Used when LlamaParse returns prose torque lines without pipe tables.
-    """
-    table_rows: list[str] = [
-        "| Application | Torque | Notes |",
-        "| --- | --- | --- |",
-    ]
-    caution_lines: list[str] = []
-    current_section = "Torque Specifications"
-    seen: set[str] = set()
-
-    for raw_line in markdown.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-
-        heading = _extract_heading_text(line)
-        if heading is not None and not _is_caution_heading(heading):
-            if any(
-                token in heading.lower()
-                for token in ("torque", "fastener", "install", "fuel", "intake")
-            ):
-                current_section = heading
-            continue
-
-        if _CAUTION_START_RE.match(line) or _DAMAGE_LINE_RE.search(line):
-            caution_lines.append(line)
-            continue
-
-        spec_match = _TORQUE_SPEC_LINE_RE.match(line)
-        if spec_match is not None:
-            application = spec_match.group(1).strip(" :-*") or "Torque Specification"
-            torque = spec_match.group(2).strip(" *-")
-            key = f"{application.lower()}::{torque.lower()}"
-            if key not in seen and torque:
-                seen.add(key)
-                table_rows.append(f"| {application} | {torque} | |")
-            continue
-
-        inline = _INLINE_TORQUE_RE.search(line)
-        if inline is not None and "torque" in line.lower():
-            application = inline.group("label").strip(" :-*")
-            torque = inline.group("value").strip(" *-")
-            key = f"{application.lower()}::{torque.lower()}"
-            if key not in seen and torque:
-                seen.add(key)
-                table_rows.append(f"| {application} | {torque} | |")
-
-    if len(table_rows) <= 2:
-        return []
-
-    parts = table_rows
-    if caution_lines:
-        parts = table_rows + [""] + caution_lines[:3]
-    return [SpecChunk(text="\n".join(parts).strip(), section=current_section)]
-
-
-def collect_spec_chunks(markdown: str) -> list[SpecChunk]:
-    """Prefer atomic Markdown tables; fall back to synthesized torque specs."""
-    chunks = isolate_markdown_tables(markdown)
-    if chunks:
-        return chunks
-    return isolate_torque_spec_chunks(markdown)
-
-
-def parse_cache_path(document_ref: str) -> Path:
-    return PARSE_CACHE_DIR / f"{document_ref}.md"
-
-
-def load_cached_markdown(document_ref: str) -> str | None:
-    cache_file = parse_cache_path(document_ref)
-    if not cache_file.is_file():
-        return None
-    content = cache_file.read_text(encoding="utf-8").strip()
-    return content or None
-
-
-def save_cached_markdown(document_ref: str, markdown: str) -> Path:
-    PARSE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = parse_cache_path(document_ref)
-    cache_file.write_text(markdown.strip() + "\n", encoding="utf-8")
-    return cache_file
-
-
-async def parse_pdf_to_markdown(
-    path: Path,
-    api_key: str,
-    *,
-    force_parse: bool = False,
-    premium_mode: bool = False,
-) -> str:
-    """Async LlamaParse extraction to a single Markdown document string.
-
-    Absolute credit protection:
-    1. When force_parse is False and a local cache file exists, read it from disk
-       and return immediately — zero LlamaParse HTTP calls.
-    2. Remote calls use tier=cost_effective (never agentic), use_vendor_cache for
-       LlamaCloud's 48-hour dedupe window, and premium_mode=False unless --premium.
-    """
-    if not path.is_file():
-        raise SystemExit(f"PDF not found: {path}")
-    if not path.name.lower().endswith(".pdf"):
-        raise SystemExit(
-            f"Input must be a PDF path (name ending in .pdf). Got: {path.name}"
-        )
-
-    document_ref = document_ref_from_path(path)
-    cache_file = parse_cache_path(document_ref)
-
-    # Local filesystem handshake: never open a LlamaParse client when the
-    # cache already exists and the caller did not ask to force a re-parse.
-    if not force_parse and cache_file.is_file():
-        cached_markdown = cache_file.read_text(encoding="utf-8")
-        if cached_markdown.strip():
-            print(
-                "Using local parse cache (no LlamaParse network request): "
-                f"{cache_file}"
-            )
-            return cached_markdown
-
-    # Enforce defaults: cost_effective tier only; premium only via --premium.
-    allow_premium = bool(premium_mode)
-
-    parser = LlamaParse(
-        api_key=api_key,
-        result_type="markdown",
-        verbose=True,
-        language="en",
-        tier="cost_effective",
-        use_vendor_cache=True,
-        invalidate_cache=False,
-        do_not_cache=False,
-        aggressive_table_extraction=True,
-        outlined_table_extraction=True,
-        premium_mode=allow_premium,
-        system_prompt=_LLAMAPARSE_SYSTEM_PROMPT,
-    )
-    print(
-        "Calling LlamaParse "
-        f"(tier=cost_effective, use_vendor_cache=True, "
-        f"premium_mode={allow_premium}, force_parse={force_parse})..."
-    )
-    documents = await parser.aload_data(str(path))
-    if not documents:
-        raise SystemExit(f"LlamaParse returned no documents for {path}")
-
-    pages: list[str] = []
-    for document in documents:
-        content = (document.get_content() or "").strip()
-        if content:
-            pages.append(content)
-
-    if not pages:
-        raise SystemExit(f"LlamaParse returned empty Markdown for {path}")
-
-    markdown = "\n\n".join(pages)
-    saved = save_cached_markdown(document_ref, markdown)
-    print(f"Saved parse cache for reuse: {saved}")
-    return markdown
-
-
-def build_points(
-    chunks: Sequence[SpecChunk],
-    metadata: VehicleMetadata,
-    embedding_model: TextEmbedding,
-) -> list[qmodels.PointStruct]:
-    if not chunks:
-        return []
-
-    texts = [chunk.text for chunk in chunks]
-    vectors = list(embedding_model.embed(texts))
-    if len(vectors) != len(chunks):
-        raise RuntimeError(
-            f"Embedding count mismatch: {len(vectors)} vectors for {len(chunks)} chunks."
-        )
-
-    meta = metadata.normalized()
-    points: list[qmodels.PointStruct] = []
-    for chunk, vector in zip(chunks, vectors, strict=True):
-        points.append(
-            qmodels.PointStruct(
-                id=str(uuid.uuid4()),
-                vector=list(vector),
-                payload={
-                    "text": chunk.text,
-                    "year": meta.year,
-                    "make": meta.make,
-                    "model": meta.model,
-                    "document_ref": meta.document_ref,
-                    "section": chunk.section,
-                    "shop_id": meta.shop_id,
-                },
-            )
-        )
-    return points
-
-
-def ensure_payload_indexes(client: QdrantClient) -> None:
-    """Create keyword indexes required by Qdrant Cloud for filtered queries."""
-    for field_name in ("document_ref", "year", "make", "model", "shop_id"):
-        try:
-            client.create_payload_index(
-                collection_name=COLLECTION_NAME,
-                field_name=field_name,
-                field_schema=qmodels.PayloadSchemaType.KEYWORD,
-            )
-        except Exception as exc:  # noqa: BLE001 - index may already exist
-            message = str(exc).lower()
-            if "already exists" in message or "duplicate" in message:
-                continue
-            raise
-
-
-def ensure_collection(client: QdrantClient) -> None:
-    if not client.collection_exists(COLLECTION_NAME):
-        client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=qmodels.VectorParams(
-                size=VECTOR_SIZE,
-                distance=qmodels.Distance.COSINE,
-            ),
-        )
-    ensure_payload_indexes(client)
-
-
-def delete_points_for_document(
-    client: QdrantClient,
-    document_ref: str,
-    shop_id: str,
-) -> None:
-    """Remove prior points for one manual + shop so re-ingest is tenant-safe."""
-    if not client.collection_exists(COLLECTION_NAME):
-        return
-    tenant = (shop_id or DEFAULT_SHOP_ID).strip().lower() or DEFAULT_SHOP_ID
-    client.delete(
-        collection_name=COLLECTION_NAME,
-        points_selector=qmodels.FilterSelector(
-            filter=qmodels.Filter(
-                must=[
-                    qmodels.FieldCondition(
-                        key="document_ref",
-                        match=qmodels.MatchValue(value=document_ref.strip().lower()),
-                    ),
-                    qmodels.FieldCondition(
-                        key="shop_id",
-                        match=qmodels.MatchValue(value=tenant),
-                    ),
-                ]
-            )
-        ),
-    )
-
-
-def seed_qdrant(
-    points: Sequence[qmodels.PointStruct],
-    document_ref: str,
-    shop_id: str,
-) -> str:
-    """Append/replace one document's points without wiping other manuals.
-
-    Returns the Qdrant location label used for this upsert (URL or local path).
-    """
-    client, location = open_qdrant_client()
-    try:
-        ensure_collection(client)
-        delete_points_for_document(client, document_ref, shop_id)
-        if points:
-            client.upsert(collection_name=COLLECTION_NAME, points=list(points))
-    finally:
-        client.close()
-    return location
-
-
-async def run_ingest(
-    pdf_path: Path,
-    year: str,
-    make: str,
-    model: str,
-    embedding_model: TextEmbedding | None = None,
-    *,
-    shop_id: str = DEFAULT_SHOP_ID,
-    force_parse: bool = False,
-    premium_mode: bool = False,
-) -> int:
-    api_key = load_api_key()
-    print(f"Preparing Markdown for: {pdf_path}")
-    markdown = await parse_pdf_to_markdown(
-        pdf_path,
-        api_key,
-        force_parse=force_parse,
-        premium_mode=premium_mode,
-    )
-
-    print("Expanding mechanical units...")
-    markdown = expand_mechanical_units(markdown)
-
-    print("Isolating atomic specification chunks...")
-    chunks = collect_spec_chunks(markdown)
-    if not chunks:
-        raise SystemExit(
-            "No Markdown tables or torque specifications were isolated from "
-            f"LlamaParse output for {pdf_path.name}. Refuse to seed empty points."
-        )
-
-    tenant = (shop_id or DEFAULT_SHOP_ID).strip().lower() or DEFAULT_SHOP_ID
-    metadata = VehicleMetadata(
-        year=year,
-        make=make,
-        model=model,
-        document_ref=document_ref_from_path(pdf_path),
-        shop_id=tenant,
-    )
-
-    print(f"Embedding {len(chunks)} chunk(s) with FastEmbed ({EMBEDDING_MODEL_NAME})...")
-    model_instance = embedding_model or TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
-    points = build_points(chunks, metadata, model_instance)
-
-    print(
-        f"Upserting {len(points)} point(s) for document_ref="
-        f"{metadata.document_ref!r} shop_id={tenant!r} into {COLLECTION_NAME}..."
-    )
-    location = seed_qdrant(
-        points,
-        document_ref=metadata.document_ref,
-        shop_id=tenant,
-    )
-
-    print(f"Seeded {len(points)} point(s) at {location}.")
-    print(
-        f"Metadata: year={metadata.year} make={metadata.make} "
-        f"model={metadata.model} shop_id={tenant}"
-    )
-    print(f"document_ref={metadata.document_ref}")
-    for i, chunk in enumerate(chunks, start=1):
-        preview = chunk.text.replace("\n", " | ")
-        if len(preview) > 160:
-            preview = preview[:157] + "..."
-        section_label = chunk.section or "(none)"
-        print(f"  [{i}] section={section_label!r} :: {preview}")
-
-    return len(points)
-
-
-async def run_ingest_many(
-    pdf_paths: Sequence[Path],
-    year: str,
-    make: str,
-    model: str,
-    *,
-    shop_id: str = DEFAULT_SHOP_ID,
-    force_parse: bool = False,
-    premium_mode: bool = False,
-) -> int:
-    """Ingest one or more PDFs with the same vehicle metadata for this invocation."""
-    if not pdf_paths:
-        raise SystemExit("No PDF paths provided.")
-
-    embedding_model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
-    total = 0
-    for pdf_path in pdf_paths:
-        print(f"\n=== Ingesting {pdf_path.name} ===")
-        total += await run_ingest(
-            pdf_path=pdf_path,
-            year=year,
-            make=make,
-            model=model,
-            embedding_model=embedding_model,
-            shop_id=shop_id,
-            force_parse=force_parse,
-            premium_mode=premium_mode,
-        )
-    return total
-
-
-def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Ingest one or more binary PDFs via LlamaParse into Carvis's "
-            "Qdrant store (cloud or local). Each document is replaced by "
-            "document_ref within a shop_id tenant; other manuals are preserved. "
-            "Parse results are cached under .carvis_parse_cache/ to avoid "
-            "burning LlamaParse credits on every run."
-        )
-    )
-    parser.add_argument(
-        "pdf_paths",
-        nargs="*",
-        default=[str(DEFAULT_PDF_PATH)],
-        help=(
-            "One or more PDF paths "
-            f"(default: {DEFAULT_PDF_PATH.name})"
-        ),
-    )
-    parser.add_argument("--year", default=DEFAULT_YEAR, help="Vehicle year metadata")
-    parser.add_argument("--make", default=DEFAULT_MAKE, help="Vehicle make metadata")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Vehicle model metadata")
-    parser.add_argument(
-        "--shop-id",
-        default=DEFAULT_SHOP_ID,
-        help=f"Tenant shop id for payload isolation (default: {DEFAULT_SHOP_ID})",
-    )
-    parser.add_argument(
-        "--force-parse",
-        action="store_true",
-        help=(
-            "Ignore local/server parse cache and spend LlamaParse credits again. "
-            "Use only when the PDF content changed."
-        ),
-    )
-    parser.add_argument(
-        "--premium",
-        action="store_true",
-        help="Enable LlamaParse premium_mode (costs more pages; for hard scans).",
-    )
-    return parser.parse_args(list(argv) if argv is not None else None)
-
-
-def main(argv: Iterable[str] | None = None) -> None:
-    args = parse_args(argv)
-    raw_paths = args.pdf_paths if args.pdf_paths else [str(DEFAULT_PDF_PATH)]
-    pdf_paths = [Path(p).expanduser().resolve() for p in raw_paths]
-    for path in pdf_paths:
-        if not path.is_file():
-            raise SystemExit(f"PDF not found: {path}")
-        if not path.name.lower().endswith(".pdf"):
-            raise SystemExit(
-                f"Input must be a PDF path (name ending in .pdf). Got: {path.name}"
-            )
-
-    try:
-        count = asyncio.run(
-            run_ingest_many(
-                pdf_paths=pdf_paths,
-                year=args.year,
-                make=args.make,
-                model=args.model,
-                shop_id=args.shop_id,
-                force_parse=args.force_parse,
-                premium_mode=args.premium,
-            )
-        )
-    except KeyboardInterrupt:
-        print("Ingest interrupted.", file=sys.stderr)
-        raise SystemExit(130) from None
-
-    print(f"\nTotal points upserted this run: {count}")
-    if count <= 0:
-        raise SystemExit(1)
+    return path.stem.strip().lower().replace(" ", "_")
+
+
+def content_hash(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def parser_config(premium: bool = False) -> dict:
+    return {"provider": "llamaparse", "sdk_version": version("llama-cloud-services"),
+            "version": PARSER_VERSION, "tier": "cost_effective",
+            "premium_mode": premium, "prompt": PARSE_PROMPT, "format": "page-json-v2"}
+
+
+def cache_key(path: Path, config: dict) -> str:
+    return digest({"pdf_sha256": content_hash(path), "parser": config})
+
+
+def atomic_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        json.dump(value, stream, ensure_ascii=False, indent=2)
+        temp = Path(stream.name)
+    temp.replace(path)
+
+
+async def parse_pdf_pages(path: Path, *, force_parse: bool = False,
+                          premium_mode: bool = False) -> tuple[list[dict], str, str]:
+    if not path.is_file() or path.suffix.lower() != ".pdf":
+        raise ValueError(f"An explicit PDF path is required: {path}")
+    config = parser_config(premium_mode)
+    pdf_hash = content_hash(path)
+    key = digest({"pdf_sha256": pdf_hash, "parser": config})
+    cached = PARSE_CACHE_DIR / f"{key}.json"
+    if cached.is_file() and not force_parse:
+        data = json.loads(cached.read_text())
+        if data["pdf_sha256"] != pdf_hash or data["parser"] != config:
+            raise ValueError("Parse cache provenance mismatch")
+        return data["pages"], pdf_hash, config["version"]
+    api_key = (os.getenv("LLAMA_CLOUD_API_KEY") or "").strip()
+    if not api_key:
+        raise ValueError("LLAMA_CLOUD_API_KEY is required to parse an uncached PDF")
+    from llama_parse import LlamaParse
+    parser = LlamaParse(api_key=api_key, result_type="markdown", language="en",
+                        tier=config["tier"], version=config["version"],
+                        premium_mode=premium_mode, system_prompt=PARSE_PROMPT,
+                        invalidate_cache=force_parse, do_not_cache=False,
+                        ignore_errors=False)
+    results = await parser.aget_json(str(path))
+    pages = []
+    for result in results:
+        for page in result.get("pages", []):
+            if page.get("success") is False:
+                raise ValueError("A source page failed parsing; existing data was left intact")
+            markdown = page.get("md")
+            number = page.get("page")
+            if not isinstance(markdown, str) or not isinstance(number, int) or number < 1:
+                raise ValueError("Parser returned missing page text/number; cannot fabricate provenance")
+            pages.append({"page": number, "markdown": markdown})
+    if not pages or len({p["page"] for p in pages}) != len(pages):
+        raise ValueError("Empty or duplicate parser pages")
+    atomic_json(cached, {"pdf_sha256": pdf_hash, "parser": config, "pages": pages})
+    return pages, pdf_hash, config["version"]
+
+
+async def run_ingest(pdf_path: Path, year: str, make: str, model: str, embedding_model=None,
+                     *, shop_id: str, force_parse: bool = False, premium_mode: bool = False,
+                     transmission: str | None = None, engine_code: str | None = None,
+                     trim: str | None = None, market: str | None = None,
+                     document_ref: str | None = None, collection: str = STAGING_COLLECTION,
+                     export: Path | None = None, client=None,
+                     page_evidence: Path | None = None) -> int:
+    vehicle = Vehicle(shop_id=shop_id, year=year, make=make, model=model,
+                      transmission=transmission, engine_code=engine_code, trim=trim, market=market)
+    if page_evidence:
+        # Explicit transcription fallback for scans/merged cells. This still
+        # creates pending records and never authorizes technical answers.
+        evidence = json.loads(page_evidence.read_text())
+        pdf_hash = content_hash(pdf_path)
+        if evidence.get("pdf_sha256") != pdf_hash or not evidence.get("transcribed_by"):
+            raise ValueError("Page evidence must identify the transcriber and match the original PDF hash")
+        pages = evidence["pages"]
+        if not pages or any(not isinstance(p.get("page"), int) or p["page"] < 1
+                            or not isinstance(p.get("markdown"), str) for p in pages):
+            raise ValueError("Page evidence requires numbered source pages and text")
+        parser_version = "source-transcription:" + digest(evidence)
+    else:
+        pages, pdf_hash, parser_version = await parse_pdf_pages(
+            pdf_path, force_parse=force_parse, premium_mode=premium_mode)
+    records = extract_records(pages, vehicle, document_ref=document_ref or document_ref_from_path(pdf_path),
+                              source_file=pdf_path.name, document_hash=pdf_hash, parser_version=parser_version)
+    if not records:
+        raise ValueError("No atomic records extracted; existing data was left intact")
+    if export:
+        atomic_json(export, [r.model_dump() for r in records])
+    if embedding_model is None:
+        from fastembed import TextEmbedding
+        embedding_model = TextEmbedding(model_name=EMBEDDING_MODEL)
+    if client is not None:
+        return upsert_records(client, embedding_model, records, collection)
+    with closing(open_client()) as owned:
+        return upsert_records(owned, embedding_model, records, collection)
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Ingest Carvis manuals to staging; all new records require source review")
+    parser.add_argument("pdf_paths", nargs="*")
+    parser.add_argument("--manifest", type=Path, help="JSON documents list; paths relative to the manifest")
+    parser.add_argument("--page-evidence", type=Path, help="Explicit source transcription fallback, bound to the PDF hash")
+    for name in ("year", "make", "model", "shop-id", "transmission", "engine-code", "trim", "market"):
+        parser.add_argument("--" + name)
+    parser.add_argument("--collection", default=STAGING_COLLECTION)
+    parser.add_argument("--force-parse", action="store_true")
+    parser.add_argument("--premium", action="store_true")
+    parser.add_argument("--export-dir", type=Path, help="Local review JSON (keep it outside Git)")
+    args = parser.parse_args(argv)
+    if bool(args.pdf_paths) == bool(args.manifest):
+        parser.error("Supply explicit PDF paths OR a vehicle manifest")
+    if args.manifest and (args.page_evidence or any(getattr(args, name) for name in ("year", "make", "model", "shop_id", *("transmission", "engine_code", "trim", "market")))):
+        parser.error("Put applicability in each manifest entry, not in both CLI and manifest")
+    if not args.manifest and not all((args.year, args.make, args.model, args.shop_id)):
+        parser.error("--year, --make, --model and --shop-id are required")
+    return args
+
+
+def ingestion_jobs(args) -> list[dict]:
+    if args.manifest:
+        raw = json.loads(args.manifest.read_text())
+        docs = raw["documents"]
+        base = args.manifest.resolve().parent
+    else:
+        fields = {k: getattr(args, k) for k in Vehicle.model_fields}
+        docs = [{"path": p, **fields} for p in args.pdf_paths]
+        base = Path.cwd()
+    if not isinstance(docs, list) or not docs:
+        raise ValueError("Manifest needs a nonempty documents list")
+    jobs = []
+    for doc in docs:
+        unknown = set(doc) - set(Vehicle.model_fields) - {"path", "document_ref", "page_evidence"}
+        if unknown:
+            raise ValueError(f"Unknown manifest fields: {sorted(unknown)}")
+        vehicle = Vehicle(**{k: doc[k] for k in Vehicle.model_fields if k in doc})
+        path = (base / doc["path"]).resolve()
+        if not path.is_file() or path.suffix.lower() != ".pdf":
+            raise ValueError(f"PDF not found: {path}")
+        evidence_path = doc.get("page_evidence") if args.manifest else args.page_evidence
+        evidence_path = (base / evidence_path).resolve() if evidence_path else None
+        if evidence_path and not evidence_path.is_file():
+            raise ValueError("Page evidence file not found")
+        jobs.append({"pdf_path": path, **vehicle.model_dump(), "document_ref": doc.get("document_ref"), "page_evidence": evidence_path})
+    return jobs
+
+
+async def ingest_jobs(args):
+    jobs = ingestion_jobs(args)  # Validate the entire manifest before any paid parse or write.
+    from fastembed import TextEmbedding
+    embedder = TextEmbedding(model_name=EMBEDDING_MODEL)
+    for job in jobs:
+        export = args.export_dir / f"{content_hash(job['pdf_path'])}.json" if args.export_dir else None
+        count = await run_ingest(**job, embedding_model=embedder, collection=args.collection,
+                                 force_parse=args.force_parse, premium_mode=args.premium, export=export)
+        print(f"Carvis: {count} records staged for review from {job['pdf_path'].name}")
+
+
+def main(argv=None):
+    asyncio.run(ingest_jobs(parse_args(argv)))
 
 
 if __name__ == "__main__":
