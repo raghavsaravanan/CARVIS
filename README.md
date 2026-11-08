@@ -1,69 +1,105 @@
-# Carvis
+<div align="center">
 
-Carvis is an automotive technician copilot: Meta glasses capture context, NVIDIA Nemotron proposes visible components, and FastAPI retrieves reviewed specifications from vehicle manuals in Qdrant. The companion app displays and speaks grounded answers.
+# CARVIS
+
+**Conversational Automotive Repair & Visual Intelligence System**
+
+### Eyes on the job. Answers in your ear.
+
+A hands-free automotive copilot built with Meta smart glasses, NVIDIA Nemotron, verified service-manual retrieval, and SpacetimeDB.
+
+**Built at [HackUTD 2026](https://hackutd-zeroday.devpost.com/)**
+
+![iOS](https://img.shields.io/badge/iOS-SwiftUI-18181B?logo=apple&logoColor=white)
+![NVIDIA](https://img.shields.io/badge/NVIDIA-Nemotron-76B900?logo=nvidia&logoColor=white)
+![Vapi](https://img.shields.io/badge/Vapi-Voice_AI-6D5EF8)
+![Qdrant](https://img.shields.io/badge/Qdrant-Verified_Retrieval-DC382D)
+![SpacetimeDB](https://img.shields.io/badge/SpacetimeDB-Connected_Shops-27272A)
+
+</div>
+
+## Why CARVIS
+
+A mechanic shouldn't have to stop fixing a car just to find the information they need. CARVIS was inspired by a mechanic who had to put down his tools, wash his hands, and search ALLDATA at the shop computer whenever he needed a specification.
+
+CARVIS brings the question and answer into the job through **Meta Ray-Ban glasses and a native SwiftUI iPhone app**.
+
+> “Hey CARVIS, what is the tolerance on the ride height of the vehicle?”
+
+Our physical-glasses demonstration shows vehicle confirmation, a matching reviewed manual lookup, and a spoken answer without reaching for the phone.
+
+## Platform capabilities
+
+| Capability | Implementation |
+| --- | --- |
+| **SEE** | NVIDIA Nemotron interprets captured images and returns likely components, visual context, and uncertainty. |
+| **VERIFY** | Qdrant retrieves structured manual records; Python checks vehicle applicability, variants, reviewed evidence, and conflicting values before formatting specifications. |
+| **CONNECT** | SpacetimeDB provides profiles, shops, roles, invitations, and shared query/result records in the companion shop workspace. |
+| **CONVERSE** | Vapi and GPT-4.1-mini coordinate voice and tools, with confirmed vehicle context and conversational follow-ups. |
+
+The camera-command pipeline correlates fresh captures with active sessions and handles deadlines, duplicates, and stale results. LlamaParse-assisted ingestion uses content-hash caching, source provenance, and review before specifications become available.
+
+**The model interprets the question. The manual supplies the specification.**
+
+## Architecture
+
+```mermaid
+flowchart LR
+    G[Meta glasses] <--> I[SwiftUI iPhone app]
+    I <--> V[Vapi voice and tools]
+    V <--> A[FastAPI context and verification]
+    I <-->|Camera requests and JPEGs| A
+    A <--> N[NVIDIA Nemotron vision]
+    A <--> Q[Qdrant reviewed manuals]
+    A -.->|Configured telemetry| S[SpacetimeDB shop data]
+    W[Companion shop workspace] <--> S
+```
+
+Nemotron handles visual interpretation; the conversational model selects tools. Qdrant stores manual evidence; SpacetimeDB organizes shared shop activity.
+
+## Quick start
+
+Requirements: Python 3.12 recommended, service credentials, and reviewed Qdrant v2 records. The native app also requires Xcode, a physical iPhone, compatible glasses, and Meta developer setup.
+
+From the repository root:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt
+cp backend/.env.example backend/.env
+# Configure credentials privately in backend/.env.
+cd backend
+CARVIS_QDRANT_COLLECTION=carvis_specs_v2 ../.venv/bin/uvicorn main:app --port 8000
+```
+
+Expose the backend through HTTPS reachable by both the iPhone and Vapi. From the repository root, configure the assistant:
+
+```bash
+# Set VAPI_PRIVATE_KEY and VAPI_WEBHOOK_SECRET in backend/.env first.
+# Set VAPI_ASSISTANT_ID to update an existing assistant.
+.venv/bin/python backend/vapi_assistant.py --public-url https://YOUR-BACKEND
+```
+
+Open [the Xcode project](ios/Carvis/Carvis.xcodeproj), configure signing, Meta credentials, the backend address, and the local Vapi public key/assistant ID. Follow the [iOS setup guide](ios/README.md). Never commit credentials or captured images.
+
+Use one backend worker while conversation state is in memory. Follow the [migration runbook](docs/qdrant-v2-migration.md) before changing collections or aliases; preserve the legacy collection.
 
 ## Repository
 
 | Directory | Purpose |
 | --- | --- |
-| `backend/` | FastAPI, LlamaParse ingestion, structured specifications, Qdrant tooling, tests |
-| `frontend/` | React/Vite JPEG question console with speech output |
-| `ios/` | Native Meta glasses companion and device setup |
-| `docs/` | Architecture, migration, deployment, and safety documentation |
+| `ios/` | Primary SwiftUI interface, glasses integration, voice, and camera |
+| `backend/` | API, Nemotron adapter, conversation tools, retrieval, ingestion, and tests |
+| `carvis-module/spacetimedb/` | Shop database schema, views, and reducers |
+| `frontend/` | Retained companion web workspace; not required for the glasses demo |
+| `docs/` | Architecture, hardware checks, source validation, and migration |
 
-## Specification retrieval v2
+## Validation and scope
 
-Each record holds one value or an ordered procedure step, exact vehicle applicability, component/operation/specification type, original cell/row evidence, PDF content hash, and review status. Decimal values stay exact strings. Source conversions are preserved, with no computed unit substitution.
+Passed local checks: **113 backend tests, 66 conversation-state checks, and 29 wake-phrase checks**, plus the web production build and database-module type check.
 
-Queries filter exact vehicle and operation metadata before semantic ranking. Python verifies every matching candidate, detects conflicting manuals/revisions, requests missing variants, and formats numbers with actual citations. Unsupported requests refuse. Visual identification never establishes vehicle identity or authorizes a repair fact.
+The recorded hardware demo establishes the specification workflow. Visual identification remains a hypothesis; full voice-camera concurrency needs separate hardware validation. Native shop synchronization is future work. Custom wake recognition requires an armed session, and the separate native step guide/shop-floor visualization contains scripted or simulated content.
 
-**Deployment gate:** the existing production collection is preserved. This backend returns `migration_pending` while reading the legacy collection; deploy the new retrieval code together with a validated v2 alias configuration. Do not deploy expecting legacy semantic answers to continue. Source review and acceptance validation must precede activation.
+## Documentation
 
-See [migration and Qdrant configuration](docs/qdrant-v2-migration.md) for the exact commands, review workflow, activation, and rollback. [Architecture](docs/architecture.md) explains the API contracts and latency boundaries.
-
-## Local development
-
-Create a virtual environment and install `backend/requirements.txt`. Copy `backend/.env.example` to `backend/.env` and set server-side Qdrant, LlamaParse, NVIDIA and Vapi credentials. Existing credentials need no changes. Never put these keys in frontend environment variables.
-
-From the repository root:
-
-```bash
-.venv/bin/python -m pytest backend/tests -q
-.venv/bin/python backend/qdrant_v2.py
-```
-
-Ingestion requires explicit source paths and vehicle metadata, or a JSON manifest:
-
-```bash
-.venv/bin/python backend/ingest.py /absolute/path/manual.pdf \
-  --year 2022 --make subaru --model wrx --shop-id shop_demo \
-  --export-dir .carvis_review
-```
-
-New records are **pending review** and cannot answer questions until reviewed and validated. Parse caches use PDF content hashes plus parser configuration; changed files are reparsed even under unchanged filenames. Set a supported pinned `CARVIS_PARSER_VERSION` for reproducible production parsing.
-
-After completing the migration:
-
-```bash
-cd backend
-../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-In a second terminal, run `npm ci --prefix frontend` then `npm run dev --prefix frontend`. The development proxy forwards `/api` to FastAPI. Select explicit vehicle/transmission context and ask whether the oil filter is being replaced.
-
-## API compatibility
-
-- `GET /health`: liveness.
-- `POST /vision-query`: multipart JPEG, question, year, make, model, session ID; optional shop and variant fields. Returns compatible answer/component/vehicle fields plus source citations and timings. A refusal is HTTP 404 with an error and status.
-- `POST /vapi-tool`: existing flat/nested Vapi payloads and secret header; confirmed per-call vehicle context remains supported. Include transmission and exact operation in the question or structured fields.
-- `POST /upload`: explicit vehicle metadata and PDF; HTTP 202 queues pending-review staging ingestion, not immediate availability.
-
-Nemotron is the default visual provider. Its API client is reused. Explicit, complete specification questions can skip image inference; ambiguous visual questions request mechanic confirmation. Provider failures never trigger generated repair advice. The named component, matching manual, and required configuration must be confirmed.
-
-## Deployment and hardware
-
-`render.yaml` retains the backend build/start and health route. Configure `CARVIS_QDRANT_COLLECTION=carvis_specs_active` only after validation and alias activation. Use a separate, unaliased `CARVIS_INGEST_COLLECTION` for future generations.
-
-Follow [iOS setup](ios/README.md) for Meta registration, device permissions, physical-glasses camera capture, and audio routing. Hardware operation and NVIDIA live inference require independent device/provider validation; backend tests do not prove them.
-
-Qdrant is the current database. SpacetimeDB is deferred. Local PDFs, images, credentials, parse caches, source-review exports, and database files stay outside Git.
+[iOS setup](ios/README.md) · [Hardware checklist](docs/testing/handsfree.md) · [Architecture](docs/architecture.md) · [Source validation](docs/validation/qdrant-v2.md) · [Migration and rollback](docs/qdrant-v2-migration.md)

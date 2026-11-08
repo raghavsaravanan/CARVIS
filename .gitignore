@@ -1,5 +1,8 @@
 .env
 backend/.env
+# Local environment variants; keep credential-free configuration examples visible.
+**/.env.*
+!**/.env.example
 .venv/
 venv/
 __pycache__/
@@ -25,6 +28,11 @@ _llama_parse_preview*.md
 dist/
 build/
 .DS_Store
+*.log
+# Xcode-generated local state; shared project and package configuration stay tracked.
+xcuserdata/
+*.xcuserstate
+DerivedData/
 node_modules/
 frontend/dist/
 frontend/build/

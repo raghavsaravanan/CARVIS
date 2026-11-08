@@ -1,6 +1,6 @@
 # Carvis demo verification
 
-Complete [the v2 migration checklist](../docs/qdrant-v2-migration.md) before expecting numeric answers. Pending records cannot answer questions.
+Complete [the v2 migration checklist](../qdrant-v2-migration.md) before expecting numeric answers. Pending records cannot answer questions.
 
 ## WRX oil-change demo
 
@@ -22,6 +22,6 @@ The supplied wheel-height PDF contains suspension height and camber setup, not w
 
 Use explicit year/make/model, shop and transmission. The Vapi request may include these as JSON fields. The browser has a transmission selector; the existing iOS app can include the transmission and operation in the spoken question.
 
-Validate HTTP 200 grounded answers with real sources, 404 vision refusals, Vapi-shaped refusal results, provider/network error states, and actual audio output. A visual hypothesis must never select another vehicle or an unconfirmed fastener. Confirm glasses routing on the physical phone using [iOS instructions](../ios/README.md).
+Validate HTTP 200 grounded answers with real sources, 404 vision refusals, Vapi-shaped refusal results, provider/network error states, and actual audio output. A visual hypothesis must never select another vehicle or an unconfirmed fastener. Confirm glasses routing on the physical phone using [iOS instructions](../../ios/README.md).
 
 Use credentials from server environment only. No user photos, manual exports or credentials belong in Git.
