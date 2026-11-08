@@ -101,12 +101,14 @@ struct DashboardView: View {
                     .transition(.blurReplace)
                 }
 
-                // 2. Maintenance and specs
-                DashboardSection(title: "Maintenance and specs") {
+                // 2. Maintenance (and specs, for mechanic / team accounts)
+                DashboardSection(title: accounts.isTeam ? "Maintenance and specs" : "Maintenance") {
                     MaintenanceCard(items: profile.otherMaintenance, odometer: profile.odometer, onEdit: { isEditingCar = true })
                         .scrollReveal()
-                    SpecsCard(details: profile.details, onEdit: { isEditingCar = true })
-                        .scrollReveal()
+                    if accounts.isTeam {
+                        SpecsCard(details: profile.details, onEdit: { isEditingCar = true })
+                            .scrollReveal()
+                    }
                 }
                 .appearAnimation(index: 2)
 
@@ -164,7 +166,7 @@ struct DashboardView: View {
             }
         }
         .sheet(isPresented: $isEditingCar) {
-            CarProfileEditor(store: garage, history: session.history)
+            CarProfileEditor(store: garage, history: session.history, showsSpecs: accounts.isTeam)
         }
         .sheet(isPresented: $isUpdatingOdometer) {
             OdometerSheet(current: profile.odometer) { garage.updateOdometer($0) }
@@ -619,21 +621,27 @@ private struct ChatCard: View {
                 }
             }
 
-            if glasses.isConnected {
+            // Chat always opens; connecting the glasses is a separate, secondary action.
+            HStack(spacing: 10) {
                 Button(action: onOpen) {
                     Label("Open chat", systemImage: "bubble.left.and.text.bubble.right.fill")
                         .font(Theme.buttonFont)
                         .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
                 }
-                .carvisButton()
-            } else {
-                Button(action: glasses.connect) {
-                    Text(glasses.status == .connecting ? "Finish in the Meta AI app" : "Connect glasses")
-                        .font(Theme.buttonFont)
-                        .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
+                .carvisButton(prominent: true)
+
+                if !glasses.isConnected {
+                    Button(action: glasses.connect) {
+                        Image(systemName: glasses.status == .connecting ? "hourglass" : "eyeglasses")
+                            .font(.title3.weight(.semibold))
+                            .frame(width: Theme.buttonHeight, height: Theme.buttonHeight)
+                    }
+                    .buttonStyle(PressableCardStyle())
+                    .background(Theme.pearl, in: Circle())
+                    .disabled(glasses.status == .connecting)
+                    .accessibilityLabel(glasses.status == .connecting ? "Finish connecting in the Meta AI app" : "Connect glasses")
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
                 }
-                .carvisButton()
-                .disabled(glasses.status == .connecting)
             }
         }
         .padding(20)
@@ -980,7 +988,7 @@ private struct HistoryRow: View {
                         .font(.subheadline)
                         .foregroundStyle(Theme.inkSecondary)
                 }
-                Text("\(log.mileage.formatted()) mi · \(log.oil)")
+                Text("At \(log.mileage.formatted()) mi")
                     .font(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
             }

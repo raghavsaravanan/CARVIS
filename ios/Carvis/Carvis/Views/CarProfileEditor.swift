@@ -4,14 +4,17 @@ import SwiftUI
 struct CarProfileEditor: View {
     let store: CarProfileStore
     let history: JobHistory
+    /// Specs only show on mechanic / team dashboards, so personal accounts don't edit them.
+    var showsSpecs = true
 
     @Environment(\.dismiss) private var dismiss
     @State private var draft: CarProfile
     @State private var isConfirmingClear = false
 
-    init(store: CarProfileStore, history: JobHistory) {
+    init(store: CarProfileStore, history: JobHistory, showsSpecs: Bool = true) {
         self.store = store
         self.history = history
+        self.showsSpecs = showsSpecs
         _draft = State(initialValue: store.profile)
     }
 
@@ -61,6 +64,7 @@ struct CarProfileEditor: View {
                     Text("These intervals are your own settings. Use the schedule in your owner's manual.")
                 }
 
+                if showsSpecs {
                 Section {
                     ForEach($draft.details) { $detail in
                         HStack {
@@ -81,6 +85,7 @@ struct CarProfileEditor: View {
                     Text("Your specs")
                 } footer: {
                     Text("Anything you want on the dashboard, like tire pressure or your oil type.")
+                }
                 }
 
                 Section {

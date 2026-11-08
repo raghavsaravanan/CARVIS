@@ -384,7 +384,7 @@ private struct MechanicCard: View {
                         .font(.headline)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
-                    Text(mechanic.isYou ? mechanic.procedure.name : "Bay \(mechanic.bay) · \(mechanic.procedure.name)")
+                    Text(mechanic.isYou ? "This phone" : "Bay \(mechanic.bay)")
                         .font(.subheadline)
                         .foregroundStyle(Theme.inkSecondary)
                         .lineLimit(1)
@@ -407,7 +407,7 @@ private struct MechanicCard: View {
                         .background(mechanic.status == .safety ? Theme.safetyRed : mechanic.color, in: Circle())
                         .symbolEffect(.bounce, value: mechanic.step)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Step \(mechanic.step) of \(mechanic.total)")
+                        Text("\(mechanic.procedure.name) · Step \(mechanic.step) of \(mechanic.total)")
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(Theme.inkSecondary)
                             .contentTransition(.numericText(value: Double(mechanic.step)))

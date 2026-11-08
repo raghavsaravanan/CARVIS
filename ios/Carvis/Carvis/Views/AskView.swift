@@ -22,6 +22,20 @@ struct AskView: View {
     /// Vapi conversation, when Config/VapiConfig.plist has keys. Otherwise Carvis's built-in voice.
     @State private var agent: VapiAgent? = VapiConfig.load().map(VapiAgent.init)
     @State private var isOnScreen = false
+
+    // Voice: the glasses' own speech recognition (Meta Speech) listens for "Hey Carvis".
+    // If glasses speech isn't available, phone speech takes over and the row says so.
+    @AppStorage("carvis.voiceOn") private var voiceOn = true
+    @State private var voiceSource: VoiceSource = .glasses
+    /// After a bare "Hey Carvis", the next sentence is the question, until this time.
+    @State private var awaitingQuestionUntil: Date?
+    @State private var isSpeaking = false
+
+    enum VoiceSource { case glasses, phone }
+
+    private var wake: CarvisWakeListener { glasses.wakeListener }
+    /// Don't react to voice while Carvis is working, talking, or in a Vapi conversation.
+    private var isBusyForVoice: Bool { isWorking || isSpeaking || agent?.isInCall == true }
     @FocusState private var isQuestionFocused: Bool
 
     enum Phase: Equatable {
@@ -68,25 +82,30 @@ struct AskView: View {
             glasses.startPreview()
         }
         // Listen for "Hey Carvis" as soon as the screen opens. The switch turns it off.
-        .task { await listener.start() }
+        .task { startVoice() }
         .onDisappear {
             isOnScreen = false
             agent?.end()
+            stopVoice()
             glasses.stopPreview()
-            listener.stop()
             speech.stop()
         }
-        // "Hey Carvis, ..." was heard.
-        .onChange(of: listener.heard) { _, heard in
-            guard let heard else { return }
-            question = heard.text
-            if agent != nil {
-                startConversation(opening: heard.text)  // talk it through with Vapi
-            } else {
-                askByVoice()                             // one question, one answer
-            }
+        // Glasses speech heard "Hey Carvis", and everything said while listening.
+        .onReceive(glasses.wakeListener.wakeDetected) { _ in heardWakeOnGlasses() }
+        .onReceive(glasses.wakeListener.transcripts) { heard in heardOnGlasses(heard) }
+        .onChange(of: glasses.wakeListener.state) { _, state in
+            // Glasses speech couldn't start (not enabled, permission, firmware): use the phone.
+            if state == .failed, voiceOn, voiceSource == .glasses { useBackupVoice() }
         }
-        .sensoryFeedback(.start, trigger: listener.state == .hearingQuestion) { _, hearing in hearing }
+        .onChange(of: glasses.isConnected) { _, connected in
+            if connected, voiceOn, voiceSource == .phone { startVoice() }
+        }
+        // Phone speech heard "Hey Carvis, ..." (backup path).
+        .onChange(of: listener.heard) { _, heard in
+            guard let heard, voiceSource == .phone else { return }
+            handleSpoken(heard.text)
+        }
+        .sensoryFeedback(.start, trigger: awaitingQuestionUntil != nil || listener.state == .hearingQuestion) { _, hearing in hearing }
         .sensoryFeedback(.success, trigger: phase) { _, new in
             if case .result(.answer) = new { return true }
             return false
@@ -151,7 +170,7 @@ struct AskView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.inkSecondary)
 
-            VoiceToggle(listener: listener, usesVapi: agent != nil)
+            VoiceRow(display: voiceDisplay, action: toggleVoice)
 
             TextField("What's the torque for this?", text: $question)
                 .font(.title3)
@@ -323,7 +342,7 @@ struct AskView: View {
         agent.lookAtPart = { question in await lookAtPartForVapi(question) }
         agent.onEnded = {
             // Back to listening for "Hey Carvis" once the conversation is over.
-            guard isOnScreen else { return }
+            guard isOnScreen, voiceOn, voiceSource == .phone else { return }
             Task { await listener.start() }
         }
         Task { await agent.start(vehicle: vehicle, sessionID: sessionID, openingQuestion: opening) }
@@ -368,7 +387,131 @@ struct AskView: View {
         } else {
             spokenThrough = "Spoken on your phone speaker. Your glasses aren't the audio output right now."
         }
+        isSpeaking = true
         await speech.speakAndWait(text)
+        isSpeaking = false
+    }
+
+    // MARK: - Voice
+
+    private func startVoice() {
+        guard voiceOn else { return }
+        if glasses.isConnected {
+            voiceSource = .glasses
+            listener.stop()
+            glasses.armWakeListener()
+        } else {
+            useBackupVoice()
+        }
+    }
+
+    private func useBackupVoice() {
+        voiceSource = .phone
+        if wake.isArmed { glasses.disarmWakeListener() }
+        Task { await listener.start() }
+    }
+
+    private func stopVoice() {
+        awaitingQuestionUntil = nil
+        if wake.isArmed { glasses.disarmWakeListener() }
+        listener.stop()
+    }
+
+    private func toggleVoice() {
+        if voiceOn {
+            voiceOn = false
+            stopVoice()
+        } else {
+            voiceOn = true
+            startVoice()
+        }
+    }
+
+    /// "Hey Carvis, what's the torque for this?" asks right away. A bare "Hey Carvis"
+    /// gets a short "Yes?" and the next sentence becomes the question.
+    private func heardWakeOnGlasses() {
+        guard voiceOn, voiceSource == .glasses, !isBusyForVoice else { return }
+        let rest = VoiceListener.question(afterWakePhraseIn: wake.lastTranscript) ?? ""
+        if rest.split(separator: " ").count >= 2 {
+            handleSpoken(rest)
+        } else {
+            awaitingQuestionUntil = .now + 8
+            Task { await speakAndWait("Yes?") }
+        }
+    }
+
+    private func heardOnGlasses(_ heard: CarvisWakeListener.Heard) {
+        guard voiceSource == .glasses, heard.isFinal, !isBusyForVoice,
+              let until = awaitingQuestionUntil else { return }
+        guard until > .now else {
+            awaitingQuestionUntil = nil
+            return
+        }
+        let text = heard.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.split(separator: " ").count >= 2 else { return }
+        awaitingQuestionUntil = nil
+        handleSpoken(text)
+    }
+
+    /// A spoken question, from either microphone: talk it through with Vapi if it's set up,
+    /// otherwise one question and one answer from the manual.
+    private func handleSpoken(_ text: String) {
+        question = text
+        if agent != nil {
+            startConversation(opening: text)
+        } else {
+            askByVoice()
+        }
+    }
+
+    /// What the voice row says right now.
+    private var voiceDisplay: VoiceDisplay {
+        guard voiceOn else {
+            return VoiceDisplay(title: "Hey Carvis", subtitle: "Ask hands-free through your glasses", isOn: false, isLive: false)
+        }
+        if agent?.isInCall == true {
+            return VoiceDisplay(title: "In a conversation", subtitle: "Carvis is talking with you", isOn: true, isLive: false)
+        }
+        if isSpeaking || isWorking {
+            return VoiceDisplay(title: "Answering", subtitle: "I\u{2019}ll listen again when I\u{2019}m done", isOn: true, isLive: false)
+        }
+        switch voiceSource {
+        case .glasses:
+            if awaitingQuestionUntil != nil {
+                let heard = VoiceListener.question(afterWakePhraseIn: wake.lastTranscript) == nil ? wake.lastTranscript : ""
+                return VoiceDisplay(title: "Listening", subtitle: heard.isEmpty ? "Go ahead" : "\u{201C}\(heard)\u{201D}", isOn: true, isLive: true)
+            }
+            switch wake.state {
+            case .listening:
+                return VoiceDisplay(title: "Say \u{201C}Hey Carvis\u{201D} and your question",
+                                    subtitle: "Using your glasses microphone", isOn: true, isLive: true)
+            case .requestingPermission:
+                return VoiceDisplay(title: "Allow the glasses microphone", subtitle: "Approve it in the Meta AI app", isOn: true, isLive: false)
+            case .paused:
+                return VoiceDisplay(title: "Paused", subtitle: "Put your glasses on and keep Carvis open", isOn: true, isLive: false)
+            case .failed:
+                return VoiceDisplay(title: "Switching to phone speech", subtitle: "One moment", isOn: true, isLive: false)
+            case .disarmed, .waitingForSession, .starting, .stopping:
+                return VoiceDisplay(title: "Starting glasses speech", subtitle: "One moment", isOn: true, isLive: false)
+            }
+        case .phone:
+            let source = glasses.isConnected ? "Phone speech, glasses speech isn\u{2019}t available"
+                : listener.microphoneName.map { "Using \($0)" } ?? "Using your phone\u{2019}s microphone"
+            switch listener.state {
+            case .off, .starting:
+                return VoiceDisplay(title: "Starting the microphone", subtitle: "One moment", isOn: true, isLive: false)
+            case .listening:
+                return VoiceDisplay(title: "Say \u{201C}Hey Carvis\u{201D} and your question", subtitle: source, isOn: true, isLive: true)
+            case .hearingQuestion:
+                return VoiceDisplay(title: "Listening",
+                                    subtitle: listener.transcript.isEmpty ? "Go ahead" : "\u{201C}\(listener.transcript)\u{201D}",
+                                    isOn: true, isLive: true)
+            case .paused:
+                return VoiceDisplay(title: "Answering", subtitle: "I\u{2019}ll listen again when I\u{2019}m done", isOn: true, isLive: false)
+            case .unavailable(let reason):
+                return VoiceDisplay(title: "Hey Carvis is off", subtitle: reason, isOn: false, isLive: false)
+            }
+        }
     }
 }
 
@@ -468,36 +611,40 @@ private struct Bubble: View {
     }
 }
 
-/// The "Hey Carvis" switch. When it's on, it shows what Carvis is hearing.
-private struct VoiceToggle: View {
-    let listener: VoiceListener
-    let usesVapi: Bool
+/// What the voice row shows.
+struct VoiceDisplay: Equatable {
+    let title: String
+    let subtitle: String
+    /// The switch position.
+    let isOn: Bool
+    /// Actively listening right now (pulsing dot).
+    let isLive: Bool
+}
+
+/// The "Hey Carvis" switch, showing what Carvis is hearing.
+private struct VoiceRow: View {
+    let display: VoiceDisplay
+    let action: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Button {
-            if listener.isOn {
-                listener.stop()
-            } else {
-                Task { await listener.start() }
-            }
-        } label: {
+        Button(action: action) {
             HStack(spacing: 14) {
                 ZStack {
-                    if listener.isOn && listener.state != .paused {
+                    if display.isLive {
                         LiveDot(size: 10)
                     } else {
-                        Image(systemName: listener.isOn ? "mic.fill" : "mic.slash.fill")
+                        Image(systemName: display.isOn ? "waveform" : "mic.slash.fill")
                             .font(.headline)
                     }
                 }
                 .frame(width: 28)
-                .foregroundStyle(listener.isOn ? Theme.accent : Theme.inkSecondary)
+                .foregroundStyle(display.isOn ? Theme.accent : Theme.inkSecondary)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+                    Text(display.title)
                         .font(.headline)
-                    Text(subtitle)
+                    Text(display.subtitle)
                         .font(.subheadline)
                         .foregroundStyle(Theme.inkSecondary)
                         .lineLimit(2)
@@ -505,43 +652,29 @@ private struct VoiceToggle: View {
                 }
                 .contentTransition(.opacity)
                 Spacer(minLength: 8)
-                Text(listener.isOn ? "On" : "Off")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(listener.isOn ? Theme.accent : Theme.inkSecondary)
+                Capsule()
+                    .fill(display.isOn ? Theme.accent : Theme.ink.opacity(0.15))
+                    .frame(width: 46, height: 28)
+                    .overlay(alignment: display.isOn ? .trailing : .leading) {
+                        Circle()
+                            .fill(.white)
+                            .padding(3)
+                            .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+                    }
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 18)
             .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight, alignment: .leading)
             .background(
-                (listener.isOn ? Theme.accent.opacity(0.14) : Theme.ink.opacity(0.06)),
+                (display.isOn ? Theme.accent.opacity(0.1) : Theme.ink.opacity(0.05)),
                 in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
             )
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
         }
         .buttonStyle(PressableCardStyle())
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: listener.state)
-        .accessibilityValue(listener.isOn ? "On" : "Off")
-    }
-
-    private var title: String {
-        switch listener.state {
-        case .off: "Hey Carvis"
-        case .starting: "Starting the microphone"
-        case .listening: "Say \u{201C}Hey Carvis\u{201D} and your question"
-        case .hearingQuestion: "Listening"
-        case .paused: "Answering"
-        case .unavailable: "Hey Carvis is off"
-        }
-    }
-
-    private var subtitle: String {
-        switch listener.state {
-        case .off: usesVapi ? "Talk with Carvis hands-free" : "Ask hands-free through your glasses"
-        case .starting: "One moment"
-        case .listening: listener.microphoneName.map { "Using \($0)" } ?? "Using your phone\u{2019}s mic"
-        case .hearingQuestion: listener.transcript.isEmpty ? "Go ahead" : "\u{201C}\(listener.transcript)\u{201D}"
-        case .paused: usesVapi ? "In a conversation" : "I\u{2019}ll listen again when I\u{2019}m done"
-        case .unavailable(let reason): reason
-        }
+        .animation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0), value: display)
+        .accessibilityLabel("Hey Carvis")
+        .accessibilityValue(display.isOn ? "On, \(display.title)" : "Off")
     }
 }
 

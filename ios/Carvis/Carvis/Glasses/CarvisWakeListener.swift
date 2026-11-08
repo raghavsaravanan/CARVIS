@@ -35,7 +35,16 @@ final class CarvisWakeListener {
     /// Subscribe on the main actor. No Vapi/network side effect is attached.
     var wakeDetected: AnyPublisher<WakeEvent, Never> { events.eraseToAnyPublisher() }
 
+    /// Every transcript from the glasses while listening, so the Ask screen can take the
+    /// question that follows "Hey Carvis". Memory only; never logged or saved.
+    struct Heard: Sendable {
+        let text: String
+        let isFinal: Bool
+    }
+    var transcripts: AnyPublisher<Heard, Never> { heard.eraseToAnyPublisher() }
+
     @ObservationIgnored private let events = PassthroughSubject<WakeEvent, Never>()
+    @ObservationIgnored private let heard = PassthroughSubject<Heard, Never>()
     @ObservationIgnored private let logger = Logger(subsystem: "Carvis", category: "WakeListener")
     @ObservationIgnored private var matcher = WakePhraseMatcher()
     @ObservationIgnored private var speech: MWDATSpeech.Speech?
@@ -113,26 +122,30 @@ final class CarvisWakeListener {
             message = "Starting speech on the glasses microphone"
             // All four subscriptions are retained before start(), per SDK 1.0.1.
             tokens.append(capability.statePublisher.listen { [weak self] value in
+                guard let self else { return }
                 Task { @MainActor in
-                    guard let self, self.isCurrent(attachment, session) else { return }
+                    guard self.isCurrent(attachment, session) else { return }
                     self.speechStateChanged(value)
                 }
             })
             tokens.append(capability.localePublisher.listen { [weak self] value in
+                guard let self else { return }
                 Task { @MainActor in
-                    guard let self, self.isCurrent(attachment, session) else { return }
+                    guard self.isCurrent(attachment, session) else { return }
                     self.locale = value
                 }
             })
             tokens.append(capability.transcriptionPublisher.listen { [weak self] result in
+                guard let self else { return }
                 Task { @MainActor in
-                    guard let self, self.isCurrent(attachment, session), self.state == .listening else { return }
+                    guard self.isCurrent(attachment, session), self.state == .listening else { return }
                     self.consume(result)
                 }
             })
             tokens.append(capability.errorPublisher.listen { [weak self] error in
+                guard let self else { return }
                 Task { @MainActor in
-                    guard let self, self.isCurrent(attachment, session) else { return }
+                    guard self.isCurrent(attachment, session) else { return }
                     self.fail("Glasses speech: \(error.localizedDescription). Tap Retry listening; no phone microphone fallback is used.")
                 }
             })
@@ -217,6 +230,7 @@ final class CarvisWakeListener {
     private func consume(_ result: TranscriptionResult) {
         lastTranscript = String(result.text.prefix(500)) // Memory/UI only; never logged or saved.
         transcriptIsFinal = result.isFinal
+        heard.send(Heard(text: lastTranscript, isFinal: result.isFinal))
         // -1 means confidence unavailable in this SDK. Do not discard it.
         guard let phrase = matcher.consume(result.text, isFinal: result.isFinal,
             isListening: isArmed && state == .listening, now: ProcessInfo.processInfo.systemUptime) else { return }

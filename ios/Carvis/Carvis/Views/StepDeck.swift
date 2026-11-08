@@ -128,7 +128,7 @@ struct StepDeck: View {
             VStack(spacing: 4) {
                 Text(step >= total ? "Swipe to finish" : "Swipe to complete")
                     .font(.subheadline.weight(.semibold))
-                Text("or say \u{201C}next\u{201D} to your glasses")
+                Text("or tap the arrow")
                     .font(.footnote)
                     .foregroundStyle(Theme.inkSecondary)
             }
@@ -300,33 +300,19 @@ private struct StepCard: View {
     }
 }
 
-/// A card waiting behind the front one: just enough to show what's coming.
+/// A card waiting behind the front one. Just its edge shows, so it stays plain.
 private struct PeekCard: View {
     let number: Int
     let total: Int
 
     var body: some View {
-        let visual = StepVisual.forStep(number)
-        HStack(spacing: 14) {
-            Image(systemName: visual.symbol)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Theme.inkSecondary)
-                .frame(width: 48, height: 48)
-                .background(Theme.pearl, in: Circle())
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Step \(number) of \(total)")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.inkTertiary)
-                Text(visual.title)
-                    .font(.headline)
-                    .foregroundStyle(Theme.inkSecondary)
-            }
-            Spacer()
-        }
-        .padding(22)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
-        .shadow(color: Theme.ink.opacity(0.08), radius: 16, y: 8)
+        RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous)
+            .fill(Theme.card)
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous)
+                    .strokeBorder(Theme.ink.opacity(0.05), lineWidth: 1)
+            )
+            .shadow(color: Theme.ink.opacity(0.08), radius: 16, y: 8)
     }
 }
 

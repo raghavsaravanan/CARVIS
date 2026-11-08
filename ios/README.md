@@ -87,12 +87,19 @@ and job finish time. The views in `ShopViews.swift` only read the store.
 
 ## Voice: Hey Carvis and Vapi
 
-1. **Wake word (on the phone).** Opening Ask Carvis starts Apple speech recognition on the
-   glasses' Bluetooth mic, set up like CameraAccess's `AudioInputHandler`
-   (`.playAndRecord`, `.videoRecording`, `[.allowBluetoothHFP, .mixWithOthers]`). Meta's
-   toolkit doesn't allow custom wake words on the glasses ("Hey Meta" is system-owned).
-   - Error `561017449` (`!pri`, insufficient priority) means another app holds the mic,
-     usually a call (phone, FaceTime, Discord, Zoom). End it.
+1. **Wake word: glasses first (Meta Speech).** Opening Ask Carvis arms `CarvisWakeListener`,
+   which uses the glasses' own speech recognition (`MWDATSpeech`). "Hey Carvis, <question>"
+   (or a bare "Hey Carvis", then the question within 8 seconds) fills the question, takes a
+   glasses photo, asks `/vision-query`, and speaks the answer. Matching is start-of-sentence
+   only and accepts common misses ("Hey Jarvis", "OK Carver", "Hey car vis"); see
+   `ios/Tests/WakePhraseMatcherTests.swift` (22 checks). Meta marks Speech as experimental;
+   it may need enabling in the Wearables Developer Center. Not yet verified on hardware.
+   - **Backup: phone speech.** If glasses speech fails (or the glasses aren't connected),
+     Apple speech recognition takes over and the row says so. It uses CameraAccess's audio
+     setup (`.playAndRecord`, `.videoRecording`, `[.allowBluetoothHFP, .mixWithOthers]`).
+     Error `561017449` (`!pri`) means another app holds the mic, usually a call. End it.
+   - Meta's toolkit doesn't allow custom wake words outside the app ("Hey Meta" is
+     system-owned), so this only works with Carvis open on the Ask screen.
 2. **Conversation (Vapi).** If `Carvis/Config/VapiConfig.plist` has a public key and assistant
    ID, "Hey Carvis, …" stops the wake-word listener (it frees the mic) and starts a Vapi call
    with the [Vapi iOS SDK](https://github.com/VapiAI/client-sdk-ios), pinned to commit

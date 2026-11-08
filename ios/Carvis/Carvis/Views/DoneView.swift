@@ -45,7 +45,7 @@ struct DoneView: View {
                     .font(Theme.buttonFont)
                     .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
             }
-            .carvisButton(prominent: true)
+            .floatingGlassButton()
             .padding(.horizontal, 20)
             .padding(.bottom, 8)
             .appearAnimation(index: 4)

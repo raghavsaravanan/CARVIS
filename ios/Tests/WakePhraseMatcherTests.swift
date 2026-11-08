@@ -23,6 +23,12 @@ struct WakePhraseMatcherTests {
         check(detector.consume("Hey—Carvis", isFinal: true, isListening: true, now: 5) == "Hey Carvis", "unicode punctuation")
         detector.reset()
         check(detector.consume("Hi Carvis", isFinal: true, isListening: true, now: 5.1) == "Hi Carvis", "new arm/session resets gate")
+        // Common speech-recognition misses of "Carvis"
+        check(detector.consume("Hey Jarvis what's the torque", isFinal: true, isListening: true, now: 10) == "Hey Carvis", "Jarvis")
+        check(detector.consume("Hey car vis, look at this", isFinal: true, isListening: true, now: 20) == "Hey Carvis", "car vis")
+        check(detector.consume("OK Carver what is this", isFinal: true, isListening: true, now: 30) == "Hey Carvis", "OK Carver")
+        check(detector.consume("Hey car wash", isFinal: true, isListening: true, now: 40) == nil, "car wash")
+        check(detector.consume("I said hey Jarvis", isFinal: true, isListening: true, now: 50) == nil, "mid-sentence variant")
         print("\(checks) wake phrase checks passed")
     }
 }
