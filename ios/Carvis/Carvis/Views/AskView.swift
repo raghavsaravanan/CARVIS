@@ -5,6 +5,8 @@ import SwiftUI
 /// doesn't have it, Carvis says so instead of guessing.
 struct AskView: View {
     @Environment(GlassesController.self) private var glasses
+    @Environment(AccountStore.self) private var accounts
+    @Environment(ChatHistory.self) private var chats
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let vehicle: Vehicle
@@ -105,7 +107,7 @@ struct AskView: View {
                     .accessibilityLabel(photo == nil ? "Live view from your glasses" : "Photo from your glasses")
             } else {
                 CameraStatusMessage(status: glasses.status,
-                                    detail: glasses.detail,
+                                    detail: accounts.isTeam ? glasses.detail : nil,
                                     onConnect: glasses.connect,
                                     onRetry: {
                                         glasses.stopPreview()
@@ -151,9 +153,8 @@ struct AskView: View {
 
             VoiceToggle(listener: listener, usesVapi: agent != nil)
 
-            TextField("What's the torque for this?", text: $question, axis: .vertical)
+            TextField("What's the torque for this?", text: $question)
                 .font(.title3)
-                .lineLimit(1...3)
                 .submitLabel(.send)
                 .focused($isQuestionFocused)
                 .onSubmit(ask)
@@ -295,6 +296,7 @@ struct AskView: View {
                 phase = .asking
                 let result = try await client.ask(photo: jpeg, question: asked, vehicle: vehicle, sessionID: sessionID)
                 phase = .result(result)
+                record(asked, result)
                 switch result {
                 case .answer(let text, _, _):
                     await speakAndWait(text)
@@ -340,6 +342,7 @@ struct AskView: View {
             phase = .asking
             let result = try await client.ask(photo: jpeg, question: asked, vehicle: vehicle, sessionID: sessionID)
             phase = .result(result)
+            record(asked, result)
             spokenThrough = "Spoken by Carvis on Vapi"
             switch result {
             case .answer(let text, _, _): return text
@@ -348,6 +351,14 @@ struct AskView: View {
         } catch {
             phase = .failed(error.localizedDescription)
             return "The lookup failed, so I don't have an answer. \(error.localizedDescription)"
+        }
+    }
+
+    /// Saves the question and reply so the dashboard can show your latest chats.
+    private func record(_ asked: String, _ result: VisionResult) {
+        switch result {
+        case .answer(let text, _, _): chats.add(question: asked, reply: text, fromManual: true)
+        case .notInManual(let message, _): chats.add(question: asked, reply: message, fromManual: false)
         }
     }
 
@@ -566,7 +577,7 @@ private struct CameraBadge: View {
 /// Shown inside the camera frame until video arrives.
 private struct CameraStatusMessage: View {
     let status: GlassesController.Status
-    let detail: String
+    let detail: String?
     let onConnect: () -> Void
     let onRetry: () -> Void
 
@@ -603,7 +614,7 @@ private struct CameraStatusMessage: View {
                 }
                 .carvisButton()
             }
-            if status != .notConnected {
+            if status != .notConnected, let detail {
                 Text(detail)
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.7))

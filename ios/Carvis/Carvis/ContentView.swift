@@ -6,6 +6,8 @@ struct ContentView: View {
     @State private var session = RepairSession()
     @State private var glasses = GlassesController()
     @State private var askSpeech = SystemSpeechOutput()
+    @State private var accounts = AccountStore()
+    @State private var chats = ChatHistory()
     @Namespace private var zoom
 
     var body: some View {
@@ -16,6 +18,14 @@ struct ContentView: View {
                 }
         }
         .environment(glasses)
+        .environment(accounts)
+        .environment(chats)
+        // Sign-up on first launch, and again after signing out.
+        .fullScreenCover(isPresented: Binding(get: { accounts.account == nil }, set: { _ in })) {
+            OnboardingView(accounts: accounts)
+                .tint(Theme.ink)
+                .foregroundStyle(Theme.ink)
+        }
         // The Meta AI app sends you back here after you connect your glasses.
         .onOpenURL { glasses.handle(url: $0) }
         .tint(Theme.ink)
@@ -36,7 +46,7 @@ struct ContentView: View {
                 DoneView(session: session, response: response)
             }
         case .ask:
-            AskView(vehicle: .demo, client: CarvisVisionClient.fromInfoPlist(), speech: askSpeech)
+            AskView(vehicle: .demo, client: accounts.visionClient, speech: askSpeech)
         }
     }
 }

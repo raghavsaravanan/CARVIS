@@ -55,6 +55,13 @@ final class RepairSession {
     // Later, the glasses will trigger these by voice.
     func next() async { await send("next") }
     func repeatStep() async { await send("repeat") }
+
+    /// Go back one step. Steps already seen are kept, so this needs no backend call.
+    func goBack() {
+        guard let step = current?.stepNumber, step > 1, let previous = seenSteps[step - 1] else { return }
+        current = previous
+        speech.speak(previous.spokenText)
+    }
     func why() async { await send("why") }
 
     func showAsk() {

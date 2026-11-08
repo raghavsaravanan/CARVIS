@@ -125,14 +125,14 @@ private struct NextStepCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            Text("Up next")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.accent)
             Text(nextStep.title)
                 .font(.headline)
             Text(nextStep.detail)
                 .font(.body)
                 .foregroundStyle(Theme.inkSecondary)
-            Text(nextStep.cta)
-                .font(.subheadline.weight(.semibold))
-                .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)

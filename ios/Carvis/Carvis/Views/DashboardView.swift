@@ -1,9 +1,12 @@
 import SwiftUI
 
-/// The home screen. The top half is your car's own dashboard: the car,
-/// the oil change countdown, the odometer, and what's due next. Below that:
-/// the glasses, the job in progress, your maintenance list, your specs,
-/// and the service history. A floating button starts a new job.
+/// The home screen, in sections:
+/// 1. Your car: the car and its state (oil change, odometer, what's due next).
+/// 2. Maintenance and specs.
+/// 3. Chat with Carvis: the glasses and your recent questions.
+/// 4. Service history.
+/// 5. Team tools (mechanic / team accounts only).
+/// A floating glass button starts a new job.
 struct DashboardView: View {
     /// Shared ID that links the job card (or New job button) to the progress screen's zoom.
     static let jobZoomID = "current-job"
@@ -11,9 +14,13 @@ struct DashboardView: View {
     let session: RepairSession
     let zoom: Namespace.ID
 
+    @Environment(AccountStore.self) private var accounts
+    @Environment(ChatHistory.self) private var chats
+
     @State private var isShowingNewJob = false
     @State private var isEditingCar = false
     @State private var isUpdatingOdometer = false
+    @State private var isShowingAccount = false
     @State private var pendingJobName: String?
 
     private var garage: CarProfileStore { session.garage }
@@ -21,64 +28,119 @@ struct DashboardView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                TopBar(onEdit: { isEditingCar = true })
+            VStack(alignment: .leading, spacing: 30) {
+                TopBar(name: accounts.account?.name ?? "",
+                       initials: accounts.account?.initials ?? "?",
+                       isTeam: accounts.isTeam,
+                       onEdit: { isEditingCar = true },
+                       onAccount: { isShowingAccount = true })
                     .appearAnimation(index: 0)
 
-                CarHero(profile: profile)
-                    .padding(.bottom, 4)
-
-                OilChangeTile(item: profile.oilChange, odometer: profile.odometer, onSetUp: { isEditingCar = true })
-                    .appearAnimation(index: 2)
-
-                HStack(spacing: 14) {
-                    Button { isUpdatingOdometer = true } label: {
-                        OdometerTile(miles: profile.odometer, updated: profile.odometerUpdated)
+                // 1. The car and its state, under its name
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("Subaru WRX")
+                            .font(.system(size: 40, weight: .semibold))
+                            .tracking(-1)
+                        Text("2022")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .baselineOffset(20)
                     }
-                    .buttonStyle(PressableCardStyle())
-                    .accessibilityHint("Update your odometer")
+                    .padding(.horizontal, 6)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isHeader)
 
+                    DashboardSection(tint: Theme.accent.opacity(0.18)) {
+                    CarHero(profile: profile)
                     Button { isEditingCar = true } label: {
-                        NextDueTile(items: profile.otherMaintenance, odometer: profile.odometer)
+                        OilChangeTile(item: profile.oilChange, odometer: profile.odometer, onSetUp: { isEditingCar = true })
                     }
                     .buttonStyle(PressableCardStyle())
-                }
-                .appearAnimation(index: 3)
+                    .accessibilityHint("Edit your oil change schedule")
+                    HStack(spacing: 12) {
+                        Button { isUpdatingOdometer = true } label: {
+                            OdometerTile(miles: profile.odometer, updated: profile.odometerUpdated)
+                        }
+                        .buttonStyle(PressableCardStyle())
+                        .accessibilityHint("Update your odometer")
 
-                GlassesCard(onAsk: session.showAsk)
-                    .appearAnimation(index: 4)
+                        Button { isEditingCar = true } label: {
+                            NextDueTile(items: profile.otherMaintenance, odometer: profile.odometer)
+                        }
+                        .buttonStyle(PressableCardStyle())
+                    }
+                    }
+                }
+                .appearAnimation(index: 1)
 
                 if session.hasActiveJob, let current = session.current {
-                    Button {
-                        session.showProgress()
-                    } label: {
-                        CurrentJobCard(name: session.jobName, response: current)
+                    DashboardSection(title: "In progress") {
+                        Button {
+                            session.showProgress()
+                        } label: {
+                            CurrentJobCard(name: session.jobName, response: current)
+                        }
+                        .buttonStyle(PressableCardStyle())
+                        .zoomSource(id: Self.jobZoomID, in: zoom)
+                        .accessibilityHint("Shows the progress screen")
                     }
-                    .buttonStyle(PressableCardStyle())
-                    .zoomSource(id: Self.jobZoomID, in: zoom)
-                    .accessibilityHint("Shows the progress screen")
                     .transition(.blurReplace)
                 }
 
-                MaintenanceCard(items: profile.otherMaintenance, odometer: profile.odometer, onEdit: { isEditingCar = true })
-                    .appearAnimation(index: 5)
+                // 2. Maintenance and specs
+                DashboardSection(title: "Maintenance and specs") {
+                    MaintenanceCard(items: profile.otherMaintenance, odometer: profile.odometer, onEdit: { isEditingCar = true })
+                        .scrollReveal()
+                    SpecsCard(details: profile.details, onEdit: { isEditingCar = true })
+                        .scrollReveal()
+                }
+                .appearAnimation(index: 2)
 
-                SpecsCard(details: profile.details, onEdit: { isEditingCar = true })
-                    .appearAnimation(index: 6)
+                // 3. Chat
+                DashboardSection(title: "Chat with Carvis") {
+                    ChatCard(recent: Array(chats.entries.prefix(2)), onOpen: session.showAsk)
+                        .scrollReveal()
+                }
+                .appearAnimation(index: 3)
 
-                HistoryCard(records: session.history.records)
-                    .appearAnimation(index: 7)
+                // 4. Service history
+                DashboardSection(title: "Service history") {
+                    HistoryCard(records: session.history.records)
+                        .scrollReveal()
+                }
+                .appearAnimation(index: 4)
+
+                // 5. Team tools
+                if accounts.isTeam {
+                    DashboardSection(title: "Team tools") {
+                        TeamToolsCard()
+                        .scrollReveal()
+                    }
+                    .transition(.blurReplace)
+                }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 16)
             .animation(Motion.enter, value: session.hasActiveJob)
+            .animation(Motion.enter, value: accounts.isTeam)
             .animation(Motion.change, value: profile)
         }
         .scrollIndicators(.hidden)
         // The button floats over the content, so the glass has something to refract as you scroll.
         .safeAreaInset(edge: .bottom) {
             newJobButton
+        }
+        // A soft fade under the status bar so cards don't collide with the clock.
+        .overlay(alignment: .top) {
+            LinearGradient(stops: [.init(color: Theme.sky, location: 0),
+                                   .init(color: Theme.sky, location: 0.55),
+                                   .init(color: Theme.sky.opacity(0), location: 1)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 76)
+                .ignoresSafeArea(edges: .top)
+                .allowsHitTesting(false)
         }
         .background { CarvisBackground() }
         .toolbar(.hidden, for: .navigationBar)
@@ -94,6 +156,9 @@ struct DashboardView: View {
         .sheet(isPresented: $isUpdatingOdometer) {
             OdometerSheet(current: profile.odometer) { garage.updateOdometer($0) }
         }
+        .sheet(isPresented: $isShowingAccount) {
+            AccountSheet(accounts: accounts)
+        }
     }
 
     private var newJobButton: some View {
@@ -104,12 +169,12 @@ struct DashboardView: View {
                 .font(Theme.buttonFont)
                 .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
         }
-        .carvisButton(prominent: true)
+        .floatingGlassButton()
         // With no job card on screen, the progress screen zooms out of this button instead.
         .zoomSource(id: Self.jobZoomID, in: zoom, isEnabled: !session.hasActiveJob)
         .padding(.horizontal, 20)
         .padding(.bottom, 8)
-        .appearAnimation(index: 8)
+        .appearAnimation(index: 6)
     }
 
     /// Start the job only after the sheet has fully closed, so the zoom has a clear stage.
@@ -122,44 +187,64 @@ struct DashboardView: View {
 
 // MARK: - Top
 
+/// The car's name where the app name used to be, with your account and edit buttons.
 private struct TopBar: View {
-    @Environment(GlassesController.self) private var glasses
+    let name: String
+    let initials: String
+    let isTeam: Bool
     let onEdit: () -> Void
+    let onAccount: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(greeting)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Theme.inkSecondary)
-                Text("Carvis")
-                    .font(.system(.title, design: .rounded, weight: .semibold))
-                    .accessibilityAddTraits(.isHeader)
-            }
+            Text(greeting)
+                .font(.title3.weight(.medium))
+                .foregroundStyle(Theme.inkSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Spacer()
-            CircleIcon(systemImage: "eyeglasses", dot: glasses.isConnected ? Theme.lime : nil)
-                .accessibilityLabel(glasses.isConnected ? "Glasses connected" : "Glasses not connected")
             Button(action: onEdit) {
                 CircleIcon(systemImage: "slider.horizontal.3")
             }
             .buttonStyle(PressableCardStyle())
             .accessibilityLabel("Edit your car")
+            Button(action: onAccount) {
+                Text(initials)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 48, height: 48)
+                    .background(Theme.ink, in: Circle())
+                    .overlay(alignment: .bottomTrailing) {
+                        if isTeam {
+                            Image(systemName: "wrench.and.screwdriver.fill")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(Theme.ink)
+                                .frame(width: 18, height: 18)
+                                .background(Theme.lime, in: Circle())
+                                .overlay(Circle().stroke(.white, lineWidth: 1.5))
+                                .offset(x: 2, y: 2)
+                        }
+                    }
+            }
+            .buttonStyle(PressableCardStyle())
+            .accessibilityLabel(isTeam ? "Account, mechanic or team mode" : "Account")
         }
     }
 
     private var greeting: String {
-        switch Calendar.current.component(.hour, from: .now) {
+        let first = name.split(separator: " ").first.map(String.init)
+        let base = switch Calendar.current.component(.hour, from: .now) {
         case 5..<12: "Good morning"
         case 12..<17: "Good afternoon"
         default: "Good evening"
         }
+        return first.map { "\(base), \($0)" } ?? base
     }
 }
 
 /// A round white button, like the ones in the corners of the reference designs.
 private struct CircleIcon: View {
     let systemImage: String
-    var dot: Color?
 
     var body: some View {
         Image(systemName: systemImage)
@@ -167,66 +252,36 @@ private struct CircleIcon: View {
             .foregroundStyle(Theme.ink)
             .frame(width: 48, height: 48)
             .carvisGlass(.card, in: Circle())
-            .overlay(alignment: .topTrailing) {
-                if let dot {
-                    Circle()
-                        .fill(dot)
-                        .frame(width: 11, height: 11)
-                        .overlay(Circle().stroke(Color.white, lineWidth: 2))
-                        .offset(x: -2, y: 2)
-                        .transition(.scale(scale: 0.5).combined(with: .opacity))
-                }
-            }
-            .frame(minWidth: 48, minHeight: 48)
     }
 }
 
-/// The car, big, with its name and your details as chips.
+/// The car with its drop shadow and your details as chips.
 private struct CarHero: View {
     let profile: CarProfile
     @State private var arrived = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var chips: [String] {
-        [profile.trim, profile.color, profile.plate].filter { !$0.isEmpty }
+        [profile.plate, profile.vin.isEmpty ? "" : "VIN \(profile.vin.suffix(6))"].filter { !$0.isEmpty }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("Subaru WRX")
-                    .font(.system(size: 40, weight: .regular))
-                    .tracking(-1)
-                Text("2022")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .baselineOffset(18)
-            }
-            .accessibilityElement(children: .combine)
-
-            ScrollView(.horizontal) {
+        VStack(alignment: .leading, spacing: 8) {
+            if !chips.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(chips, id: \.self) { Chip(text: $0) }
                 }
             }
-            .scrollIndicators(.hidden)
-            .scrollClipDisabled()
-
-            Image("WRX")
-                .resizable()
-                .scaledToFit()
-                .accessibilityLabel("Blue 2022 Subaru WRX")
-                .background(alignment: .bottom) {
-                    // A soft shadow so the car sits on the floor instead of floating.
-                    Ellipse()
-                        .fill(Theme.ink.opacity(0.22))
-                        .frame(height: 26)
-                        .blur(radius: 14)
-                        .padding(.horizontal, 30)
-                        .offset(y: 6)
+            CarImage()
+                .padding(.top, 4)
+                .padding(.bottom, 18)  // room for the floor shadow
+                // As you scroll down, the car drifts and shrinks slightly behind the cards.
+                .scrollTransition(.interactive) { [moves = !reduceMotion] car, phase in
+                    let away = moves ? max(0, -phase.value) : 0
+                    return car
+                        .offset(y: away * 36)
+                        .scaleEffect(1 - away * 0.06)
                 }
-                .padding(.top, 6)
-                .padding(.horizontal, -8)
                 // The car rolls in once, the first time the dashboard appears.
                 .offset(x: arrived || reduceMotion ? 0 : 80)
                 .opacity(arrived ? 1 : 0)
@@ -235,6 +290,7 @@ private struct CarHero: View {
                     withAnimation(.spring(duration: 0.9, bounce: 0.12).delay(0.1)) { arrived = true }
                 }
         }
+        .padding(.horizontal, 4)
     }
 }
 
@@ -277,11 +333,9 @@ private struct OilChangeTile: View {
 
             if let item, let milesLeft = item.milesLeft(odometer: odometer) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(max(milesLeft, 0).formatted())
+                    RollingNumber(value: max(milesLeft, 0), delay: 0.35)
                         .font(Theme.number(68))
                         .tracking(-2)
-                        .monospacedDigit()
-                        .contentTransition(.numericText(value: Double(milesLeft)))
                     Text(milesLeft > 0 ? "mi left" : "mi · overdue")
                         .font(.title3)
                         .foregroundStyle(milesLeft > 0 ? .white.opacity(0.55) : Theme.safetyRed)
@@ -326,6 +380,8 @@ private struct OilChangeTile: View {
 private struct GlowBar: View {
     let fraction: Double
     let color: Color
+    @State private var filled = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geometry in
@@ -333,11 +389,15 @@ private struct GlowBar: View {
                 Capsule().fill(.white.opacity(0.12))
                 Capsule()
                     .fill(color)
-                    .frame(width: max(8, geometry.size.width * fraction))
-                    .shadow(color: color.opacity(0.7), radius: 8)
+                    .frame(width: max(8, geometry.size.width * (filled ? fraction : 0)))
+                    // The glow breathes slowly, like a charging light.
+                    .phaseAnimator(reduceMotion ? [false] : [false, true]) { bar, bright in
+                        bar.shadow(color: color.opacity(bright ? 0.85 : 0.45), radius: bright ? 12 : 6)
+                    } animation: { _ in .easeInOut(duration: 1.8) }
             }
         }
         .frame(height: 8)
+        .modifier(FillOnAppear(delay: 0.35, filled: $filled))
         .animation(Motion.change, value: fraction)
         .accessibilityHidden(true)
     }
@@ -350,13 +410,11 @@ private struct OdometerTile: View {
     var body: some View {
         SmallTile(title: "Odometer", systemImage: "gauge.with.dots.needle.33percent") {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(miles.formatted())
+                RollingNumber(value: miles, delay: 0.45)
                     .font(Theme.number(30))
                     .tracking(-0.8)
-                    .monospacedDigit()
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
-                    .contentTransition(.numericText(value: Double(miles)))
                 Text("mi")
                     .font(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
@@ -489,19 +547,29 @@ private struct CardHeader: View {
     }
 }
 
-/// Are the glasses connected? Connect them, or look at a part and ask about it.
-private struct GlassesCard: View {
+/// The glasses, your latest questions, and the way into the chat.
+private struct ChatCard: View {
     @Environment(GlassesController.self) private var glasses
-    let onAsk: () -> Void
+    let recent: [ChatEntry]
+    let onOpen: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
                 Image(systemName: "eyeglasses")
                     .font(.title2)
                     .foregroundStyle(.white)
                     .frame(width: 52, height: 52)
                     .background(Theme.ink, in: Circle())
+                    .overlay(alignment: .topTrailing) {
+                        if glasses.isConnected {
+                            Circle()
+                                .fill(Theme.lime)
+                                .frame(width: 13, height: 13)
+                                .overlay(Circle().stroke(.white, lineWidth: 2))
+                                .transition(.scale(scale: 0.5).combined(with: .opacity))
+                        }
+                    }
                     .symbolEffect(.bounce, value: glasses.isConnected)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
@@ -516,9 +584,23 @@ private struct GlassesCard: View {
             }
             .accessibilityElement(children: .combine)
 
+            if recent.isEmpty {
+                Text("Say \u{201C}Hey Carvis\u{201D} or type a question. Answers come only from your service manual.")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(recent.reversed()) { entry in
+                        ChatBubble(text: entry.question, mine: true)
+                        ChatBubble(text: entry.reply, mine: false, dimmed: !entry.fromManual)
+                    }
+                }
+            }
+
             if glasses.isConnected {
-                Button(action: onAsk) {
-                    Label("Ask about a part", systemImage: "camera.viewfinder")
+                Button(action: onOpen) {
+                    Label("Open chat", systemImage: "bubble.left.and.text.bubble.right.fill")
                         .font(Theme.buttonFont)
                         .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
                 }
@@ -547,6 +629,123 @@ private struct GlassesCard: View {
         case .live: "Live"
         case .paused: "Paused"
         case .needsCameraAccess: "Waiting for camera access"
+        }
+    }
+}
+
+private struct ChatBubble: View {
+    let text: String
+    let mine: Bool
+    var dimmed = false
+
+    var body: some View {
+        Text(text)
+            .font(.subheadline)
+            .lineLimit(3)
+            .foregroundStyle(mine ? .white : Theme.ink.opacity(dimmed ? 0.6 : 1))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(mine ? Theme.ink : Theme.pearl,
+                        in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+            .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
+            .accessibilityLabel((mine ? "You asked: " : "Carvis: ") + text)
+    }
+}
+
+/// Mechanic / team mode: where questions go, and whether the server, glasses, and Vapi are ready.
+private struct TeamToolsCard: View {
+    @Environment(AccountStore.self) private var accounts
+    @Environment(GlassesController.self) private var glasses
+    @State private var health: String?
+    @State private var isChecking = false
+
+    var body: some View {
+        @Bindable var accounts = accounts
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Server")
+                    .font(.headline)
+                TextField(CarvisVisionClient.fromInfoPlist()?.baseURL.absoluteString ?? "https://…",
+                          text: $accounts.serverOverride)
+                    .font(.body.monospaced())
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 52)
+                    .background(Theme.pearl, in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+                Text("Leave empty to use the address in Carvis-Info.plist.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+
+            HStack {
+                Button {
+                    Task { await checkServer() }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isChecking { ProgressView() }
+                        Text("Check server")
+                    }
+                    .font(.headline)
+                    .padding(.horizontal, 18)
+                    .frame(minHeight: 48)
+                }
+                .carvisButton()
+                .disabled(isChecking)
+                Spacer()
+            }
+            if let health {
+                Text(health)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(health.hasPrefix("OK") ? Theme.accent : Theme.safetyRed)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
+            DevRow(label: "Glasses", value: glasses.isConnected ? glasses.detail : "Not registered")
+            DevRow(label: "Vapi", value: VapiConfig.load() == nil ? "Not configured, built-in voice" : "Configured")
+            DevRow(label: "Vehicle", value: "\(Vehicle.demo.year) / \(Vehicle.demo.make) / \(Vehicle.demo.model)")
+        }
+        .padding(20)
+        .carvisGlass(.card, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+
+    private func checkServer() async {
+        guard let base = accounts.visionClient?.baseURL else {
+            health = "No server address set."
+            return
+        }
+        isChecking = true
+        defer { isChecking = false }
+        var request = URLRequest(url: base.appending(path: "health"))
+        request.timeoutInterval = 8
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let body = String(data: data, encoding: .utf8) ?? ""
+            health = (status == 200 ? "OK" : "HTTP \(status)") + " · \(base.absoluteString)\n\(body.prefix(200))"
+        } catch {
+            health = "Unreachable · \(base.absoluteString)\n\(error.localizedDescription)"
+        }
+    }
+}
+
+private struct DevRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.footnote.monospaced())
+                .foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.trailing)
         }
     }
 }
@@ -608,6 +807,7 @@ private struct MaintenanceCard: View {
 private struct MaintenanceRow: View {
     let item: MaintenanceItem
     let odometer: Int
+    @State private var filled = false
 
     private var barColor: Color {
         switch item.status(odometer: odometer) {
@@ -639,10 +839,11 @@ private struct MaintenanceRow: View {
                         Capsule().fill(Theme.ink.opacity(0.07))
                         Capsule()
                             .fill(barColor)
-                            .frame(width: geometry.size.width * (item.used(odometer: odometer) ?? 0))
+                            .frame(width: geometry.size.width * (filled ? (item.used(odometer: odometer) ?? 0) : 0))
                     }
                 }
                 .frame(height: 5)
+                .modifier(FillOnAppear(delay: 0.15, filled: $filled))
                 .accessibilityHidden(true)
                 Text(schedule)
                     .font(.footnote)
@@ -703,8 +904,6 @@ private struct HistoryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            CardHeader(title: "Service history", systemImage: "clock.arrow.circlepath")
-
             if records.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No finished jobs yet")

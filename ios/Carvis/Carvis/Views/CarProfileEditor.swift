@@ -92,7 +92,13 @@ struct CarProfileEditor: View {
             }
             .navigationTitle("Your car")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
             .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { hideKeyboard() }
+                        .fontWeight(.semibold)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
@@ -174,6 +180,14 @@ private struct MaintenanceItemEditor: View {
         }
         .navigationTitle(item.name.isEmpty ? "Item" : item.name)
         .navigationBarTitleDisplayMode(.inline)
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { hideKeyboard() }
+                    .fontWeight(.semibold)
+            }
+        }
     }
 }
 
@@ -225,6 +239,11 @@ struct OdometerSheet: View {
 
     private var miles: Int? { Int(text.filter(\.isNumber)) }
 
+    private func save() {
+        if let miles { onSave(miles) }
+        dismiss()
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Update odometer")
@@ -252,10 +271,7 @@ struct OdometerSheet: View {
 
             Spacer(minLength: 0)
 
-            Button {
-                if let miles { onSave(miles) }
-                dismiss()
-            } label: {
+            Button(action: save) {
                 Text("Save")
                     .font(Theme.buttonFont)
                     .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
@@ -264,8 +280,24 @@ struct OdometerSheet: View {
             .disabled(miles == nil)
         }
         .padding(24)
-        .presentationDetents([.medium])
+        // The number pad has no return key, so Save also rides on top of the keyboard.
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Save") { save() }
+                    .fontWeight(.semibold)
+                    .disabled(miles == nil)
+            }
+        }
+        .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .onAppear { isFocused = true }
     }
+}
+
+/// Closes the keyboard from a toolbar button.
+@MainActor
+func hideKeyboard() {
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
 }

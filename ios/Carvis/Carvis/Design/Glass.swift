@@ -158,3 +158,93 @@ struct CarvisBackground: View {
         .ignoresSafeArea()
     }
 }
+
+extension View {
+    /// The floating main button (New job, Get started): dark frosted glass with a light edge,
+    /// so the content scrolling behind it shows through.
+    func floatingGlassButton() -> some View {
+        buttonStyle(FloatingGlassButtonStyle())
+    }
+}
+
+struct FloatingGlassButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.white)
+            .padding(.horizontal, 24)
+            // A soft sheen across the top half, like light on glass.
+            .background {
+                Capsule().fill(LinearGradient(colors: [.white.opacity(0.18), .white.opacity(0)],
+                                              startPoint: .top, endPoint: .center))
+            }
+            .modifier(DarkGlassBackground())
+            .overlay {
+                Capsule().strokeBorder(
+                    LinearGradient(colors: [.white.opacity(0.45), .white.opacity(0.06)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: 1
+                )
+            }
+            .shadow(color: Theme.ink.opacity(0.22), radius: 18, y: 10)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(.spring(duration: 0.2, bounce: 0), value: configuration.isPressed)
+    }
+}
+
+private struct DarkGlassBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.glassEffect(.regular.tint(Theme.ink.opacity(0.82)).interactive(), in: Capsule())
+        } else {
+            content
+                .background(Capsule().fill(Theme.ink.opacity(0.8)))
+                .background(.ultraThinMaterial, in: Capsule())
+        }
+    }
+}
+
+/// A labelled group on the dashboard: a heading, then its cards on a soft frosted panel.
+struct DashboardSection<Content: View>: View {
+    var title: String?
+    var subtitle: String?
+    var tint: Color = .white
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let title {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                        .tracking(-0.3)
+                        .accessibilityAddTraits(.isHeader)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.inkSecondary)
+                    }
+                }
+                .padding(.horizontal, 6)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                content
+            }
+            .padding(12)
+            .background {
+                RoundedRectangle(cornerRadius: 34, style: .continuous)
+                    .fill(LinearGradient(colors: [tint.opacity(0.5), .white.opacity(0.25)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 34, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 34, style: .continuous)
+                            .strokeBorder(.white.opacity(0.7), lineWidth: 1)
+                    )
+            }
+        }
+    }
+}

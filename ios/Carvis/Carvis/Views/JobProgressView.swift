@@ -27,52 +27,47 @@ struct JobProgressView: View {
         .sensoryFeedback(.increase, trigger: response.stepNumber)
     }
 
-    /// The gauge plus what's happening right now.
+    /// The job name, progress, and the swipeable stack of step cards.
     private var heroCard: some View {
-        VStack(spacing: 20) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 LiveDot()
                 Text(session.jobName)
                     .font(.headline)
-                    .foregroundStyle(Theme.inkSecondary)
+                Spacer()
+                Text("\(Int((Double(response.stepNumber - 1) / Double(max(response.totalSteps, 1))) * 100))%")
+                    .font(.headline)
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.accent)
+                    .contentTransition(.numericText(value: Double(response.stepNumber)))
             }
+            SegmentedProgress(step: response.stepNumber, total: response.totalSteps)
 
-            ArcGauge(step: response.stepNumber, total: response.totalSteps)
-                // DEMO ONLY: until the glasses are connected, tapping the gauge moves to the next step.
-                .onTapGesture {
-                    Task { await session.next() }
-                }
+            StepDeck(response: response,
+                     onNext: { Task { await session.next() } },
+                     onBack: { session.goBack() })
+                .padding(.top, 6)
+        }
+    }
+}
 
-            if response.safetyGate {
-                SafetyBanner(text: response.displayText)
-                    .transition(.blurReplace)
-            }
+/// One small bar per step: done steps filled, the current one glowing.
+private struct SegmentedProgress: View {
+    let step: Int
+    let total: Int
 
-            // The text cross-fades with a slight blur, so the old and new steps
-            // read as one smooth change instead of two overlapping blocks.
-            ZStack(alignment: .topLeading) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Now")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.inkSecondary)
-                    // On safety steps the banner holds display_text, so show the full spoken instruction here.
-                    Text(response.safetyGate ? response.spokenText : response.displayText)
-                        .font(.title.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .id(response.stepNumber)
-                .transition(.blurReplace)
-            }
-            .accessibilityElement(children: .combine)
-
-            if response.checkpoint.type == .vision {
-                CameraCheckPlaceholder(prompt: response.checkpoint.prompt)
-                    .transition(.blurReplace)
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(1...max(total, 1), id: \.self) { number in
+                Capsule()
+                    .fill(number < step ? Theme.accent : number == step ? Theme.accent.opacity(0.45) : Theme.ink.opacity(0.08))
+                    .frame(height: 6)
+                    .shadow(color: number == step ? Theme.accent.opacity(0.5) : .clear, radius: 5)
             }
         }
-        .padding(24)
-        .carvisGlass(.hero, in: RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
+        .animation(.spring(duration: 0.5, bounce: 0), value: step)
+        .accessibilityElement()
+        .accessibilityLabel("Step \(step) of \(total)")
     }
 }
 
@@ -163,7 +158,7 @@ private struct TimelineRow: View {
                 .overlay {
                     Image(systemName: "checkmark")
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(Theme.ink)
+                        .foregroundStyle(.white)
                 }
                 .transition(.scale(scale: 0.7).combined(with: .opacity))
         case .current:

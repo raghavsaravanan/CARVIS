@@ -78,3 +78,69 @@ extension View {
         }
     }
 }
+
+// MARK: - Dashboard motion
+
+extension View {
+    /// Cards ease up into place as they scroll into view (once a quarter of them shows).
+    func scrollReveal() -> some View {
+        modifier(ScrollRevealModifier())
+    }
+}
+
+private struct ScrollRevealModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let moves = !reduceMotion  // read here: the transition closure runs off the main actor
+        return content.scrollTransition(.animated(.spring(duration: 0.55, bounce: 0)).threshold(.visible(0.25))) { view, phase in
+            let entering = phase == .bottomTrailing && moves
+            return view
+                .opacity(entering ? 0.35 : 1)
+                .scaleEffect(entering ? 0.96 : 1)
+                .offset(y: entering ? 18 : 0)
+        }
+    }
+}
+
+/// A number that rolls up from zero the first time it appears, then rolls between values.
+struct RollingNumber: View {
+    let value: Int
+    var delay: Double = 0.25
+    @State private var shown: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Text((shown ?? 0).formatted())
+            .monospacedDigit()
+            .contentTransition(.numericText(value: Double(shown ?? 0)))
+            .onAppear {
+                guard shown == nil else { return }
+                if reduceMotion {
+                    shown = value
+                } else {
+                    shown = 0
+                    withAnimation(.smooth(duration: 0.9).delay(delay)) { shown = value }
+                }
+            }
+            .onChange(of: value) { _, new in
+                withAnimation(.smooth(duration: 0.5)) { shown = new }
+            }
+            .accessibilityLabel(value.formatted())
+    }
+}
+
+/// Fills from empty to `fraction` the first time it appears.
+struct FillOnAppear: ViewModifier {
+    let delay: Double
+    @Binding var filled: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.onAppear {
+            guard !filled else { return }
+            if reduceMotion { filled = true; return }
+            withAnimation(.spring(duration: 1.0, bounce: 0).delay(delay)) { filled = true }
+        }
+    }
+}
