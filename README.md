@@ -4,7 +4,7 @@
 
 ### Eyes on the job. Answers in your ear.
 
-**The hands-free AI copilot for automotive technicians.**
+**Conversational Automotive Repair & Visual Intelligence System**
 
 Talk to your service manual. Inspect parts through smart glasses. Get verified answers without putting down your tools.
 
