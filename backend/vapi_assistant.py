@@ -103,7 +103,9 @@ def redacted(config: dict) -> dict:
 def apply(config: dict, private_key: str, assistant_id: str | None) -> dict:
     url = f"{API}/{assistant_id}" if assistant_id else API
     request = urllib.request.Request(url, data=json.dumps(config).encode(), method="PATCH" if assistant_id else "POST",
-                                     headers={"Authorization": f"Bearer {private_key}", "Content-Type": "application/json"})
+                                     headers={"Authorization": f"Bearer {private_key}", "Content-Type": "application/json",
+                                              # Vapi's firewall answers 403 (error 1010) to Python's default client name.
+                                              "User-Agent": "carvis-setup/1.0"})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
