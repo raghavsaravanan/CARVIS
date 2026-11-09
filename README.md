@@ -96,10 +96,4 @@ Use one backend worker while conversation state is in memory. Follow the [migrat
 
 ## Validation and scope
 
-Passed local checks: **113 backend tests, 66 conversation-state checks, and 29 wake-phrase checks**, plus the web production build and database-module type check.
-
-The recorded hardware demo establishes the specification workflow. Visual identification remains a hypothesis; full voice-camera concurrency needs separate hardware validation. Native shop synchronization is future work. Custom wake recognition requires an armed session, and the separate native step guide/shop-floor visualization contains scripted or simulated content.
-
-## Documentation
-
-[iOS setup](ios/README.md) · [Hardware checklist](docs/testing/handsfree.md) · [Architecture](docs/architecture.md) · [Source validation](docs/validation/qdrant-v2.md) · [Migration and rollback](docs/qdrant-v2-migration.md)
+Passed local checks: **113 backend tests, 66 conversation-state checks, and 29 wake-phrase checks**
