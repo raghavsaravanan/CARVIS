@@ -2,7 +2,7 @@ import Foundation
 
 /// The car the photo questions are about. Sent to Carvis on every question,
 /// because a photo alone must never decide which car it is.
-struct Vehicle: Codable, Equatable {
+struct Vehicle: Codable, Equatable, Sendable {
     let year: String
     let make: String
     let model: String

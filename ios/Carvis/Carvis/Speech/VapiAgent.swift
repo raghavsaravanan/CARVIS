@@ -62,6 +62,7 @@ final class VapiAgent {
     @ObservationIgnored private var events: AnyCancellable?
     @ObservationIgnored private var endWatchdog: Task<Void, Never>?
     @ObservationIgnored private var joinMute: Task<Void, Never>?
+    @ObservationIgnored private var desiredMuted = true
 
     init(config: VapiConfig) {
         self.config = config
@@ -72,11 +73,15 @@ final class VapiAgent {
         lines = []
         partial = ""
         state = .connecting
+        desiredMuted = true
         let vapi = Vapi(publicKey: config.publicKey)
         self.vapi = vapi
         events = vapi.eventPublisher
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] event in self?.handle(event) }
+            .sink { [weak self, weak vapi] event in
+                guard let vapi else { return }
+                self?.handle(event, from: vapi)
+            }
         do {
             let call = try await vapi.start(assistantId: config.assistantID, metadata: metadata, assistantOverrides: overrides)
             print("[Vapi] call requested: \(call.id)")
@@ -111,8 +116,7 @@ final class VapiAgent {
             for _ in 0..<100 {
                 guard let self, self.vapi === vapi, !Task.isCancelled else { return }
                 do {
-                    try await vapi.setMuted(true)
-                    print("[Vapi] microphone held muted until the route is verified")
+                    try await self.reconcileMicrophone(on: vapi)
                     return
                 } catch {
                     try? await Task.sleep(for: .milliseconds(30))
@@ -147,11 +151,24 @@ final class VapiAgent {
     }
 
     func setMicrophoneMuted(_ muted: Bool) async {
+        desiredMuted = muted
+        guard let vapi else { return }
         do {
-            try await vapi?.setMuted(muted)
-            print("[Vapi] microphone \(muted ? "muted" : "live")")
+            try await reconcileMicrophone(on: vapi)
         } catch {
             print("[Vapi] mute change failed: \(error)")
+        }
+    }
+
+    private func reconcileMicrophone(on vapi: Vapi) async throws {
+        while self.vapi === vapi {
+            let target = desiredMuted
+            try await vapi.setMuted(target)
+            guard self.vapi === vapi else { return }
+            if desiredMuted == target {
+                print("[Vapi] microphone \(target ? "muted" : "live")")
+                return
+            }
         }
     }
 
@@ -164,7 +181,25 @@ final class VapiAgent {
         }
     }
 
-    private func handle(_ event: Vapi.Event) {
+    /// Daily owns device selection while the phone call is joined.
+    func preferSpeakerphone() async {
+        do {
+            try await vapi?.setAudioDeviceType(.speakerphone)
+        } catch {
+            print("[Vapi] couldn't select iPhone speaker: \(error)")
+        }
+    }
+
+    func preferWired() async {
+        do {
+            try await vapi?.setAudioDeviceType(.wired)
+        } catch {
+            print("[Vapi] couldn't select wired audio: \(error)")
+        }
+    }
+
+    private func handle(_ event: Vapi.Event, from source: Vapi) {
+        guard vapi === source else { return }
         switch event {
         case .callDidStart:
             print("[Vapi] assistant connected")
@@ -213,3 +248,5 @@ final class VapiAgent {
         onEnded?(failure)
     }
 }
+
+extension VapiAgent: VoiceCallProvider {}

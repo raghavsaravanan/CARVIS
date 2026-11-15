@@ -37,6 +37,12 @@ struct ContentView: View {
         .environment(chats)
         .environment(shops)
         .environment(assistant)
+        .safeAreaInset(edge: .bottom) {
+            if assistant.isPhoneCallVisible {
+                PhoneCallBar()
+                    .environment(assistant)
+            }
+        }
         // Starting a job turns Carvis on (camera live, listening for "Hey Carvis") until it ends.
         .onChange(of: session.hasActiveJob) { _, active in
             if active {
@@ -77,6 +83,33 @@ struct ContentView: View {
         case .shop:
             ShopFloorView(liveYou: ShopMechanic.you(from: session))
         }
+    }
+}
+
+/// Keeps End Call reachable when the technician navigates away from the dashboard.
+private struct PhoneCallBar: View {
+    @Environment(CarvisConversationCoordinator.self) private var assistant
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "waveform")
+                .foregroundStyle(Theme.accent)
+                .accessibilityHidden(true)
+            Text(assistant.phoneCallState.title)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Button(action: assistant.endConversation) {
+                Label("End call", systemImage: "phone.down.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+            .accessibilityIdentifier("carvisEndPhoneCall")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .accessibilityElement(children: .contain)
     }
 }
 

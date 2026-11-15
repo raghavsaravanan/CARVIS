@@ -69,8 +69,8 @@ struct OnboardingView: View {
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 18) {
-            FeatureRow(symbol: "eyeglasses", title: "Hands-free on Meta glasses",
-                       detail: "Look at a part and ask. Carvis answers in your ear.", index: 0)
+            FeatureRow(symbol: "mic.fill", title: "Talk on your iPhone",
+                       detail: "Tap Talk to Carvis for a voice conversation. Glasses are optional.", index: 0)
             FeatureRow(symbol: "book.closed.fill", title: "Straight from the manual",
                        detail: "Torque specs and steps come only from your service manual.", index: 1)
             FeatureRow(symbol: "gauge.with.dots.needle.67percent", title: "Your car at a glance",

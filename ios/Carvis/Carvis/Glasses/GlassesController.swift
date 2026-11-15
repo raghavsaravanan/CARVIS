@@ -88,7 +88,7 @@ final class GlassesController {
     @ObservationIgnored private var restartAfterStop = false
     @ObservationIgnored private var photoContinuation: CheckedContinuation<Data, any Error>?
 
-    init(wearables: any WearablesInterface = Wearables.shared) {
+    init(wearables: any WearablesInterface = MetaWearablesRuntime.wearables) {
         self.wearables = wearables
         self.deviceSelector = AutoDeviceSelector(wearables: wearables)
         self.registrationState = wearables.registrationState

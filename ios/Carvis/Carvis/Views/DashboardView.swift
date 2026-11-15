@@ -16,6 +16,7 @@ struct DashboardView: View {
 
     @Environment(AccountStore.self) private var accounts
     @Environment(ChatHistory.self) private var chats
+    @Environment(CarvisConversationCoordinator.self) private var assistant
 
     @State private var isShowingNewJob = false
     @State private var isEditingCar = false
@@ -37,6 +38,9 @@ struct DashboardView: View {
                        onEdit: { isEditingCar = true },
                        onAccount: { isShowingAccount = true })
                     .appearAnimation(index: 0)
+
+                PhoneVoiceCard()
+                    .appearAnimation(index: 1)
 
                 // Mechanic / team accounts: the shop they host, live.
                 if accounts.isTeam {
@@ -217,6 +221,53 @@ struct DashboardView: View {
         guard let name = pendingJobName else { return }
         pendingJobName = nil
         Task { await session.start(jobName: name) }
+    }
+}
+
+/// The primary, explicit voice action. Its status comes from the shared machine and Vapi agent.
+private struct PhoneVoiceCard: View {
+    @Environment(CarvisConversationCoordinator.self) private var assistant
+
+    var body: some View {
+        let state = assistant.phoneCallState
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.title)
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(state.title)
+                        .font(.title3.weight(.semibold))
+                    Text(state.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            Button {
+                if assistant.isPhoneCallVisible {
+                    assistant.endConversation()
+                } else {
+                    assistant.startPhoneConversation()
+                }
+            } label: {
+                Label(assistant.isPhoneCallVisible ? "End call" : "Talk to Carvis",
+                      systemImage: assistant.isPhoneCallVisible ? "phone.down.fill" : "mic.fill")
+                    .font(Theme.buttonFont)
+                    .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
+            }
+            .carvisButton(prominent: !assistant.isPhoneCallVisible)
+            .accessibilityIdentifier("carvisPhoneCallAction")
+            if !assistant.isPhoneCallVisible && assistant.isInConversation {
+                Text("End the current glasses conversation before starting a phone call.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.inkSecondary)
+            }
+        }
+        .padding(20)
+        .carvisGlass(.card, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 }
 
@@ -632,7 +683,7 @@ private struct ChatCard: View {
             .accessibilityElement(children: .combine)
 
             if recent.isEmpty {
-                Text("Say \u{201C}Hey Carvis\u{201D} or type a question. Answers come only from your service manual.")
+                Text("Tap Talk to Carvis above for an iPhone call, or open chat to type a question. Verified answers come from your service manual.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -762,7 +813,7 @@ private struct TeamToolsCard: View {
             Divider()
 
             DevRow(label: "Glasses", value: glasses.isConnected ? glasses.detail : "Not registered")
-            DevRow(label: "Vapi", value: VapiConfig.load() == nil ? "Not configured, built-in voice" : "Configured")
+            DevRow(label: "Vapi", value: VapiConfig.load() == nil ? "Not configured" : "Configured")
             DevRow(label: "Vehicle", value: garageVehicle)
 
             Button(action: onWakeTest) {

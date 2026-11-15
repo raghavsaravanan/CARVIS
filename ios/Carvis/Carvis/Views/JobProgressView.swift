@@ -91,6 +91,7 @@ private struct AssistantPanel: View {
                     .accessibilityLabel("End conversation")
                     .transition(.blurReplace)
                 }
+                if !assistant.isPhoneCallVisible {
                 Button(action: assistant.toggleVoice) {
                     Label(isOn ? "Mute" : (assistant.voiceOn ? "Try again" : "Unmute"),
                           systemImage: isOn ? "mic.fill" : (assistant.voiceOn ? "arrow.clockwise" : "mic.slash.fill"))
@@ -102,6 +103,7 @@ private struct AssistantPanel: View {
                 }
                 .buttonStyle(PressableCardStyle())
                 .accessibilityLabel(isOn ? "Mute Hey Carvis" : "Turn on Hey Carvis")
+                }
             }
             .foregroundStyle(.white)
 
