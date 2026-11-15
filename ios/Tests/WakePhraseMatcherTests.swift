@@ -1,6 +1,6 @@
 import Foundation
 
-/// Run with the CLI command in docs/testing/wake-listener.md; no Meta device is simulated here.
+/// Run with the CLI command in docs/ios/wake-listener.md; no Meta device is simulated here.
 @main
 struct WakePhraseMatcherTests {
     static func main() {

@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+PYTHON="python3"
+if [[ -x .venv/bin/python ]]; then
+  PYTHON=".venv/bin/python"
+fi
+
+echo "== Backend tests =="
+"$PYTHON" -m pytest backend/tests -q
+
+echo "== Python compilation =="
+"$PYTHON" -m compileall -q backend
+
+echo "== Conversation state machine =="
+swiftc -module-cache-path /tmp/carvis-conversation-swift-cache \
+  ios/Carvis/Carvis/Assistant/ConversationMachine.swift \
+  ios/Tests/ConversationMachineTests.swift \
+  -o /tmp/carvis-conversation-tests
+/tmp/carvis-conversation-tests
+
+echo "== Wake phrase matcher =="
+swiftc -module-cache-path /tmp/carvis-wake-swift-cache \
+  ios/Carvis/Carvis/Glasses/WakePhraseMatcher.swift \
+  ios/Tests/WakePhraseMatcherTests.swift \
+  -o /tmp/carvis-wake-tests
+/tmp/carvis-wake-tests
+
+echo "== SpacetimeDB TypeScript =="
+if [[ ! -x backend/spacetimedb/module/node_modules/.bin/tsc ]]; then
+  echo "Missing module dependencies. Run: npm ci --prefix backend/spacetimedb/module" >&2
+  exit 1
+fi
+backend/spacetimedb/module/node_modules/.bin/tsc \
+  --project backend/spacetimedb/module/tsconfig.json --noEmit
+
+echo "== Apple configuration =="
+plutil -lint \
+  ios/Carvis/Carvis-Info.plist \
+  ios/Carvis/Carvis.entitlements \
+  ios/Carvis/Carvis.xcodeproj/project.pbxproj
+
+echo "== iOS simulator build =="
+if xcodebuild -version >/dev/null 2>&1; then
+  xcodebuild -project ios/Carvis/Carvis.xcodeproj -scheme Carvis \
+    -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+else
+  echo "SKIP: full Xcode is unavailable; Command Line Tools cannot build the iOS app."
+fi
+
+echo "== Repository structure =="
+test ! -d frontend
+test ! -d carvis-module
+test -f backend/spacetimedb/module/src/index.ts
+if rg -n 'carvis-module|frontend/(src|package\.json)' \
+  README.md AGENTS.md backend ios docs --glob '!docs/archive/**'; then
+  echo "Stale active path reference found." >&2
+  exit 1
+fi
+
+echo "== Documentation links =="
+"$PYTHON" - <<'PY'
+import pathlib
+import re
+
+bad = []
+for path in [pathlib.Path("README.md"), pathlib.Path("AGENTS.md"), *pathlib.Path("docs").rglob("*.md")]:
+    for target in re.findall(r"\[[^]]*\]\(([^)#]+)(?:#[^)]*)?\)", path.read_text()):
+        if re.match(r"^(?:https?:|mailto:)", target):
+            continue
+        if not (path.parent / target).resolve().exists():
+            bad.append(f"{path}: {target}")
+if bad:
+    raise SystemExit("Broken local links:\n" + "\n".join(bad))
+PY
+
+echo "All available repository checks passed."
