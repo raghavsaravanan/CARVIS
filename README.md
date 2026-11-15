@@ -1,99 +1,88 @@
-<div align="center">
+# Carvis
 
-# CARVIS
+Carvis is a native iOS automotive intelligence platform for delivering vehicle-specific,
+source-grounded repair information through conversational voice and optional visual context.
 
-**Conversational Automotive Repair & Visual Intelligence System**
-
-### Eyes on the job. Answers in your ear.
-
-A hands-free automotive copilot built with Meta smart glasses, NVIDIA Nemotron, verified service-manual retrieval, and SpacetimeDB.
-
-**Built at [HackUTD 2026](https://hackutd-zeroday.devpost.com/)**
-
-![iOS](https://img.shields.io/badge/iOS-SwiftUI-18181B?logo=apple&logoColor=white)
-![NVIDIA](https://img.shields.io/badge/NVIDIA-Nemotron-76B900?logo=nvidia&logoColor=white)
-![Vapi](https://img.shields.io/badge/Vapi-Voice_AI-6D5EF8)
-![Qdrant](https://img.shields.io/badge/Qdrant-Verified_Retrieval-DC382D)
-![SpacetimeDB](https://img.shields.io/badge/SpacetimeDB-Connected_Shops-27272A)
-
-</div>
-
-## Why CARVIS
-
-A mechanic shouldn't have to stop fixing a car just to find the information they need. CARVIS was inspired by a mechanic who had to put down his tools, wash his hands, and search ALLDATA at the shop computer whenever he needed a specification.
-
-CARVIS brings the question and answer into the job through **Meta Ray-Ban glasses and a native SwiftUI iPhone app**.
-
-> “Hey CARVIS, what is the tolerance on the ride height of the vehicle?”
-
-Our physical-glasses demonstration shows vehicle confirmation, a matching reviewed manual lookup, and a spoken answer without reaching for the phone.
-
-## Platform capabilities
-
-| Capability | Implementation |
-| --- | --- |
-| **SEE** | NVIDIA Nemotron interprets captured images and returns likely components, visual context, and uncertainty. |
-| **VERIFY** | Qdrant retrieves structured manual records; Python checks vehicle applicability, variants, reviewed evidence, and conflicting values before formatting specifications. |
-| **CONNECT** | SpacetimeDB provides profiles, shops, roles, invitations, and shared query/result records in the companion shop workspace. |
-| **CONVERSE** | Vapi and GPT-4.1-mini coordinate voice and tools, with confirmed vehicle context and conversational follow-ups. |
-
-The camera-command pipeline correlates fresh captures with active sessions and handles deadlines, duplicates, and stale results. LlamaParse-assisted ingestion uses content-hash caching, source provenance, and review before specifications become available.
-
-**The model interprets the question. The manual supplies the specification.**
+The system is designed for professional technicians: it preserves explicit vehicle context,
+validates technical evidence deterministically, and refuses unsupported specifications rather than
+guessing.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    G[Meta glasses] <--> I[SwiftUI iPhone app]
-    I <--> V[Vapi voice and tools]
-    V <--> A[FastAPI context and verification]
-    I <-->|Camera requests and JPEGs| A
-    A <--> N[NVIDIA Nemotron vision]
-    A <--> Q[Qdrant reviewed manuals]
-    A -.->|Configured telemetry| S[SpacetimeDB shop data]
-    W[Companion shop workspace] <--> S
+    I[Native iOS app] <--> V[Vapi voice]
+    I <--> A[FastAPI backend]
+    V <--> A
+    A <--> Q[Qdrant verified knowledge]
+    A -. visual context .-> N[NVIDIA Nemotron]
+    I -. optional wearable adapter .-> M[Meta Wearables]
+    A -. shop intelligence .-> S[SpacetimeDB]
 ```
 
-Nemotron handles visual interpretation; the conversational model selects tools. Qdrant stores manual evidence; SpacetimeDB organizes shared shop activity.
+- `ios/` — SwiftUI application, voice experience, device integrations, and native tests.
+- `backend/` — FastAPI APIs, conversation orchestration, ingestion, retrieval, verification, and
+  provider adapters.
+- `backend/spacetimedb/` — server-side shop/workspace schema, views, reducers, and authorization.
+- `docs/` — product requirements, active architecture, operational runbooks, and archived records.
 
-## Quick start
+The iOS application is the only user-facing client. Carvis has no web frontend.
 
-Requirements: Python 3.12 recommended, service credentials, and reviewed Qdrant v2 records. The native app also requires Xcode, a physical iPhone, compatible glasses, and Meta developer setup.
+## Knowledge safety
 
-From the repository root:
+Carvis treats retrieval and verification as separate responsibilities. A technical answer must:
+
+1. use an explicit, confirmed vehicle and relevant configuration;
+2. match reviewed evidence with exact applicability and provenance;
+3. preserve units, conditions, warnings, and ordered procedure stages; and
+4. refuse pending, incomplete, conflicting, stale, or cross-vehicle evidence.
+
+Semantic similarity may rank already-applicable evidence; it never proves correctness. Images and
+vision models cannot establish vehicle identity or authorize repair specifications. New ingestion
+is staged as pending review, and Qdrant migration or alias work must follow the
+[migration runbook](docs/backend/qdrant-v2-migration.md).
+
+## Development setup
+
+### Backend
+
+Requirements: Python 3.12 and a safely configured local or cloud Qdrant collection.
 
 ```bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
-cp backend/.env.example backend/.env
-# Configure credentials privately in backend/.env.
 cd backend
-CARVIS_QDRANT_COLLECTION=carvis_specs_v2 ../.venv/bin/uvicorn main:app --port 8000
+../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Expose the backend through HTTPS reachable by both the iPhone and Vapi. From the repository root, configure the assistant:
+Keep provider credentials in the local `backend/.env`; never commit secrets, source manuals,
+captured images, parse caches, Qdrant data, or review exports.
+
+### iOS
+
+Open [`ios/Carvis/Carvis.xcodeproj`](ios/Carvis/Carvis.xcodeproj) in Xcode, configure signing and
+`CarvisBaseURL`, then run on an iPhone or simulator. Meta Wearables support is optional and requires
+the official Device Access Toolkit configuration described in the [iOS guide](docs/ios/README.md).
+
+## Verification
+
+Install Python and SpacetimeDB package dependencies, then run:
 
 ```bash
-# Set VAPI_PRIVATE_KEY and VAPI_WEBHOOK_SECRET in backend/.env first.
-# Set VAPI_ASSISTANT_ID to update an existing assistant.
-.venv/bin/python backend/vapi_assistant.py --public-url https://YOUR-BACKEND
+./scripts/verify.sh
 ```
 
-Open [the Xcode project](ios/Carvis/Carvis.xcodeproj), configure signing, Meta credentials, the backend address, and the local Vapi public key/assistant ID. Follow the [iOS setup guide](ios/README.md). Never commit credentials or captured images.
+The verifier runs backend regression tests, Python compilation, pure Swift conversation and wake
+checks, SpacetimeDB type-checking, Apple configuration lint, repository structure checks,
+documentation-link validation, and an iOS simulator build when full Xcode is available.
 
-Use one backend worker while conversation state is in memory. Follow the [migration runbook](docs/qdrant-v2-migration.md) before changing collections or aliases; preserve the legacy collection.
+## Documentation
 
-## Repository
+- [Product requirements](docs/PRD.md)
+- [Backend architecture](docs/backend/architecture.md)
+- [Qdrant review and migration](docs/backend/qdrant-v2-migration.md)
+- [Native iOS setup and testing](docs/ios/README.md)
+- [Historical architecture and validation records](docs/archive/)
 
-| Directory | Purpose |
-| --- | --- |
-| `ios/` | Primary SwiftUI interface, glasses integration, voice, and camera |
-| `backend/` | API, Nemotron adapter, conversation tools, retrieval, ingestion, and tests |
-| `carvis-module/spacetimedb/` | Shop database schema, views, and reducers |
-| `frontend/` | Retained companion web workspace; not required for the glasses demo |
-| `docs/` | Architecture, hardware checks, source validation, and migration |
-
-## Validation and scope
-
-Passed local checks: **113 backend tests, 66 conversation-state checks, and 29 wake-phrase checks**
+Engineering policy is defined in [`AGENTS.md`](AGENTS.md), with scoped extensions under `backend/`
+and `ios/`.

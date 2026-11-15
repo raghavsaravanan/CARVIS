@@ -34,9 +34,6 @@ xcuserdata/
 *.xcuserstate
 DerivedData/
 node_modules/
-frontend/dist/
-frontend/build/
-frontend/*.tsbuildinfo
 .spacetime/
 spacetime/.spacetime/
 

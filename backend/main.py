@@ -20,7 +20,6 @@ import httpx
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastembed import TextEmbedding
 from pydantic import BaseModel
@@ -1144,15 +1143,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 @app.get("/health")
 async def health() -> dict[str, str]:
