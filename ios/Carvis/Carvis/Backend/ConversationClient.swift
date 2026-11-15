@@ -168,3 +168,5 @@ struct ConversationClient: Sendable {
         return ConversationAPIError(status: status, detail: "Server error \(status): \(detail)")
     }
 }
+
+extension ConversationClient: VoiceSessionBackend {}

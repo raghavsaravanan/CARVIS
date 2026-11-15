@@ -104,7 +104,13 @@ struct AskView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.inkSecondary)
 
-            VoiceRow(display: assistant.voiceDisplay, action: assistant.toggleVoice)
+            if assistant.isPhoneCallVisible {
+                Label(assistant.phoneCallState.title, systemImage: "waveform")
+                    .font(.headline)
+                    .accessibilityLabel("Phone call: \(assistant.phoneCallState.title)")
+            } else {
+                VoiceRow(display: assistant.voiceDisplay, action: assistant.toggleVoice)
+            }
 
             TextField("What's the torque for this?", text: $assistant.question)
                 .font(.title3)

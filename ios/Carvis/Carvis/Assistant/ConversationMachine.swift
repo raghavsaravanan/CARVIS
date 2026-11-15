@@ -12,10 +12,10 @@ enum ConversationPhase: Equatable {
     case listening
     case releasingWake
     case startingCall
-    /// Connected, microphone held muted until the glasses are confirmed as the route.
+    /// Connected, microphone held muted until the selected audio route is confirmed.
     case verifyingRoute
     case inCall
-    /// The glasses route went away. Muted, never moved to the phone's microphone.
+    /// The selected route went away. The microphone stays muted until it is usable again.
     case routeLost(String)
     case endingCall
     case shuttingDown
@@ -30,6 +30,8 @@ enum ConversationEvent: Equatable {
     case wakeUnavailable(String)
     /// "Hey Carvis", with whatever was said after it.
     case wake(question: String?)
+    /// Explicit tap-to-talk call; no wake device or phrase is required.
+    case startDirectCall
     case wakeReleased
     case callStartFailed(String)
     case callConnected
@@ -122,6 +124,17 @@ struct ConversationMachine {
             phase = .releasingWake
             return [.releaseWake]
 
+        case .startDirectCall:
+            switch phase {
+            case .off, .muted, .arming, .waiting, .listening:
+                isActive = true
+                pendingQuestion = nil
+                phase = .releasingWake
+                return [.releaseWake]
+            default:
+                return []
+            }
+
         case .wakeReleased:
             guard phase == .releasingWake else { return [] }
             phase = .startingCall
@@ -165,6 +178,11 @@ struct ConversationMachine {
             return [.setMicMuted(true), .verifyRoute]
 
         case .userEnded:
+            if phase == .releasingWake {
+                pendingQuestion = nil
+                phase = .shuttingDown
+                return [.shutdownCall]
+            }
             guard isInCallPhase, phase != .endingCall else { return [] }
             phase = .endingCall
             return [.endCall]

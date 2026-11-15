@@ -5,12 +5,11 @@ import Observation
 import SwiftUI
 import UIKit
 
-/// Owns a hands-free conversation from "Hey Carvis" until it has completely ended.
+/// Presents the current glasses entry path and camera state to SwiftUI.
 /// One instance, above the views.
 ///
-/// Meta's toolkit supplies the wake transcripts and camera images. Vapi and Daily handle the
-/// conversation's audio through iOS Bluetooth. The rules for what happens when are in
-/// `ConversationMachine`; this class carries them out. The server holds the memory.
+/// VoiceSessionController owns the provider, server call, and injected audio route;
+/// ConversationMachine defines the transitions. Meta supplies wake and camera events here.
 @Observable
 @MainActor
 final class CarvisConversationCoordinator {
@@ -26,6 +25,35 @@ final class CarvisConversationCoordinator {
     enum Reason: Hashable { case job, askScreen }
     enum WakeSource { case glassesSpeech, glassesBluetooth }
     enum CameraWork { case idle, capturing, identifying }
+    enum VoiceMode { case glasses, phone }
+    enum PhoneCallState: Equatable {
+        case idle, connecting, listening, speaking, reconnecting(String), ending, ended, failed(String)
+
+        var title: String {
+            switch self {
+            case .idle: "Ready to talk"
+            case .connecting: "Connecting"
+            case .listening: "Listening"
+            case .speaking: "Carvis is speaking"
+            case .reconnecting: "Checking audio route"
+            case .ending: "Ending call"
+            case .ended: "Call ended"
+            case .failed: "Call failed"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .idle: "Use your iPhone or a connected headset."
+            case .connecting: "Starting Vapi and checking the microphone and speaker."
+            case .listening: "Ask your question."
+            case .speaking: "You can speak to interrupt."
+            case .reconnecting(let reason), .failed(let reason): reason
+            case .ending: "Releasing the call audio."
+            case .ended: "Tap to start another conversation."
+            }
+        }
+    }
 
     // MARK: State the screens show
 
@@ -38,6 +66,8 @@ final class CarvisConversationCoordinator {
     private(set) var machine = ConversationMachine()
     private(set) var wakeSource: WakeSource = .glassesSpeech
     private(set) var cameraWork: CameraWork = .idle
+    private(set) var voiceMode: VoiceMode = .glasses
+    private(set) var phoneOutcome: PhoneCallState = .idle
     /// What the server currently holds as true, refreshed during a call.
     private(set) var serverState: ConversationState?
     private(set) var reasons: Set<Reason> = []
@@ -59,26 +89,36 @@ final class CarvisConversationCoordinator {
     var isActive: Bool { !reasons.isEmpty }
     var isWorking: Bool { phase == .capturing || phase == .asking || cameraWork != .idle }
     var wake: CarvisWakeListener { glasses.wakeListener }
+    var isPhoneCallVisible: Bool { voiceMode == .phone }
+    var phoneCallState: PhoneCallState {
+        guard voiceMode == .phone else { return phoneOutcome }
+        switch conversationPhase {
+        case .releasingWake, .startingCall, .verifyingRoute: return .connecting
+        case .inCall:
+            switch agent?.state {
+            case .speaking: return .speaking
+            case .listening: return .listening
+            case .failed(let reason): return .failed(reason)
+            default: return .connecting
+            }
+        case .routeLost(let reason): return .reconnecting(reason)
+        case .endingCall, .shuttingDown: return .ending
+        default: return phoneOutcome
+        }
+    }
 
     // MARK: Private
-
-    private struct ActiveCall {
-        let handle: ConversationHandle
-        let generation: Int
-    }
 
     @ObservationIgnored private let accounts: AccountStore
     @ObservationIgnored private let chats: ChatHistory
     @ObservationIgnored private let garage: CarProfileStore
     @ObservationIgnored private let speech: SystemSpeechOutput
+    @ObservationIgnored private var voiceSession: VoiceSessionController?
+    @ObservationIgnored private var metaAudioRoute: MetaGlassesAudioRoute?
+    @ObservationIgnored private var phoneAudioRoute: PhoneAudioRoute?
     @ObservationIgnored private let cue = ThinkingCue()
     @ObservationIgnored private var sessionID = UUID().uuidString
-    @ObservationIgnored private var handle: ConversationHandle?
-    @ObservationIgnored private var handleVehicle: Vehicle?
-    @ObservationIgnored private var activeCall: ActiveCall?
     @ObservationIgnored private var cancellables = Set<AnyCancellable>()
-    @ObservationIgnored private var routeObservation: AnyCancellable?
-    @ObservationIgnored private var routeTask: Task<Void, Never>?
     @ObservationIgnored private var cameraTask: Task<Void, Never>?
     @ObservationIgnored private var stateTask: Task<Void, Never>?
     @ObservationIgnored private var backToLiveTask: Task<Void, Never>?
@@ -86,8 +126,6 @@ final class CarvisConversationCoordinator {
     @ObservationIgnored private var glassesSpeechFailed = false
     /// Starts a bare "Hey Carvis" without waiting for the glasses to finish the sentence.
     @ObservationIgnored private var earlyWake: Task<Void, Never>?
-    /// Creates the server session ahead of time, so "Hey Carvis" doesn't wait for it.
-    @ObservationIgnored private var sessionWarmup: Task<Void, Never>?
     @ObservationIgnored private var wakeTime: ContinuousClock.Instant?
     private static let voiceKey = "carvis.voiceOn"
 
@@ -105,11 +143,47 @@ final class CarvisConversationCoordinator {
         self.agent = VapiConfig.load().map(VapiAgent.init)
         if !voiceOn { _ = machine.handle(.mute) }
 
-        agent?.onConnected = { [weak self] in
-            self?.mark("assistant connected")
-            self?.send(.callConnected)
+        if let agent {
+            let glassesRoute = MetaGlassesAudioRoute(glasses: glasses, provider: agent)
+            metaAudioRoute = glassesRoute
+            phoneAudioRoute = PhoneAudioRoute(provider: agent)
+            let session = VoiceSessionController(provider: agent, route: glassesRoute)
+            session.onEvent = { [weak self] event in
+                guard let self else { return }
+                switch event {
+                case .connected: self.mark("assistant connected"); self.send(.callConnected)
+                case .ended(let error): self.send(.callEnded(error: error))
+                case .startFailed(let reason): self.send(.callStartFailed(reason))
+                case .routeReady: self.mark("route verified"); self.send(.routeVerified)
+                case .routeLost(let reason): self.send(.routeLost(reason))
+                case .shutdownComplete:
+                    if self.voiceMode == .phone {
+                        self.send(.deactivate)
+                        self.voiceMode = .glasses
+                        if let glassesRoute = self.metaAudioRoute { _ = self.voiceSession?.selectRoute(glassesRoute) }
+                        self.send(.shutdownComplete)
+                        if self.isActive {
+                            self.voiceSession?.activate(backend: self.api,
+                                                        ownerName: self.accounts.account?.name ?? "",
+                                                        vehicle: self.vehicle)
+                            self.glasses.startPreview()
+                            self.send(.activate)
+                        } else {
+                            self.finishDeactivating()
+                        }
+                    } else {
+                        self.send(.shutdownComplete)
+                        if !self.isActive { self.finishDeactivating() }
+                    }
+                }
+            }
+            session.onCallStarted = { [weak self] handle, generation in
+                self?.startCameraLoop(handle: handle, generation: generation)
+                self?.startStatePolling(handle: handle)
+            }
+            session.onState = { [weak self] state in self?.serverState = state }
+            voiceSession = session
         }
-        agent?.onEnded = { [weak self] error in self?.send(.callEnded(error: error)) }
 
         let wake = glasses.wakeListener
         wake.wakeDetected
@@ -126,8 +200,17 @@ final class CarvisConversationCoordinator {
             self.wakeHeard(question: text)
         }
         listener.onStateChange = { [weak self] state in self?.bluetoothRecognitionChanged(state) }
-        watch({ [weak self] in self?.glasses.isConnected }) { [weak self] _ in self?.retryWakeIfWaiting() }
+        watch({ [weak self] in self?.glasses.isConnected }) { [weak self] _ in
+            self?.retryWakeIfWaiting()
+            self?.voiceSession?.refreshRoute()
+        }
         watch({ [weak self] in self?.garage.profile.vehicle }) { [weak self] _ in self?.retryWakeIfWaiting() }
+        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
+            .sink { [weak self] _ in
+                guard let self, self.isPhoneCallVisible else { return }
+                self.endConversation()
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - On and off
@@ -135,19 +218,22 @@ final class CarvisConversationCoordinator {
     func activate(_ reason: Reason) {
         let wasActive = isActive
         reasons.insert(reason)
+        guard voiceMode == .glasses else { return }
         guard !wasActive else { return }
         sessionID = UUID().uuidString
-        handle = nil
-        handleVehicle = nil
         serverState = nil
         glassesSpeechFailed = false
-        sessionWarmup = Task { [weak self] in _ = try? await self?.createOrUpdateSession() }
+        voiceSession?.activate(backend: api, ownerName: accounts.account?.name ?? "", vehicle: vehicle)
         glasses.startPreview()   // the camera stays live so Carvis can see what you see
         send(.activate)
     }
 
     func deactivate(_ reason: Reason) {
         reasons.remove(reason)
+        if voiceMode == .phone {
+            if !isActive { glasses.stopPreview() }
+            return
+        }
         guard !isActive else { return }
         send(.deactivate)
         if !isInConversation, conversationPhase != .shuttingDown { finishDeactivating() }
@@ -163,6 +249,7 @@ final class CarvisConversationCoordinator {
 
     /// Mute or unmute "Hey Carvis". If it couldn't start, tapping tries again.
     func toggleVoice() {
+        guard voiceMode == .glasses else { return }
         print("[Conversation] touch: voice control")
         if case .waiting = conversationPhase {
             startWake()
@@ -174,7 +261,43 @@ final class CarvisConversationCoordinator {
 
     func endConversation() {
         print("[Conversation] touch: end conversation")
+        if voiceMode == .phone { phoneOutcome = .ended }
         send(.userEnded)
+    }
+
+    /// A tap starts a Vapi call without arming Meta or requiring a wake phrase.
+    func startPhoneConversation() {
+        guard !isPhoneCallVisible else { return }
+        guard conversationPhase != .shuttingDown else { return }
+        guard !machine.isInCallPhase, conversationPhase != .releasingWake else {
+            phoneOutcome = .failed("Finish the current conversation first.")
+            return
+        }
+        guard let voiceSession, let phoneAudioRoute, agent != nil else {
+            phoneOutcome = .failed("Add your Vapi public key and assistant ID to start voice calls.")
+            return
+        }
+        guard vehicle != nil else {
+            phoneOutcome = .failed("Add your car's year, make, and model first.")
+            return
+        }
+        guard api != nil else {
+            phoneOutcome = .failed("Set a Carvis server address first.")
+            return
+        }
+        guard voiceSession.selectRoute(phoneAudioRoute) else {
+            phoneOutcome = .failed("Finish the current conversation first.")
+            return
+        }
+        earlyWake?.cancel()
+        earlyWake = nil
+        speech.stop()
+        phoneOutcome = .idle
+        voiceMode = .phone
+        if !isActive {
+            voiceSession.activate(backend: api, ownerName: accounts.account?.name ?? "", vehicle: vehicle)
+        }
+        send(.startDirectCall)
     }
 
     /// Show live video again instead of the last photo.
@@ -190,8 +313,12 @@ final class CarvisConversationCoordinator {
     private func send(_ event: ConversationEvent) {
         switch event {
         case .wake: lastFailure = nil
-        case .callStartFailed(let reason): lastFailure = reason
-        case .callEnded(.some(let reason)): lastFailure = reason
+        case .callStartFailed(let reason):
+            lastFailure = reason
+            if voiceMode == .phone { phoneOutcome = .failed(reason) }
+        case .callEnded(let error):
+            if let error { lastFailure = error }
+            if voiceMode == .phone { phoneOutcome = error.map(PhoneCallState.failed) ?? .ended }
         default: break
         }
         let before = machine.phase
@@ -205,11 +332,13 @@ final class CarvisConversationCoordinator {
         case .startWake: startWake()
         case .stopWake: stopWake()
         case .releaseWake: releaseWake()
-        case .startCall(let question): startCall(openingQuestion: question)
-        case .verifyRoute: verifyRoute()
-        case .setMicMuted(let muted): Task { await agent?.setMicrophoneMuted(muted) }
-        case .deliverQuestion(let question): agent?.deliver(question: question)
-        case .endCall: agent?.end()
+        case .startCall(let question):
+            voiceSession?.start(backend: api, ownerName: accounts.account?.name ?? "",
+                                vehicle: vehicle, openingQuestion: question)
+        case .verifyRoute: voiceSession?.verifyRoute()
+        case .setMicMuted(let muted): voiceSession?.setMicrophoneMuted(muted)
+        case .deliverQuestion(let question): voiceSession?.deliver(question: question)
+        case .endCall: voiceSession?.end()
         case .shutdownCall: shutdownCall()
         }
     }
@@ -217,6 +346,7 @@ final class CarvisConversationCoordinator {
     // MARK: - Wake word
 
     private func startWake() {
+        guard voiceMode == .glasses else { return }
         guard agent != nil else {
             send(.wakeUnavailable("Add your Vapi keys to start conversations."))
             return
@@ -249,7 +379,7 @@ final class CarvisConversationCoordinator {
     }
 
     private func glassesSpeechChanged(_ state: CarvisWakeListener.State) {
-        guard isActive, wakeSource == .glassesSpeech else { return }
+        guard isActive, voiceMode == .glasses, wakeSource == .glassesSpeech else { return }
         switch state {
         case .listening:
             print("[Conversation] listening through glasses speech")
@@ -271,7 +401,7 @@ final class CarvisConversationCoordinator {
     }
 
     private func bluetoothRecognitionChanged(_ state: VoiceListener.State) {
-        guard isActive, wakeSource == .glassesBluetooth else { return }
+        guard isActive, voiceMode == .glasses, wakeSource == .glassesBluetooth else { return }
         switch state {
         case .listening:
             print("[Conversation] listening through the glasses' Bluetooth mic, \(listener.microphoneName ?? "?")")
@@ -308,6 +438,7 @@ final class CarvisConversationCoordinator {
     /// A bare "Hey Carvis" starts the call straight away. Anything said after it travels
     /// with the call and is delivered once.
     private func wakeHeard(question: String) {
+        guard voiceMode == .glasses else { return }
         print("[Conversation] wake heard, question: \(!question.isEmpty)")
         wakeTime = .now
         send(.wake(question: question.isEmpty ? nil : question))
@@ -325,165 +456,6 @@ final class CarvisConversationCoordinator {
             print("[Conversation] wake listeners released")
             mark("wake released")
             send(.wakeReleased)
-        }
-    }
-
-    private func ensureSession() async throws -> ConversationHandle {
-        await sessionWarmup?.value
-        return try await createOrUpdateSession()
-    }
-
-    private func createOrUpdateSession() async throws -> ConversationHandle {
-        guard let api, let vehicle else {
-            throw ConversationSetupError.message("Carvis needs a server address and your car's details first.")
-        }
-        if let handle {
-            if handleVehicle != vehicle {
-                try await api.updateVehicle(handle, vehicle: vehicle)
-                handleVehicle = vehicle
-            }
-            return handle
-        }
-        let created = try await api.createSession(ownerName: accounts.account?.name ?? "", vehicle: vehicle)
-        handle = created
-        handleVehicle = vehicle
-        return created
-    }
-
-    /// Selects the glasses' Bluetooth microphone before the call can open a microphone at all.
-    private func prepareGlassesAudio() async throws {
-        let glassesName = glasses.activeDeviceName
-        try await AudioSessionQueue.run {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
-            try session.setActive(true)
-            let inputs = session.availableInputs ?? []
-            print("[Conversation] available inputs: \(inputs.map { "\($0.portName) (\($0.portType.rawValue))" })")
-            guard let mic = inputs.first(where: { $0.portType == .bluetoothHFP && GlassesRouteCheck.matches($0.portName, glassesName) }) else {
-                throw ConversationSetupError.message("Your glasses' microphone isn't connected to this iPhone. Check Bluetooth in Settings.")
-            }
-            try session.setPreferredInput(mic)
-        }
-    }
-
-    private func startCall(openingQuestion: String?) {
-        Task {
-            do {
-                guard let agent, let api else {
-                    throw ConversationSetupError.message("Vapi isn't configured.")
-                }
-                let handle = try await ensureSession()
-                try stillStarting()
-                // Done side by side, because each one otherwise waits on the other.
-                async let serverCall = api.startCall(handle, openingQuestion: openingQuestion)
-                try await prepareGlassesAudio()
-                let call = try await serverCall
-                activeCall = ActiveCall(handle: handle, generation: call.generation)
-                try stillStarting()
-                var overrides: [String: Any] = ["variableValues": call.variableValues]
-                // With a question, its delivery is the first turn. Otherwise Carvis greets.
-                if openingQuestion != nil { overrides["firstMessageMode"] = "assistant-waits-for-user" }
-                let callID = try await agent.start(metadata: ["carvis_session_id": handle.sessionID], overrides: overrides)
-                mark("call requested")
-                // Ended while connecting: the agent is already hanging up, so start nothing else.
-                guard isCallRunning else { return }
-                try? await api.bindCall(handle, generation: call.generation, vapiCallID: callID)
-                guard isCallRunning else { return }
-                observeRoute()
-                startCameraLoop(handle: handle, generation: call.generation)
-                startStatePolling(handle: handle)
-            } catch is ConversationCancelled {
-                print("[Conversation] ended before the call started")
-                send(.callEnded(error: nil))
-            } catch {
-                print("[Conversation] couldn't start: \(error)")
-                // The server restarted and forgot this session: make a new one next time.
-                if let api = error as? ConversationAPIError, api.status == 401 || api.status == 404 { handle = nil }
-                send(.callStartFailed(error.localizedDescription))
-            }
-        }
-    }
-
-    private func stillStarting() throws {
-        guard conversationPhase == .startingCall else { throw ConversationCancelled() }
-    }
-
-    private var isCallRunning: Bool {
-        switch conversationPhase {
-        case .startingCall, .verifyingRoute, .inCall, .routeLost: true
-        default: false
-        }
-    }
-
-    // MARK: - Audio route
-
-    private func routeStatus() -> GlassesRouteStatus {
-        let ports = AudioRoute.currentPorts()
-        return GlassesRouteCheck.evaluate(inputs: ports.inputs, outputs: ports.outputs, glassesName: glasses.activeDeviceName)
-    }
-
-    private func describe(_ status: GlassesRouteStatus) -> String {
-        switch status {
-        case .ready(let name): "Using \(name)"
-        case .noMicrophone: "Your glasses' microphone isn't connected."
-        case .noSpeaker: "Your glasses' speakers aren't connected."
-        case .otherDevice(let name): "Audio is going to \(name), not your glasses."
-        }
-    }
-
-    /// Keeps asking for Bluetooth and checking until the glasses are truly the route.
-    /// The microphone stays muted the whole time.
-    private func verifyRoute() {
-        routeTask?.cancel()
-        routeTask = Task { [weak self] in
-            var attempts = 0
-            while !Task.isCancelled {
-                guard let self else { return }
-                switch self.conversationPhase {
-                case .verifyingRoute, .routeLost:
-                    if attempts % 10 == 0 { await self.agent?.preferBluetooth() }
-                default:
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                let status = self.routeStatus()
-                if case .ready = status {
-                    print("[Conversation] route check: \(status)")
-                    self.mark("route verified")
-                    self.send(.routeVerified)
-                    return
-                }
-                if attempts % 10 == 0 { print("[Conversation] route check: \(status)") }
-                attempts += 1
-                if attempts == 40, self.conversationPhase == .verifyingRoute {   // four seconds
-                    self.send(.routeLost(self.describe(status)))
-                }
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-        }
-    }
-
-    private func observeRoute() {
-        routeObservation = NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.routeChanged() }
-    }
-
-    private func routeChanged() {
-        let status = routeStatus()
-        print("[Conversation] route changed: \(status)")
-        switch conversationPhase {
-        case .inCall:
-            if case .ready = status { return }
-            send(.routeLost(describe(status)))
-        case .routeLost:
-            if case .ready = status {
-                send(.routeVerified)
-            } else {
-                send(.routeLost(describe(status)))
-            }
-        default:
-            break
         }
     }
 
@@ -510,6 +482,11 @@ final class CarvisConversationCoordinator {
     /// Takes a new photo for this command. The cue plays only while this work is happening.
     private func fulfill(_ command: CameraCommand, handle: ConversationHandle, api: ConversationClient) async {
         print("[Conversation] camera command \(command.requestID.prefix(8)), \(Int(command.secondsRemaining))s left")
+        if voiceMode == .phone && !glasses.isConnected {
+            try? await api.reportCameraFailure(handle, requestID: command.requestID,
+                                               reason: "Glasses camera unavailable for this phone call.")
+            return
+        }
         cue.start()
         cameraWork = .capturing
         defer {
@@ -518,15 +495,20 @@ final class CarvisConversationCoordinator {
         }
         do {
             let jpeg = try await glasses.capturePhoto(timeout: .seconds(min(max(command.secondsRemaining - 8, 3), 15)))
+            try Task.checkCancellation()
             print("[Conversation] captured \(jpeg.count) bytes")
             photo = UIImage(data: jpeg)
             cameraWork = .identifying
             try await api.uploadPhoto(handle, requestID: command.requestID, jpeg: jpeg, timeout: command.secondsRemaining)
+            try Task.checkCancellation()
             print("[Conversation] photo identified")
             scheduleBackToLive()
+        } catch is CancellationError {
+            // A stopped call must not publish a photo or report a new camera failure.
         } catch let error as ConversationAPIError where error.isStale {
             print("[Conversation] photo no longer wanted")
         } catch {
+            guard !Task.isCancelled else { return }
             print("[Conversation] camera failed: \(error.localizedDescription)")
             try? await api.reportCameraFailure(handle, requestID: command.requestID, reason: error.localizedDescription)
         }
@@ -536,7 +518,7 @@ final class CarvisConversationCoordinator {
         guard let api else { return }
         stateTask = Task { [weak self] in
             while !Task.isCancelled {
-                if let state = try? await api.state(handle) { self?.serverState = state }
+                if let state = try? await api.state(handle), !Task.isCancelled { self?.serverState = state }
                 try? await Task.sleep(for: .seconds(1.5))
             }
         }
@@ -544,10 +526,8 @@ final class CarvisConversationCoordinator {
 
     // MARK: - Shutdown
 
-    /// Everything from the call stops before Carvis can listen again.
+    /// Camera work is cancelled before the route and server generation are released.
     private func shutdownCall() {
-        routeTask?.cancel()
-        routeObservation = nil
         let camera = cameraTask
         cameraTask = nil
         camera?.cancel()
@@ -555,22 +535,9 @@ final class CarvisConversationCoordinator {
         stateTask = nil
         cue.stop()
         cameraWork = .idle
-        let finished = activeCall
-        activeCall = nil
         Task {
             await camera?.value
-            if let finished, let api {
-                try? await api.endCall(finished.handle, generation: finished.generation, reason: "app")
-                if let state = try? await api.state(finished.handle) { serverState = state }
-            }
-            _ = try? await AudioSessionQueue.run {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            }
-            AudioOwnership.conversationOwnsAudio = false
-            SystemSpeechOutput.usePlaybackSession()
-            print("[Conversation] shutdown complete")
-            send(.shutdownComplete)
-            if !isActive { finishDeactivating() }
+            voiceSession?.shutdown()
         }
     }
 
@@ -644,6 +611,11 @@ final class CarvisConversationCoordinator {
     // MARK: - What the voice row says
 
     var voiceDisplay: VoiceDisplay {
+        if voiceMode == .phone {
+            let state = phoneCallState
+            return VoiceDisplay(title: state.title, subtitle: state.detail,
+                                isOn: true, isLive: state == .listening)
+        }
         switch conversationPhase {
         case .off, .muted:
             return VoiceDisplay(title: "Hey Carvis is muted", subtitle: "Unmute to talk to Carvis hands-free", isOn: false, isLive: false)
@@ -711,17 +683,5 @@ final class CarvisConversationCoordinator {
             }
         }
         track()
-    }
-}
-
-/// The conversation was ended before its call got started.
-private struct ConversationCancelled: Error {}
-
-enum ConversationSetupError: LocalizedError {
-    case message(String)
-    var errorDescription: String? {
-        switch self {
-        case .message(let text): text
-        }
     }
 }

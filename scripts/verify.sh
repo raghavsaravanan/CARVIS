@@ -22,6 +22,20 @@ swiftc -module-cache-path /tmp/carvis-conversation-swift-cache \
   -o /tmp/carvis-conversation-tests
 /tmp/carvis-conversation-tests
 
+echo "== Voice session controller =="
+swiftc -module-cache-path /tmp/carvis-voice-swift-cache \
+  ios/Carvis/Carvis/Assistant/VoiceSessionController.swift \
+  ios/Tests/VoiceSessionControllerTests.swift \
+  -o /tmp/carvis-voice-session-tests
+/tmp/carvis-voice-session-tests
+
+echo "== Phone audio route policy =="
+swiftc -module-cache-path /tmp/carvis-phone-route-swift-cache \
+  ios/Carvis/Carvis/Speech/PhoneAudioRoutePolicy.swift \
+  ios/Tests/PhoneAudioRoutePolicyTests.swift \
+  -o /tmp/carvis-phone-route-tests
+/tmp/carvis-phone-route-tests
+
 echo "== Wake phrase matcher =="
 swiftc -module-cache-path /tmp/carvis-wake-swift-cache \
   ios/Carvis/Carvis/Glasses/WakePhraseMatcher.swift \

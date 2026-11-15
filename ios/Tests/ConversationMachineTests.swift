@@ -167,6 +167,33 @@ struct ConversationMachineTests {
         check(endedEarly.handle(.callEnded(error: nil)) == [.shutdownCall], "a call that never started still shuts down")
         check(endedEarly.handle(.callConnected) == [], "a late connection can't revive it")
 
+        // Explicit phone call shares the call lifecycle but never waits for a wake phrase.
+        var phone = ConversationMachine()
+        check(phone.handle(.startDirectCall) == [.releaseWake], "tap takes audio ownership")
+        check(phone.handle(.startDirectCall) == [], "rapid second tap cannot create a call")
+        check(phone.handle(.wakeReleased) == [.startCall(openingQuestion: nil)], "direct call uses existing start effect")
+        check(phone.handle(.callConnected) == [.setMicMuted(true), .verifyRoute], "phone mic held until route check")
+        check(phone.handle(.routeVerified) == [.setMicMuted(false)], "phone route opens mic")
+        check(phone.handle(.userEnded) == [.endCall], "phone call ends through provider")
+        check(phone.handle(.callEnded(error: nil)) == [.shutdownCall], "phone server cleanup")
+        check(phone.handle(.deactivate) == [], "phone activation clears before shutdown completes")
+        check(phone.handle(.shutdownComplete) == [], "no wake rearm after phone call")
+        check(phone.phase == .off, "phone returns to idle")
+        check(phone.handle(.startDirectCall) == [.releaseWake], "repeat phone call can start")
+        check(phone.handle(.userEnded) == [.shutdownCall], "end works during initial handoff")
+        check(phone.handle(.wakeReleased) == [], "late handoff cannot restart ended phone call")
+
+        var switching = armed()
+        check(switching.handle(.startDirectCall) == [.releaseWake], "phone tap leaves glasses listening")
+        check(switching.handle(.wake(question: nil)) == [], "stale glasses wake cannot start another call")
+        _ = switching.handle(.wakeReleased)
+        _ = switching.handle(.callConnected)
+        _ = switching.handle(.routeVerified)
+        _ = switching.handle(.callEnded(error: nil))
+        _ = switching.handle(.deactivate)
+        _ = switching.handle(.shutdownComplete)
+        check(switching.handle(.activate) == [.startWake], "glasses can rearm after phone call ends")
+
         // Audio route
         let mic = AudioPortInfo(name: "Ray-Ban Meta", isBluetoothHFP: true, isBluetoothOutput: false)
         let speaker = AudioPortInfo(name: "Ray-Ban Meta", isBluetoothHFP: false, isBluetoothOutput: true)
