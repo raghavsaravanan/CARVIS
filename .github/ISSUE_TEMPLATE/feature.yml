@@ -1,0 +1,39 @@
+name: Feature
+description: Define a bounded CARVIS product or engineering change.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or engineering problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requirements and scope
+      description: Include relevant PRD IDs, protected contracts, and explicit non-goals.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable success and failure behavior.
+      placeholder: |
+        - [ ] Success behavior
+        - [ ] Failure or refusal behavior
+        - [ ] Required tests
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Likely files or systems
+      description: Identify ownership boundaries and shared contracts.
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: Separate mocked, local, simulator, device, live-provider, and production validation.
