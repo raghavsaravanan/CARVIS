@@ -9,5 +9,6 @@ touch. `AGENTS.md` is the canonical engineering policy; this file only points to
 
 Project skills in `.claude/skills/`: `/carvis-architecture` (design, database/auth selection,
 tenancy, ADRs), `/carvis-regression` (run and extend checks, honest validation reporting),
-`/carvis-pr-review` (diff and PR readiness review), and `/carvis-continue` (explicitly invoked: one M2
-roadmap task to a draft PR, then stop).
+`/carvis-pr-review` (diff and PR readiness review), and `/carvis-continue` (one M2 roadmap task to a
+draft PR, then stop; run it only when the user invokes it or explicitly says "continue M2", never
+automatically).

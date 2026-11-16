@@ -1,14 +1,15 @@
 ---
 name: carvis-continue
-description: Advance the CARVIS M2 roadmap by exactly one task. Verify the previous M2 PR merged, check the worktree, pick the next roadmap row, implement it on a fresh branch, run regression checks and an independent review, open a draft PR, confirm CI, then stop for owner review. Runs only when the user invokes /carvis-continue (or asks to "continue M2"). Never merges.
+description: Advance the CARVIS M2 roadmap by exactly one task. Verify the previous M2 PR merged, check the worktree, pick the next roadmap row, implement it on a fresh branch, run regression checks and an independent review, open a draft PR, confirm CI, then stop for owner review. Runs only when the user invokes /carvis-continue or explicitly says "continue M2"; never automatically. Never merges.
 argument-hint: "[roadmap row, e.g. A3 — blank selects the next one]"
 disable-model-invocation: true
 ---
 
 # Continue M2: one roadmap task, one draft PR
 
-Run only when the user invokes `/carvis-continue` or explicitly asks to continue M2. Each run
-completes one task from [`docs/architecture/12-m2-roadmap.md`](../../../docs/architecture/12-m2-roadmap.md)
+**Invocation.** `/carvis-continue` is the canonical command. A user who explicitly says "continue
+M2" invokes the same workflow: read this file and follow it. Never start it on your own, including
+at session start or after finishing another task. Each run completes one task from [`docs/architecture/12-m2-roadmap.md`](../../../docs/architecture/12-m2-roadmap.md)
 and ends with a draft PR and a report. A run authorizes creating a branch, committing, pushing,
 and opening a draft PR for that task only. It never authorizes a merge, a deployment, or a change
 to live infrastructure.
@@ -16,39 +17,40 @@ to live infrastructure.
 Before starting, read `AGENTS.md`, the scoped `AGENTS.md` for each area you will touch, and
 [`docs/development-workflow.md`](../../../docs/development-workflow.md).
 
-## 1. Preconditions — stop and report if any fails
+## 1. Preflight: stop and report if it fails
 
 ```bash
-git fetch origin main
-git status --short --branch
-git log --oneline @{upstream}..HEAD        # unpushed commits on the current branch
-git remote -v && git config --get remote.pushDefault
-gh pr list --repo raghavsaravanan/CARVIS --state all --search "M2 in:title" --limit 20 \
-  --json number,title,state,isDraft,mergedAt,headRefName
+bash .claude/skills/carvis-continue/preflight.sh
 ```
 
-1. **Clean worktree.** Stop if the worktree has uncommitted changes, or if the current branch has
-   unpushed commits (`@{upstream}..HEAD` is not empty). Also stop if the branch has no upstream
-   and holds commits that are not on `origin/main`. Never stash, reset, or overwrite this work.
-   You may leave a branch whose PR is `MERGED` by switching away from it.
-2. **Remotes.** `origin` must be `raghavsaravanan/CARVIS` and the push default must be `origin`.
-   Never push to `upstream`.
-3. **No open M2 PR.** Stop if any M2 PR is `OPEN`, draft or not: report its number and status,
-   and do not duplicate its work.
-4. **Previous PR merged.** The most recent M2 PR must be `MERGED`. If it was `CLOSED` without
-   merging, stop and report. Confirm its merge commit is on `origin/main`:
-   ```bash
-   gh pr view <n> --repo raghavsaravanan/CARVIS --json mergeCommit --jq .mergeCommit.oid
-   git merge-base --is-ancestor <sha> origin/main
-   ```
-5. **This worktree only.** Never touch another worktree, the primary checkout, or the external
-   reference checkout.
+On exit 1, stop and report its `STOP:` line. Never stash, reset, commit, delete, or push anything
+to make the preflight pass. The script does the following:
+
+- Checks that `origin` is `github.com/raghavsaravanan/CARVIS`, over https or ssh.
+  `remote.pushDefault` is not required, because every push names `origin` explicitly.
+- Runs `git fetch --prune origin`.
+- Requires a clean worktree, with no changes to tracked files and no untracked files.
+- Requires that the current branch is safe to leave with `git switch`. That holds when one of the
+  following is true:
+  - it has nothing beyond `origin/main`;
+  - it is fully pushed to an `origin` upstream that still exists;
+  - it was **squash-merged**, meaning `HEAD` is contained in the final head commit of a merged PR
+    into `main` for that branch. A deleted upstream therefore does not block a merged branch.
+
+  Anything else is unpushed or unmerged work, and the script stops.
+- Checks the roadmap-row PRs, meaning PRs whose titles contain `(M2 <row>` in any case (so
+  `(M2 A3) [WIP]` counts). Other PRs that mention M2 are ignored. None may be open. The latest one must be `MERGED`, and its merge commit
+  must be on `origin/main`. The script prints the merged rows.
+
+The script never deletes local branches. Mention every branch it reports in a `NOTE:` line in the
+final report. Work only in the current worktree. Never touch another worktree, the primary
+checkout, or the external reference checkout.
 
 ## 2. Select the task
 
 Take rows in roadmap order: Track A from A1 to A6, then Track B by its dependency column. A row
-is done only when two things hold: a PR titled with that row (for example `… (M2 A2)`) is merged,
-and `origin/main` contains the change. If those disagree, stop and report. If the user names a
+is done only when two things hold: the preflight lists a merged PR for that row, and `origin/main`
+contains the change. If those disagree, stop and report. If the user names a
 row as an argument, use it only when its dependencies are merged.
 
 Implement only the engineering part of a row. Any part marked "owner action" (for example A5's
@@ -92,7 +94,7 @@ git switch --create <prefix>/<short-scope> origin/main   # prefixes: docs/develo
 
 - Commit message: `<type>(<area>): <summary> (M2 <row>)`. The body covers what changed, why, and
   the test count.
-- Push and open the PR:
+- Push explicitly to `origin` (never `upstream`), then open the PR:
   ```bash
   git push --set-upstream origin HEAD
   gh pr create --draft --repo raghavsaravanan/CARVIS --base main \
@@ -115,7 +117,10 @@ Report:
 
 Then stop. Do not merge, mark the PR ready, or start the next row.
 
-## Accepted decisions (owner, 2026-11-16)
+## Accepted operational decisions (owner, 2026-11-16)
+
+These are working rules for this workflow. Formal ADRs and accepted records in `docs/decisions/`
+remain authoritative; these resolve no D-item.
 
 - **A2 boot behavior.** A missing `CARVIS_OPERATOR_TOKEN` keeps `/upload` closed (every request
   gets 401) but does not prevent startup.
