@@ -65,6 +65,13 @@ exactly match the configured secret (surrounding whitespace in the variable is i
 (any value, matching the assistant's tool headers) to exercise the webhook locally, or set
 `CARVIS_ENV=local` to run the rest of the API without one.
 
+`/upload` is an operator-only endpoint. It rejects every request (401) that does not carry exactly one
+`X-Carvis-Operator-Token` header exactly matching `CARVIS_OPERATOR_TOKEN` (surrounding whitespace in the variable is
+ignored); when the variable is unset or blank every upload is rejected, though the API still starts.
+Accepted files must begin with the `%PDF-` magic and be at most 50 MiB (larger bodies get 413 and stop
+streaming at the cap). These checks run before ingestion is scheduled, so a rejected request never
+reaches LlamaParse.
+
 ### iOS
 
 Open [`ios/Carvis/Carvis.xcodeproj`](ios/Carvis/Carvis.xcodeproj) in Xcode, configure signing and
