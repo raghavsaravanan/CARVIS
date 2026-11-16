@@ -54,7 +54,7 @@ There is no cross-vehicle fallback, inferred vehicle identity, model-generated n
 
 `/vapi-tool` accepts flat JSON, nested parameters, and existing Vapi tool-call shapes. Variants may be in structured fields or the question. It preserves results/toolCallId/result and adds source evidence. It never passes numeric answers through the legacy free-text torque formatter.
 
-`/upload` stages pending records and returns HTTP 202. It no longer deletes a document before replacement. Background failures leave existing data intact. Large batch writes are not transactional: a network failure may leave additional pending points, but no old points are removed. Rerunning the same ingestion is safe.
+`/upload` requires the operator token (`X-Carvis-Operator-Token` matching `CARVIS_OPERATOR_TOKEN`; unset rejects every upload), accepts only files that begin with `%PDF-` and are at most 50 MiB, and rejects anything else before ingestion is scheduled. Unauthorized and declared-oversized requests are answered before the body is read; undeclared bodies stop streaming at the cap. It stages pending records and returns HTTP 202. It no longer deletes a document before replacement. Background failures leave existing data intact. Large batch writes are not transactional: a network failure may leave additional pending points, but no old points are removed. Rerunning the same ingestion is safe.
 
 ## Nemotron and latency
 

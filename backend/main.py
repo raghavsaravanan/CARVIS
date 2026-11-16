@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import tempfile
 import time
 import uuid
@@ -19,7 +20,8 @@ from typing import Any, Sequence
 import httpx
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
+from fastapi import (APIRouter, BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Request, Response,
+                     UploadFile)
 from fastapi.responses import JSONResponse
 from fastembed import TextEmbedding
 from pydantic import BaseModel
@@ -35,6 +37,8 @@ from spec_retrieval import LookupResult, SpecificationRefusal, lookup, normalize
 from spec_extract import COMPONENTS, component_from_text
 from webhook_auth import (WEBHOOK_SECRET_HEADER, configured_secret, require_webhook_secret_at_boot,
                           webhook_request_authorized)
+from upload_security import (MAX_UPLOAD_BYTES, NOT_A_PDF_DETAIL, OPERATOR_TOKEN_ENV, PDF_MAGIC, TOO_LARGE_DETAIL,
+                             OperatorUploadRoute, configured_operator_token)
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -1098,6 +1102,8 @@ async def lifespan(app: FastAPI):
     environment = require_webhook_secret_at_boot()
     if not configured_secret():
         logger.warning("VAPI_WEBHOOK_SECRET is not set; /vapi-tool will reject every request")
+    if not configured_operator_token():
+        logger.warning("%s is not set; /upload will reject every request", OPERATOR_TOKEN_ENV)
     logger.info("Carvis environment=%s", environment)
 
     # On Render, cloud Qdrant is mandatory — never fall back to a missing local path.
@@ -1497,7 +1503,11 @@ async def _ingest_upload_job(
             logger.warning("could not delete temp upload %s", temp_path)
 
 
-@app.post("/upload")
+# Operator token and declared size are checked by OperatorUploadRoute before the body is read.
+upload_router = APIRouter(route_class=OperatorUploadRoute)
+
+
+@upload_router.post("/upload")
 async def upload_manual(
     background_tasks: BackgroundTasks,
     request: Request,
@@ -1511,7 +1521,11 @@ async def upload_manual(
     trim: str | None = Form(None),
     market: str | None = Form(None),
 ) -> JSONResponse:
-    """Accept a PDF and ingest it into Qdrant in the background."""
+    """Accept an operator's PDF and stage it for source review in the background.
+
+    OperatorUploadRoute has already authenticated the operator and capped the body. Non-PDF and
+    oversized files are rejected here, before ingestion (and therefore LlamaParse) is scheduled.
+    """
     if not year.strip() or not make.strip() or not model.strip():
         return JSONResponse(
             status_code=400,
@@ -1531,15 +1545,29 @@ async def upload_manual(
         )
 
     safe_name = Path(filename).name
-    tmp_dir = Path(tempfile.mkdtemp(prefix="carvis_upload_"))
-    temp_path = tmp_dir / safe_name
     try:
-        with temp_path.open("wb") as out:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
+        head = await file.read(len(PDF_MAGIC))
+        if head != PDF_MAGIC:
+            return JSONResponse(status_code=400, content={"detail": NOT_A_PDF_DETAIL})
+        tmp_dir = Path(tempfile.mkdtemp(prefix="carvis_upload_"))
+        temp_path = tmp_dir / safe_name
+        written = len(head)
+        oversized = False
+        try:
+            with temp_path.open("wb") as out:
+                out.write(head)
+                while chunk := await file.read(1024 * 1024):
+                    written += len(chunk)
+                    if written > MAX_UPLOAD_BYTES:
+                        oversized = True
+                        break
+                    out.write(chunk)
+        except BaseException:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+        if oversized:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            return JSONResponse(status_code=413, content={"detail": TOO_LARGE_DETAIL})
     finally:
         await file.close()
 
@@ -1569,6 +1597,9 @@ async def upload_manual(
             "model": model.strip().lower(),
         },
     )
+
+
+app.include_router(upload_router)
 
 
 def _infer_vehicle_fields(
