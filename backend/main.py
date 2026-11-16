@@ -29,7 +29,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 from conversation import (SESSION_ONLY_TOOLS, ConversationSession, ConversationStore, ConversationTools,
-                          StaleCameraResult, tool_name)
+                          SessionLimitExceeded, StaleCameraResult, tool_name)
 from ingest import expand_mechanical_units, run_ingest
 from qdrant_v2 import READ_COLLECTION, STAGING_COLLECTION
 from spec_schema import Vehicle, VARIANTS
@@ -1732,7 +1732,13 @@ def _session_or_401(session_id: str, authorization: str | None) -> ConversationS
 
 @app.post("/conversation/sessions")
 async def create_conversation(body: SessionCreateBody) -> dict[str, Any]:
-    session, token = conversations.create(body.owner_name, body.vehicle.to_vehicle())
+    vehicle = body.vehicle.to_vehicle()
+    try:
+        session, token = conversations.create(body.owner_name, vehicle)
+    except SessionLimitExceeded as exc:
+        # Unauthenticated creation is throttled and capped; existing sessions are never evicted.
+        raise HTTPException(status_code=429, detail="Too many conversation sessions. Try again later.",
+                            headers={"Retry-After": str(exc.retry_after)}) from exc
     return {"session_id": session.session_id, "device_token": token, "state": session.view()}
 
 

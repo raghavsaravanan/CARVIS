@@ -56,6 +56,16 @@ There is no cross-vehicle fallback, inferred vehicle identity, model-generated n
 
 `/upload` requires the operator token (`X-Carvis-Operator-Token` matching `CARVIS_OPERATOR_TOKEN`; unset rejects every upload), accepts only files that begin with `%PDF-` and are at most 50 MiB, and rejects anything else before ingestion is scheduled. Unauthorized and declared-oversized requests are answered before the body is read; undeclared bodies stop streaming at the cap. It stages pending records and returns HTTP 202. It no longer deletes a document before replacement. Background failures leave existing data intact. Large batch writes are not transactional: a network failure may leave additional pending points, but no old points are removed. Rerunning the same ingestion is safe.
 
+`/conversation/sessions…` keeps its request and success shapes. Interim abuse limits (M2 A3, until Track B identity and durable sessions):
+
+- **Creation limits.** Unauthenticated session creation allows 20 sessions per 60 s, counted across all clients, because behind Render's proxy every caller shares one peer address. It is also capped at 256 live sessions.
+- **429 instead of eviction.** When either limit is hit, creation returns HTTP 429 `{"detail": …}` with `Retry-After`. Live sessions are never evicted to make room; expired sessions (4 h idle) are removed first.
+  - Trade-off: a sustained anonymous flood, or sessions kept alive by polling, can hold every slot. Legitimate *new* sessions are then refused until slots expire, but existing sessions and calls are untouched. Previously, LRU eviction kept creation available by ending other people's sessions.
+- **Call binding.** A Vapi call ID binds to one session and call generation only. Binding it to another session, or to a later call of the same session, returns 409 `stale call`. Repeating the same binding succeeds.
+- **One current call per generation.** When the phone binds a different ID, for example after a webhook auto-bound another one, the earlier ID is retired: it stays stale and can never be bound again.
+- **Pruning.** Each session remembers its 16 most recent call IDs, and they are pruned when the session expires. Once the session is bound, a webhook carrying an unknown call ID for it is treated as stale.
+- **Residual until Track B5.** Before the phone binds, the existing webhook-before-bind path still trusts the payload's `carvis_session_id`. A call ID that was never bound, or was pruned, can therefore act during that short window.
+
 ## Nemotron and latency
 
 A reused NVIDIA-compatible AsyncOpenAI client provides visual recognition with bounded timeouts and no repair-fact authority. Complete explicit requests skip unnecessary inference. Ambiguous requests can return a visual hypothesis for mechanic confirmation; hypotheses never become unconfirmed exact component filters.
