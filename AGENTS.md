@@ -11,7 +11,9 @@ Start at `docs/README.md`. `docs/PRD.md` defines product requirements;
 `docs/product/v1-product-experience-contract.md` defines the approved V1 pilot scope (its open
 decisions, such as D-11 and D-12, stay unresolved until a record in `docs/decisions/` resolves
 them); `docs/audits/` holds dated historical snapshots, so verify current behavior against code and
-tests. Link to these documents; do not restate them here.
+tests. Terminology: V1 is the Tyler field-test release; M1–M5 are the engineering milestones
+leading to it, not product versions; P0 is mandatory in V1 and P1–P3 are post-V1 priorities with no
+assigned version (definitions in `docs/README.md`). Link to these documents; do not restate them here.
 
 ## Safety and trust
 
