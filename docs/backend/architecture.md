@@ -64,6 +64,7 @@ There is no cross-vehicle fallback, inferred vehicle identity, model-generated n
 - **Call binding.** A Vapi call ID binds to one session and call generation only. Binding it to another session, or to a later call of the same session, returns 409 `stale call`. Repeating the same binding succeeds.
 - **One current call per generation.** When the phone binds a different ID, for example after a webhook auto-bound another one, the earlier ID is retired: it stays stale and can never be bound again.
 - **Pruning.** Each session remembers its 16 most recent call IDs, and they are pruned when the session expires. Once the session is bound, a webhook carrying an unknown call ID for it is treated as stale.
+- **Accepted operational decisions (owner, 2026-11-16).** Keep the interim limits (20 creations per minute globally, 256 live sessions) until Track B authentication and durable sessions, then revisit them. Keep refuse-instead-of-evict: protecting existing conversations takes priority over admitting new sessions when capacity is exhausted. These are working rules; they resolve no roadmap owner decision (D-item), and formal records in `docs/decisions/` remain authoritative.
 - **Residual until Track B5.** Before the phone binds, the existing webhook-before-bind path still trusts the payload's `carvis_session_id`. A call ID that was never bound, or was pruned, can therefore act during that short window.
 
 ## Nemotron and latency
