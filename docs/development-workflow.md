@@ -18,8 +18,10 @@ Confirm these with `git remote -v`, `git config --get push.default`, and
 it. Fetching upstream never authorizes an automatic merge into the personal fork.
 
 Read `AGENTS.md` and the scoped instructions under `backend/`, `backend/spacetimedb/`, or `ios/`
-before changing files. Product scope comes from `docs/PRD.md` and the approved Product Experience
-Contract when that contract is present in the working tree.
+before changing files. Product scope comes from [`PRD.md`](PRD.md) and the
+[V1 Product Experience Contract](product/v1-product-experience-contract.md); see the
+[documentation map](README.md) for precedence and the
+[decision-record convention](decisions/README.md).
 
 ## Branch and pull-request flow
 

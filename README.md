@@ -78,7 +78,12 @@ documentation-link validation, and an iOS simulator build when full Xcode is ava
 
 ## Documentation
 
+- [Documentation map and precedence](docs/README.md)
 - [Product requirements](docs/PRD.md)
+- [V1 Product Experience Contract](docs/product/v1-product-experience-contract.md)
+- [P0 Readiness Audit, 2026-11-15 (historical snapshot)](docs/audits/2026-11-15-p0-readiness-audit.md)
+- [Development workflow](docs/development-workflow.md)
+- [Architecture decision records](docs/decisions/README.md)
 - [Backend architecture](docs/backend/architecture.md)
 - [Qdrant review and migration](docs/backend/qdrant-v2-migration.md)
 - [Native iOS setup and testing](docs/ios/README.md)

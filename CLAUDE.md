@@ -1,7 +1,12 @@
 # Claude Code entry point
 
-Read `AGENTS.md` completely before acting. Then read the nearest scoped `AGENTS.md` for every area
-you touch. Product requirements live in `docs/PRD.md`; the shared workflow is documented in
-`docs/development-workflow.md`.
+Read `AGENTS.md` completely before acting, then the nearest scoped `AGENTS.md` for each area you
+touch. `AGENTS.md` is the canonical engineering policy; this file only points to it.
 
-This file is only a discovery pointer. `AGENTS.md` remains the canonical engineering policy.
+- Documentation map and precedence: `docs/README.md` (PRD, V1 Product Experience Contract, dated
+  audits, decision records).
+- Workflow, branches, and required checks: `docs/development-workflow.md`.
+
+Project skills in `.claude/skills/`: `/carvis-architecture` (design, database/auth selection,
+tenancy, ADRs), `/carvis-regression` (run and extend checks, honest validation reporting), and
+`/carvis-pr-review` (diff and PR readiness review).
