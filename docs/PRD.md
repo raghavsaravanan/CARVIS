@@ -2,12 +2,23 @@
 ## Product Requirements Document
 **Conversational Automotive Repair & Visual Intelligence System**
 
-**Version:** 1.0 — Draft for Review
-**Date:** November 14, 2026
+**Document revision:** 1.1 — Draft for Review (revision 1.0: November 14, 2026)
+**Date:** November 14, 2026 · terminology revised November 15, 2026
 **Product stage:** Hackathon prototype → Field-testable product
-**Initial release:** iOS / Audio-First / TestFlight
-**Primary pilot:** Independent automotive repair shop
-**Status:** Product requirements proposed; technical feasibility and implementation audit pending
+**V1:** The first complete field-testable CARVIS release — iOS / Audio-First / TestFlight
+**Primary pilot:** Independent automotive repair shop (Tyler's field test)
+**Status:** Product requirements proposed; the repository audit was completed on November 15, 2026 (a historical snapshot, see `docs/audits/`); technical design and the open decisions in §18 remain pending
+
+**Revision 1.1** changes terminology only. It adopts the V1 / M1–M5 / P0–P3 conventions below and removes statements that the repository audit had not yet happened. All requirement IDs, priorities, and acceptance criteria are unchanged.
+
+---
+
+## Terminology
+
+- **V1** is the first complete field-testable CARVIS release, deployed through TestFlight for Tyler. "V1" always means this product release. It is a product version, never a document revision.
+- **M1–M5** are the engineering milestones that lead to V1. They organize work; they are not product versions. The sequence ends with **V1 — Tyler Field Test**. See §6.5.
+- **P0** is the priority for requirements that are mandatory in V1. **P1, P2, and P3** are post-V1 priorities. They rank importance only: no product version number, release name, or date is assigned to any of them.
+- **Document revision** (for example "1.1" above) numbers edits of this PRD and is unrelated to V1. "v2" in Qdrant and schema documents (`carvis_specs_v2`, specification schema version 2) names a data-schema generation, not a product version.
 
 ---
 
@@ -21,11 +32,11 @@ CARVIS addresses the gap between **having information and being able to use it a
 
 The long-term product combines natural voice interaction, visual understanding, contextual vehicle intelligence, verified technical information, and wearable computing.
 
-The initial release will focus on a smaller, testable proposition:
+V1 focuses on a smaller, testable proposition:
 
 **A technician identifies a vehicle once, asks CARVIS a technical question through an iPhone, and receives a spoken answer supported by verified, applicable repair information—or an explicit refusal when sufficient evidence is unavailable.**
 
-This release will validate the intelligence platform, establish a usable application, and generate real mechanic feedback before expanding to smart-glasses workflows.
+V1 will validate the intelligence platform, establish a usable application, and generate real mechanic feedback before expanding to smart-glasses workflows.
 
 CARVIS is intended to augment technician expertise, not replace professional judgment.
 
@@ -54,13 +65,13 @@ The product should integrate into established repair workflows rather than creat
 
 **CARVIS brings verified automotive intelligence to the technician, in the context of the vehicle and task already being worked on.**
 
-## 2.3 First-Release Proposition
+## 2.3 V1 Proposition
 
-For the initial TestFlight pilot:
+For V1, the Tyler field test deployed through TestFlight:
 
 **Voice-first access to verified, vehicle-specific automotive information through a polished native iOS application.**
 
-The release must be genuinely useful on an iPhone without requiring Meta glasses, a dedicated shop computer, or a custom hardware appliance.
+V1 must be genuinely useful on an iPhone without requiring Meta glasses, a dedicated shop computer, or a custom hardware appliance.
 
 # 3. Problem Definition
 
@@ -109,7 +120,7 @@ The pilot must test that hypothesis rather than assume it is true.
 | Automotive technician | Fast, reliable answers while performing repairs | Primary |
 | Shop owner / manager | Productivity, trust, accountability, reasonable cost | Primary buyer |
 | Service advisor | Vehicle context, repair-order coordination | Future |
-| Shop administrator | User management, access control, organization settings | Limited v1 |
+| Shop administrator | User management, access control, organization settings | Limited in V1 |
 | CARVIS operator | Troubleshooting, support, reliability monitoring | Internal |
 
 ## 4.1 Primary User: Technician
@@ -163,15 +174,15 @@ Missing documents, conflicting data, unsupported vehicles, interrupted connectio
 
 Every user, shop, vehicle, and conversation must be protected by appropriate access controls.
 
-**P-08 — Build for extensibility without delaying v1**
+**P-08 — Build for extensibility without delaying V1**
 
 Support future vision, wearables, and external data integrations through clear boundaries. Do not build unnecessary infrastructure before it delivers value.
 
 # 6. Release Strategy
 
-## 6.1 Release A — Audio-First Pilot (P0)
+## 6.1 V1 — Tyler Field Test (P0)
 
-The first CARVIS TestFlight build must support:
+V1 is the first complete field-testable CARVIS release: an audio-first iOS build deployed through TestFlight for Tyler. Engineering work toward V1 is organized as milestones M1–M5 (§6.5). The first CARVIS TestFlight build must support:
 
 - Account creation and sign-in.
 - Individual mechanic profile.
@@ -188,9 +199,9 @@ The first CARVIS TestFlight build must support:
 
 The pilot may support a limited set of vehicles and specification categories, provided the scope is explicitly disclosed.
 
-## 6.2 Release B — Connected Shop Experience (P1)
+## 6.2 Connected Shop Experience (P1, post-V1)
 
-Subsequent milestones may add:
+P1 is a post-V1 priority. No product version number, release name, or date is assigned to it. After V1, P1 work may add:
 
 - Authorized repair-order integration.
 - Automatic vehicle and technician assignment.
@@ -200,9 +211,9 @@ Subsequent milestones may add:
 - Diagnostic scanner data integration.
 - Technician-confirmed repair notes and reports.
 
-## 6.3 Release C — Wearable Intelligence (P2)
+## 6.3 Wearable Intelligence (P2, post-V1)
 
-The wearable release targets:
+P2 is a post-V1 priority with no assigned product version number, release name, or date. Wearable work targets:
 
 - Supported Meta smart-glasses integration.
 - Reliable camera-assisted visual reasoning.
@@ -212,11 +223,26 @@ The wearable release targets:
 
 Camera/audio glasses and display-equipped AR glasses are distinct device classes. Visual overlays must not be promised for hardware that lacks a display.
 
-## 6.4 Future Research (P3)
+## 6.4 Future Research (P3, post-V1)
 
 Long-term opportunities include CARVIS Hub, authorized offline knowledge availability, visual disassembly memory, reassembly assistance, live diagnostic overlays, and spatially anchored AR guidance.
 
-These are not prerequisites for the initial TestFlight release.
+These are not prerequisites for V1.
+
+## 6.5 Engineering Milestones to V1
+
+Work leading to V1 is organized as five milestones. They are execution stages, not product versions, and they carry the P0 requirements in §8 to the V1 release gates in §15. The ordering below is the intended sequence; M3 may proceed in parallel with M2 once M1 has settled the contracts both depend on, and M4 builds on the real data models and APIs that M2 delivers rather than on the current local-only demonstration state.
+
+| Milestone | Purpose | Principal scope | Completion is judged against |
+|---|---|---|---|
+| **M1 — Production Architecture** | Decide and document how V1 will be built before application code changes | Canonical domain model; identity and transactional-database selection; tenant-authorization design; versioned API contracts; migration plan; threat model; requirement-to-screen-to-entity-to-endpoint-to-test traceability; architecture decision records. Open decisions in §18 are recorded here and are approved by the repository owner | Owner-accepted decision records and the deliverables listed in the Product Experience Contract (§11) |
+| **M2 — Backend and Database** | Make identity, tenancy, and state durable and authorized | Authenticated principal on protected APIs; durable users, workspaces, memberships, vehicles, conversations, answer outcomes, and feedback; server-derived tenant authority; internal-only ingestion and review; existing voice, verification, and refusal contracts preserved | Identity and workspace requirements (§8.1), conversation persistence and history requirements (CAR-027 in §8.3; §8.5), and the authentication and tenant-isolation items in §15.2 |
+| **M3 — CARVIS Brain Pilot Configuration** | Prepare the operator-managed knowledge corpus for Tyler's supported scope | Documented usage rights for every source; reviewed, source-bound evidence; explicit supported-coverage definition; positive and adversarial evaluation sets; revision and conflict behavior | Knowledge requirements (§8.4), the knowledge strategy in §10, and knowledge readiness (§15.3) |
+| **M4 — Native iOS V1** | Deliver the V1 application experience on real data | Five principal destinations (§9.1); real sign-in; Garage with VIN and manual selection and vehicle confirmation; voice-conversation states; visible source evidence; History; feedback; settings, privacy, and account deletion; Meta glasses shown only as unavailable | Vehicle, voice, and history requirements as presented in the app (§8.2, §8.3, §8.5), UX specification (§9), and product readiness (§15.1) |
+| **M5 — Deployment and TestFlight Validation** | Make the build safe to hand to Tyler | Stable HTTPS backend; secret management; monitoring and crash reporting; privacy disclosures; physical-device audio, interruption, and network testing; TestFlight archive and install; incident and rollback procedures | Engineering readiness (§15.2) and pilot readiness (§15.4) |
+| **V1 — Tyler Field Test** | Learn whether CARVIS is useful to a working technician | Tyler uses the TestFlight build on real, supported repair-information tasks; results are recorded under §14 | Pilot evaluation and success metrics (§14) |
+
+Scope boundaries and unresolved decisions are not changed by this sequencing. The requirement areas named above are indicative; the M1 traceability matrix records the authoritative milestone for each P0 requirement ID. A milestone that finishes does not mean V1 is ready: only the gates in §15 establish readiness for Tyler.
 
 # 7. Core User Experience
 
@@ -331,10 +357,12 @@ Previously displayed specifications must retain their source context and must no
 
 Priorities:
 
-- **P0:** Required for the pilot.
-- **P1:** Important after the pilot.
-- **P2:** Wearable and advanced capabilities.
-- **P3:** Long-term research.
+- **P0:** Mandatory in V1, the Tyler field-test release.
+- **P1:** Important after V1.
+- **P2:** Wearable and advanced capabilities, after V1.
+- **P3:** Long-term research, after V1.
+
+P1–P3 rank priority only. No product version number, release name, or date is assigned to them.
 
 ## 8.1 Identity and Workspace
 
@@ -444,13 +472,13 @@ A retrieved torque specification must never automatically be recorded as proof t
 | CAR-066 | Display-equipped wearable guidance | P3 |
 | CAR-067 | Disassembly and reassembly visual memory | P3 |
 
-The initial release must not expose unfinished wearable controls as functioning product capabilities.
+V1 must not expose unfinished wearable controls as functioning product capabilities.
 
 # 9. Application UX Specification
 
 ## 9.1 Primary Navigation
 
-CARVIS v1 should contain five principal destinations.
+CARVIS V1 should contain five principal destinations.
 
 | Screen | Purpose |
 |---|---|
@@ -470,7 +498,7 @@ The Home screen should answer three questions immediately:
 2. Am I ready to ask CARVIS something?
 3. How do I begin?
 
-Avoid large dashboards, unnecessary statistics, and complex management features in the first release.
+Avoid large dashboards, unnecessary statistics, and complex management features in V1.
 
 ## 9.3 CARVIS Voice Screen
 
@@ -606,7 +634,7 @@ A failed verification must prevent an unsupported value from being spoken as ver
 
 User accounts, shop membership, vehicles, conversations, and source records require durable storage appropriate to their role.
 
-The final database technologies will be selected in the technical design after auditing the repository.
+The final database technologies will be selected in the technical design (milestone M1), informed by the repository audit completed on November 15, 2026. That audit is a historical snapshot; verify its findings against the current code.
 
 ## 11.6 Interface Responsibility
 
@@ -652,7 +680,7 @@ Transcript and diagnostic logging must also follow explicit retention and access
 
 ## 12.5 Provider and Platform Compliance
 
-Before release, CARVIS must satisfy applicable Apple App Store requirements, privacy disclosures, third-party service agreements, and automotive information licensing terms.
+Before V1 is released to Tyler, CARVIS must satisfy applicable Apple App Store requirements, privacy disclosures, third-party service agreements, and automotive information licensing terms.
 
 # 13. Nonfunctional Requirements
 
@@ -725,7 +753,7 @@ Sensitive content should be minimized and access controlled.
 
 # 15. TestFlight Release Criteria
 
-CARVIS is ready for Tyler's initial field test only when all required criteria are satisfied.
+V1 is ready for Tyler's field test only when all required criteria are satisfied. These gates are the completion test for milestones M1–M5 (§6.5).
 
 ## 15.1 Product Readiness
 
@@ -768,9 +796,9 @@ CARVIS is ready for Tyler's initial field test only when all required criteria a
 
 Passing these gates permits a controlled pilot. It does not establish broad commercial readiness.
 
-# 16. Non-Goals for v1
+# 16. Non-Goals for V1
 
-The initial release will not attempt to deliver:
+V1 will not attempt to deliver:
 
 - Universal OEM repair-information coverage.
 - Unauthorized ALLDATA scraping or mass document extraction.
@@ -797,7 +825,7 @@ These features may be evaluated later if they support demonstrated customer valu
 | Audio performance in noisy workshops | High | Real-device testing, interruption handling, microphone strategy |
 | Unstable voice-provider behavior | High | Defined provider boundaries, retries, fallback/error states |
 | Incomplete authentication or tenant isolation | Critical | Backend access controls and negative security tests |
-| Hackathon code regressions during cleanup | High | Audit first, characterize existing behavior, incremental refactoring |
+| Hackathon code regressions during cleanup | High | Repository audit completed (November 15, 2026); characterize existing behavior, incremental refactoring |
 | Weak mechanic adoption | High | Observe real tasks and measure time saved |
 | Excessive third-party costs | Medium | Instrument per-session costs and optimize from actual usage |
 | Apple review or policy issues | High | Validate compliance and privacy requirements before release |
@@ -816,11 +844,11 @@ The following decisions remain unresolved and should be closed during the techni
 | Initial authentication method | Favor low-friction, secure mobile onboarding | UX + technical design |
 | Initial vehicle data coverage | Select specific supported configurations based on Tyler's work | Pilot preparation |
 | Repair-information licensing | Contact ALLDATA and alternative authorized providers | Business / external |
-| First shop integration | Defer until a supported authorization route exists | Post-pilot or earlier if available |
+| First shop integration | Defer until a supported authorization route exists | Post-V1 or earlier if available |
 | Audio/transcript retention | Minimal retention with clear consent and deletion rules | Security / legal review |
 | Team ownership and contributions | Confirm responsibilities and IP arrangements | Before major development |
-| Public App Store release | Decide after TestFlight evidence and compliance review | Post-pilot |
-| Pricing and commercial packaging | Base on measured value, provider costs, and customer willingness to pay | Post-pilot |
+| Public App Store release | Decide after TestFlight evidence and compliance review | Post-V1 |
+| Pricing and commercial packaging | Base on measured value, provider costs, and customer willingness to pay | Post-V1 |
 
 # 19. Engineering Handoff
 
@@ -828,9 +856,11 @@ The PRD establishes the intended product behavior.
 
 It does **not** establish that the corresponding features already exist in the current repository.
 
-The next deliverables, in order, are:
+The engineering deliverables, in order, are:
 
 **1. Repository Audit & Capability Inventory**
+
+*Status: completed on November 15, 2026 as the P0 Readiness Audit (`docs/audits/2026-11-15-p0-readiness-audit.md`). It is a historical snapshot; re-verify its findings against the current code and tests before relying on them.*
 
 Examine the actual current implementation, SwiftUI screens, backend components, service integrations, tests, security model, and deployment configuration.
 
@@ -844,15 +874,19 @@ Classify every PRD requirement as:
 
 **2. Gap Analysis**
 
+*Status: the audit's P0 gap matrix provides the initial analysis. The refreshed, authoritative traceability matrix is a milestone M1 deliverable.*
+
 Map each P0 requirement to existing code, missing capabilities, technical risks, dependencies, and estimated engineering work.
 
 **3. Technical Design Document**
+
+*Status: pending; this is milestone M1 — Production Architecture.*
 
 Select and document architecture boundaries, database design, API contracts, conversation state transitions, identity/security model, knowledge-provider interfaces, deployment, and observability.
 
 **4. Engineering Execution Plan**
 
-Create prioritized milestones, GitHub issues, acceptance tests, release gates, and bounded refactoring tasks.
+Refine milestones M1–M5 (§6.5) into GitHub issues, acceptance tests, release gates, and bounded refactoring tasks.
 
 Refactoring must preserve validated functionality and must not replace a working system solely for architectural aesthetics.
 
@@ -872,8 +906,8 @@ Tyler can repeat this process reliably, with less effort than his existing infor
 
 He can then demonstrate the product to his shop owner, supported by measured results and a clear explanation of its limitations.
 
-**That is the first milestone CARVIS must earn.**
+**That is what V1 must earn.**
 
 The longer-term objective is to expand from a useful voice application into a trusted, multimodal automotive intelligence platform that integrates directly into professional repair workflows.
 
-**End of CARVIS PRD v1.0 — Draft for Review**
+**End of CARVIS PRD, document revision 1.1 — Draft for Review**

@@ -1,10 +1,11 @@
 # CARVIS — V1 Product Experience Contract
 
-**Version:** 1.0 · Pilot scope candidate  
-**Date:** November 15, 2026  
+**Document revision:** 1.1 · Approved V1 scope; items marked Proposed or Open remain unresolved  
+**Date:** November 15, 2026 (terminology revised November 15, 2026)  
 **Purpose:** Define the exact experience to validate whether CARVIS is useful to working automotive technicians before Claude Max designs the canonical multi-tenant platform and before Tyler receives an independent TestFlight build.  
-**Authority:** CARVIS PRD v1.0 (Nov 14, 2026); CARVIS P0 Readiness Audit (Nov 15, 2026); historical architecture/consolidation reports; verified phone-to-knowledge demonstration.  
-**Status:** Product contract for implementation planning. Proposals and open items are explicitly labeled; this document is not evidence that missing capabilities have been implemented.
+**Authority:** CARVIS PRD (document revision 1.1; first drafted Nov 14, 2026); CARVIS P0 Readiness Audit (Nov 15, 2026); historical architecture/consolidation reports; verified phone-to-knowledge demonstration.  
+**Status:** Product contract for implementation planning. Proposals and open items are explicitly labeled; this document is not evidence that missing capabilities have been implemented.  
+**Terminology:** **V1** is the first complete field-testable CARVIS release, deployed through TestFlight for Tyler. Engineering work toward V1 is organized as milestones **M1–M5** (see PRD §6.5), not as separate product versions. **P0** marks requirements mandatory in V1; **P1–P3** are post-V1 priorities with no assigned product version. “Document revision” numbers edits of this contract and is unrelated to V1. Definitions: [`docs/README.md`](../README.md#terminology-and-milestones).
 
 ---
 
@@ -51,7 +52,7 @@ Can configure pilot user/workspace access, upload **authorized** documents throu
 
 ### 2.3 Shop owner / evaluator (buyer, not required to log into V1)
 
-Observes Tyler's demonstration and receives a concise report of real supported-task performance. V1 does not require an owner account, staff roster, assignments, repair orders, billing, or a company dashboard. A real owner account and management workspace may arrive in V2 if demand supports it.
+Observes Tyler's demonstration and receives a concise report of real supported-task performance. V1 does not require an owner account, staff roster, assignments, repair orders, billing, or a company dashboard. A real owner account and management workspace may be considered after V1 if demand supports it.
 
 ### 2.4 Workspace model
 
@@ -191,11 +192,11 @@ Present one side-by-side supported lookup using the shop's existing process vers
 | Technician adoption | Tyler uses CARVIS voluntarily again | Qualitative product signal |
 | Buyer interest | Owner agrees to extend pilot or offers concrete purchasing assessment | Commercial signal |
 
-**Decision after pilot:** Continue, modify focus, or stop. A useful positive signal is not merely a demo that works—it is repeated self-initiated use for actual problems and credible owner interest. Record unmet needs explicitly; these drive V2 rather than being added speculatively now.
+**Decision after pilot:** Continue, modify focus, or stop. A useful positive signal is not merely a demo that works—it is repeated self-initiated use for actual problems and credible owner interest. Record unmet needs explicitly; these drive post-V1 priorities rather than being added speculatively now.
 
 ## 7. Platform and data contract — schema-independent
 
-Design one canonical domain with additive V1 tables and planned V2 migrations. **Do not create two unrelated databases.** Qdrant remains a reviewed evidence index, not a source of truth for identity or transactions. FastAPI remains the policy enforcement point. Pick the canonical transactional store only after evaluating migrations, auth integration, backup/recovery, transaction guarantees, operational overhead, and multi-tenant constraints.
+Design one canonical domain with additive V1 tables and planned post-V1 migrations. **Do not create two unrelated databases.** Qdrant remains a reviewed evidence index, not a source of truth for identity or transactions. FastAPI remains the policy enforcement point. Pick the canonical transactional store only after evaluating migrations, auth integration, backup/recovery, transaction guarantees, operational overhead, and multi-tenant constraints.
 
 ### 7.1 V1 domain entities and retention responsibilities
 
@@ -245,9 +246,9 @@ Design one canonical domain with additive V1 tables and planned V2 migrations. *
 
 **Implementation guidance:** Keep route/provider contracts stable or version them. Add actual database tables, indexes and migrations incrementally in a shadow development environment. Tests for restart durability, negative tenant access, idempotency and source revision validity precede the final UI wiring.
 
-## 8. V1 → V2 boundaries
+## 8. V1 and post-V1 boundaries
 
-| Area | V1: prove mechanic utility | V2: only after evidence of demand |
+| Area | V1: prove mechanic utility | Post-V1 (P1 and later): only after evidence of demand |
 |---|---|---|
 | Authentication | real secure user + simple workspace | full manager invitations, SSO, multiple organizations |
 | Vehicle | VIN/manual identify, Garage, confirmation | repair-order sync, automatic assignments |
@@ -259,7 +260,7 @@ Design one canonical domain with additive V1 tables and planned V2 migrations. *
 | Wearables | “Coming Soon,” code preserved | Meta and future devices after physical/privacy verification |
 | Platform | one secure modular monolith + transactional DB + Qdrant | scale features justified by measured load |
 
-**Product sequencing:** lock V1 journeys → choose auth/store and API contracts → build secure durable vertical slice → preconfigure Brain and evaluate coverage → wire clean 5-tab interface → run real-device and TestFlight gates → pilot → decide V2 from evidence.
+**Product sequencing:** lock V1 journeys (this contract) → choose auth/store and API contracts (**M1 — Production Architecture**) → build secure durable vertical slice (**M2 — Backend and Database**) → preconfigure Brain and evaluate coverage (**M3 — CARVIS Brain Pilot Configuration**) → wire clean 5-tab interface (**M4 — Native iOS V1**) → run real-device and TestFlight gates (**M5 — Deployment and TestFlight Validation**) → **V1 — Tyler Field Test** → decide post-V1 priorities from evidence. M3 may proceed in parallel with M2 once M1 settles the shared contracts; PRD §6.5 is the authoritative milestone definition.
 
 ## 9. Failure, safety and privacy acceptance matrix
 
@@ -284,6 +285,8 @@ Design one canonical domain with additive V1 tables and planned V2 migrations. *
 
 ## 10. Pilot release gates (no false completion)
 
+These gates restate PRD §15 for the V1 field test. They are the completion test for milestones M1–M5; the groups below map approximately to M4 (Product), M2 (Backend/security), M3 (Brain), M5 (Device/release), and the pre-field-test commercial agreements. Finishing a milestone does not by itself satisfy a gate.
+
 **Product:** real sign-in; real Garage + VIN/manual selection; voice; clarification/refusal; inspectable citations; History and feedback; settings/privacy; five primary destinations; optional Meta disabled.
 
 **Backend/security:** authenticated principal and tenant authorization for every protected route; durable data and migrations; signed/bound Vapi tools; secure upload/review boundary; cross-tenant negative tests; restart resilience; secrets and retention policies; monitoring.
@@ -296,11 +299,11 @@ Design one canonical domain with additive V1 tables and planned V2 migrations. *
 
 ## 11. Claude Max engineering handoff instructions
 
-**Inputs:** this contract; PRD v1.0; latest Codex audit; latest local CARVIS repository; existing Figma design exploration. Any bondingAI reference requires explicit employer permission; use only authorized architecture patterns, without transferring proprietary source code, data, credentials or unreleased product secrets.
+**Inputs:** this contract; the PRD (document revision 1.1); latest Codex audit (the 2026-11-15 P0 Readiness Audit is a historical snapshot, so re-verify against current code); latest local CARVIS repository; existing Figma design exploration. Any bondingAI reference requires explicit employer permission; use only authorized architecture patterns, without transferring proprietary source code, data, credentials or unreleased product secrets.
 
-**First deliverables, before code changes:**
+**First deliverables, before code changes (milestone M1 — Production Architecture):**
 
-1. Proposed V1/V2 entity-relationship diagram, field dictionary, ownership and tenant-scoping rules.
+1. Proposed entity-relationship diagram covering V1 and planned post-V1 extensions, field dictionary, ownership and tenant-scoping rules.
 2. Transactional DB and auth options compared against CARVIS's real operational constraints; explicit single-store decision recommendation.
 3. Incremental migrations and compatibility map from current in-memory/local-JSON state.
 4. Versioned API contracts for identity, Garage, conversations, citations, history, feedback and internal Brain coverage.
@@ -308,7 +311,7 @@ Design one canonical domain with additive V1 tables and planned V2 migrations. *
 6. Threat model: tenant spoofing, IDOR, webhook replay, unauthorized ingestion, source rights leakage, privacy retention.
 7. Phased implementation plan with separate acceptance gates; no big-bang rewrite of voice/retrieval.
 
-**Engineering constraints:** Preserve the validated Vapi → FastAPI → Qdrant verifier, sources/refusal behavior and optional Meta modules. Every change is staged, tested, reversible and measured. No production alias, provider config, credentials or cloud service mutations without separate explicit approval. Do not assume existing screenshots mean backend functionality exists. Do not solve speculative V2 needs by expanding Tyler's V1.
+**Engineering constraints:** Preserve the validated Vapi → FastAPI → Qdrant verifier, sources/refusal behavior and optional Meta modules. Every change is staged, tested, reversible and measured. No production alias, provider config, credentials or cloud service mutations without separate explicit approval. Do not assume existing screenshots mean backend functionality exists. Do not solve speculative post-V1 needs by expanding Tyler's V1.
 
 ## 12. Questions to close before implementation (not blockers to drafting)
 
@@ -333,9 +336,9 @@ Design one canonical domain with additive V1 tables and planned V2 migrations. *
 
 ## Source basis and precedence
 
-1. **CARVIS PRD v1.0 (Nov 14, 2026)** — primary product scope, P0 functional requirements, five-tab UX, knowledge licensing, pilot objectives and release gates.
+1. **CARVIS PRD (document revision 1.1; first drafted Nov 14, 2026)** — primary product scope, P0 functional requirements, five-tab UX, knowledge licensing, pilot objectives and release gates.
 2. **CARVIS P0 Readiness Audit (Nov 15, 2026)** — current local repository state at time of Codex audit, 24-record WRX corpus observation, missing persistence/security/UI functionality, and successful reported physical-iPhone pipeline.
 3. **Repository architecture inventories, technical-debt and target-architecture documents (Nov 14, 2026)** — historical engineering constraints and preservation guidance, subordinate to more recent audit and PRD.
-4. **Owner's current direction (Nov 15, 2026)** — strictly utility-first pilot, operator-preconfigured Brain, Meta as Coming Soon, V2 driven by mechanic and buyer evidence.
+4. **Owner's current direction (Nov 15, 2026)** — strictly utility-first pilot, operator-preconfigured Brain, Meta as Coming Soon, post-V1 priorities driven by mechanic and buyer evidence.
 
 **Conflict rule:** PRD and current owner-approved product decisions define desired behavior. Fresh repository tests/audits define implementation truth. An earlier audit or visual prototype never overrides newer verified implementation evidence.

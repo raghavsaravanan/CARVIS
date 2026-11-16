@@ -1,6 +1,6 @@
 ---
 name: carvis-architecture
-description: Investigate the CARVIS repository and produce architecture work before any code changes — transactional database and auth selection, multi-tenant authorization design, V1/V2 domain model, versioned API contracts, migration plans, threat model, and architecture decision records. Use when asked to design, compare, plan, or decide how identity, persistence, tenancy, or API contracts should work.
+description: Investigate the CARVIS repository and produce architecture work before any code changes — transactional database and auth selection, multi-tenant authorization design, V1 and post-V1 domain model, versioned API contracts, migration plans, threat model, and architecture decision records. Use when asked to design, compare, plan, or decide how identity, persistence, tenancy, or API contracts should work.
 allowed-tools: Read Grep Glob Bash(git status *) Bash(git log *) Bash(git diff *) Bash(git ls-files *) Bash(wc *) Bash(ls *)
 ---
 
@@ -14,7 +14,7 @@ configuration, Qdrant aliases, SpacetimeDB publishes, and cloud resources stay u
 
 1. `AGENTS.md`, then the scoped `backend/AGENTS.md`, `backend/spacetimedb/AGENTS.md`, `ios/AGENTS.md`.
 2. `docs/README.md` for precedence. `docs/PRD.md` = requirements. `docs/product/v1-product-experience-contract.md`
-   = approved V1 pilot scope: §7 (data/access contract), §8 (V1→V2), §11 (required first deliverables),
+   = approved V1 pilot scope: §7 (data/access contract), §8 (V1 and post-V1 boundaries), §11 (required first deliverables, milestone M1),
    §12 (open questions). Decisions D-06 to D-09 are proposed defaults; **D-11 and D-12 are unresolved.**
    Do not silently resolve them; write a proposed ADR and ask the owner.
 3. `docs/audits/2026-11-15-p0-readiness-audit.md` is a **historical snapshot**. Use its gap matrix (§4)
@@ -65,12 +65,13 @@ local scratch schemas only.
 - Specify defense in depth (application check plus database constraint or row policy) and the Qdrant
   `shop` filter for shop-specific evidence versus explicitly global evidence.
 
-## 5. V1/V2 domain model
+## 5. V1 and post-V1 domain model
 
 Start from contract §7.1 entities (User, Workspace/Shop, Membership, Vehicle, VehicleSnapshot,
 Conversation, Call, Turn/AnswerOutcome, EvidenceReference, Feedback, SourceDocument, EvidenceRecord,
 ReviewDecision, CoverageManifest, UsageEvent, AuditEvent). Design one additive canonical schema:
-V1 tables are the V2 foundation; V2 items in contract §8 are named, not built. Produce an ER diagram,
+V1 tables are the foundation for later work; the post-V1 items in contract §8 are named, not built, and
+must not be given product version numbers (use "post-V1" and a P1–P3 priority). Produce an ER diagram,
 a field dictionary, ownership and tenant-scoping rules, retention and deletion behavior per entity,
 and immutability rules (VehicleSnapshot, ReviewDecision, AuditEvent).
 
