@@ -55,4 +55,3 @@ verification remains authoritative either way.
 
 Restore drill (G14); the 12 serve-time, tombstone and alias-swap acceptance cases, and the tamper,
 outage, conflict and procedure-completeness tests, listed in the architecture document; plus the existing verification suites unchanged (G2).
-
