@@ -4,6 +4,19 @@ CARVIS uses `raghavsaravanan/CARVIS` as its authoritative repository and `main` 
 permanent integration branch. The original HackUTD repository is a historical upstream reference;
 never push CARVIS product work to it or merge upstream changes automatically.
 
+Expected remotes and push behavior:
+
+```text
+origin    https://github.com/raghavsaravanan/CARVIS.git
+upstream  https://github.com/tejaspalukuri/CARVIS.git
+push.default = current
+remote.pushDefault = origin
+```
+
+Confirm these with `git remote -v`, `git config --get push.default`, and
+`git config --get remote.pushDefault`. `upstream` is fetch/reference-only by policy; do not push to
+it. Fetching upstream never authorizes an automatic merge into the personal fork.
+
 Read `AGENTS.md` and the scoped instructions under `backend/`, `backend/spacetimedb/`, or `ios/`
 before changing files. Product scope comes from `docs/PRD.md` and the approved Product Experience
 Contract when that contract is present in the working tree.
@@ -50,6 +63,11 @@ Push the matching branch to the personal fork and open a draft PR:
 git push --set-upstream origin HEAD
 gh pr create --draft --base main --head "$(git branch --show-current)"
 ```
+
+GitHub `main` protection requires an up-to-date pull request, resolved conversations, linear
+history, and the `Backend and hygiene`, `Swift pure checks`, and `SpacetimeDB typecheck` checks.
+Force pushes and branch deletion are disabled. Squash merge is the supported merge method. The
+solo repository requires no approval count, and administrators retain an emergency bypass.
 
 ## Parallel agent worktrees
 
