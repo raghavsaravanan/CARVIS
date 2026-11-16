@@ -15,21 +15,30 @@ gains Postgres-backed decisions and an authenticated reviewer identity.
 
 ## Serve-time rule (intersection)
 
-An evidence record may be spoken only if **both** hold:
+An evidence record may be spoken only if **all** of the following hold, evaluated per record, in
+**both** stores:
 
-- (a) Qdrant returns it from the exact-filter set with a valid `verification_digest` (existing code,
-  unchanged), and
-- (b) PostgreSQL says `state = 'verified'` and `payload_digest` equals the point's digest.
+1. **Active/verified status:** PostgreSQL `state = 'verified'` **and** the Qdrant point payload has
+   `status = 'verified'` (existing `verification_status` check, unchanged).
+2. **Digest:** PostgreSQL `payload_digest` equals the Qdrant payload digest, and the existing
+   `verification_digest == evidence_digest()` check passes.
+3. **Compatible state version:** PostgreSQL `state_version` **equals** the Qdrant payload
+   `state_version`. Any inequality, in either direction, is a mismatch (see the fail-closed table).
+4. **No blocking tombstone:** the alias-independent control collection (see "Tombstones and the
+   decision counter") holds no tombstone for this `evidence_id` whose `state_version` is **greater than
+   or equal to** the PostgreSQL `state_version`. A tombstone **blocks the answer by itself**, even if
+   the PostgreSQL withdrawal transaction failed or PostgreSQL still says `verified`.
 
-After the existing exact-filter `scroll`, candidate point IDs are checked with one indexed
-PostgreSQL query:
+After the existing exact-filter `scroll`, the candidate IDs are checked with one indexed PostgreSQL
+query and one batched read of the control collection (two reads, no per-record round trips).
 
-| Candidate status in PostgreSQL | Outcome |
+| Candidate status | Outcome |
 | --- | --- |
-| verified, digest matches | continues to the unchanged `evaluate_candidates` |
-| withdrawn with reason `incorrect_extraction`, `superseded` or `rights` | removed **before** conflict evaluation |
-| withdrawn with reason `suspect_conflict`, `quarantined`, unknown, or digest mismatch | **blocker**: the scope refuses (`conflict` or `unverified`) |
-| PostgreSQL unreachable | `unverified` refusal; never a guess |
+| All four conditions hold | continues to the unchanged `evaluate_candidates` |
+| Withdrawn in PostgreSQL with reason `incorrect_extraction`, `superseded` or `rights`, and a matching tombstone | removed **before** conflict evaluation |
+| Withdrawn with reason `suspect_conflict`, or `quarantined`, or unknown to PostgreSQL | **blocker**: the scope refuses (`conflict` or `unverified`) |
+| Any condition above fails (digest, status, version mismatch, tombstone with no matching PostgreSQL withdrawal) | **blocker** for the evidence's scope: `unverified` refusal; evidence flagged for reconciliation |
+| PostgreSQL unreadable, control collection unreadable or missing | `brain_unavailable` refusal (global fail closed); never a guess |
 
 Python verification stays authoritative; this gate adds a check and never relaxes one. Removal
 happens before the unchanged conflict, applicability and procedure-completeness logic, so removing
@@ -48,12 +57,63 @@ unless the withdrawal reason is non-blocking.
 
 ## Withdrawal (Qdrant tombstone first, never deleted)
 
-Order: (a) set the Qdrant payload `status=withdrawn`, `state_version=n` and increment the
-`brain_control` decision counter (synchronous; failure aborts and is shown to the operator),
-(b) commit PostgreSQL (`state`, `withdraw_reason`, append-only decision, `system_meta.decision_seq`),
-(c) audit event. Withdrawn points are **kept** in Qdrant as tombstones. Because Qdrant always holds a
-withdrawal at least as new as PostgreSQL, a PostgreSQL restore to before the withdrawal is detectable.
-Historical `evidence_references` remain and render "source withdrawn".
+Order, for a withdrawal that moves evidence from `state_version = n` to `n+1`:
+
+1. **Tombstone and intent (synchronous; failure aborts the withdrawal):** write the tombstone for the
+   evidence (`state_version = n+1`, `reason`) and set control `intent_seq = S+1` in the control
+   collection.
+2. **PostgreSQL commit:** `state`, `withdraw_reason`, the append-only decision, `state_version = n+1`
+   and `system_meta.decision_seq = S+1`, in one transaction.
+3. **Commit marker:** set control `committed_seq = S+1` (retried by reconciliation if it fails), then
+   write the audit event.
+
+If step 2 fails or the process dies after step 1, the tombstone remains. The evidence is **blocked**
+(serve-time condition 4) while PostgreSQL still says `verified`, and reconciliation reports an
+unresolved intent (`intent_seq > committed_seq`). The operator either retries the withdrawal (completes
+step 2) or explicitly cancels it with a new reviewer decision that raises `state_version` above the
+tombstone's (`reapprove`); nothing resumes automatically. A failed PostgreSQL transaction therefore
+never un-blocks anything. Withdrawn points and tombstones are **never deleted**. Historical
+`evidence_references` remain and render "source withdrawn".
+
+## Tombstones and the decision counter survive collection alias swaps
+
+The serving collection is replaced by alias swaps (`carvis_specs_active`, existing
+`migrate_v2.py activate`), so tombstones and the counter must not live there. They live in a dedicated
+**control collection** `carvis_brain_control`:
+
+- **Not aliased, not swapped, not rebuilt.** Alias activation, `assert_staging` and the rebuild tooling
+  never target it; only the Brain decision commands write to it, and nothing deletes from it.
+- **Contents:** one tombstone point per withdrawn evidence (point ID = deterministic UUID of the
+  `evidence_id`; payload `state_version`, `reason`, `digest`, `ts`) and one singleton control point
+  `{intent_seq, committed_seq, generation_epoch}` (`committed_seq` mirrors PostgreSQL `decision_seq`).
+- **Serve-time reads it directly** (batched by evidence ID), independent of whichever generation the
+  alias currently targets. A swap therefore cannot drop a tombstone or reset the counter.
+- **Generation build and activation guards:** a new generation is built from PostgreSQL and also copies
+  every tombstone into the point payload (`status=withdrawn`) as defense in depth. `validate` and
+  `activate` additionally require that (i) every tombstoned `evidence_id` is absent or `withdrawn` in
+  the candidate generation, (ii) every candidate-generation point has `state_version` equal to
+  PostgreSQL's, and (iii) the control singleton is readable with `committed_seq` equal to
+  PostgreSQL's `decision_seq` (or `intent_seq` still pending and explicitly acknowledged). Any failure
+  aborts activation; the alias is unchanged.
+- **Restore of the control collection itself** (snapshot restore, recreation, emptied) is a restore
+  event: quarantine, with the same procedure as below. A missing or empty control collection with a
+  non-zero PostgreSQL `decision_seq` is a mismatch, never a "no tombstones" state.
+
+## Mismatches fail closed
+
+| Observation | Meaning | Result |
+| --- | --- | --- |
+| Tombstone `state_version` ≥ PostgreSQL's for that evidence | Withdrawal in flight, PostgreSQL failed, or PostgreSQL restored older | That evidence blocked; scope refuses; reconcile |
+| Qdrant payload `state_version` ≠ PostgreSQL's | Stale projection or restored store | That evidence blocked (`quarantined` by reconciliation) |
+| Payload digest ≠ PostgreSQL digest | Tampering or partial write | That evidence blocked and `quarantined` |
+| `pg.decision_seq` < control `committed_seq` | PostgreSQL is older than a committed decision | **Global quarantine** (`brain_unavailable`) |
+| Control `committed_seq` < `pg.decision_seq` and `intent_seq` < `pg.decision_seq` | Control collection older than PostgreSQL (restored or lost) | **Global quarantine** |
+| Control `intent_seq` > `committed_seq` with `pg.decision_seq` = `committed_seq` | A decision started but not committed | Per-evidence block only (no global quarantine); operator action |
+| Control collection or PostgreSQL unreachable, or control point missing | Cannot prove state | **Global quarantine** |
+| Candidate generation fails any activation guard | Unsafe swap | Activation aborted; alias unchanged |
+
+Only reconciliation that moves toward **less** trust runs automatically; clearing a block requires a
+reviewer decision that raises `state_version` above any tombstone.
 
 ## Reconciliation
 
@@ -75,11 +135,11 @@ prevent this, so V1 adds a second witness without new infrastructure:
 
 1. **PostgreSQL is authoritative**, protected by provider backups plus the nightly independent dump
    ([09-deployment-operations.md](09-deployment-operations.md)).
-2. **Qdrant tombstones plus a control record.** A single point `brain_control` holds
-   `{decision_seq, updated_at}`, incremented on every Brain decision together with the tombstone or
-   verify write; PostgreSQL keeps `system_meta.decision_seq`, updated in the same transaction.
-   `pg.decision_seq < qdrant.decision_seq`, or any `qdrant.status=withdrawn` while PostgreSQL says
-   `verified`, or a higher Qdrant `state_version`, proves PostgreSQL is older than a decision.
+2. **Qdrant tombstones plus a control record**, both in the alias-independent control collection
+   `carvis_brain_control` (see above), with the intent/commit protocol: `pg.decision_seq <
+   control.committed_seq`, or a tombstone whose `state_version` is at least PostgreSQL's while
+   PostgreSQL says `verified`, proves PostgreSQL is older than a decision (or a withdrawal is in
+   flight). Both cases fail closed per the mismatch table.
 3. **Quarantine mode.** Set by the deploy flag `CARVIS_BRAIN_MODE=quarantine` (outside both stores) or
    automatically on the mismatch above, checked at boot and on every reconciliation tick. Technical
    lookups return `brain_unavailable`; sign-in, Garage, history and feedback keep working.
@@ -122,3 +182,37 @@ as an additive schema generation, activated only through the full acceptance sui
   B withdrawn `suspect_conflict` ⇒ still refuse; one procedure step withdrawn ⇒ `incomplete`;
   withdrawn plus quarantined mix ⇒ refuse; all candidates withdrawn ⇒ `unavailable`.
 - Missing `rights_basis` ⇒ activation blocked; global versus shop scope isolation.
+
+### Serve-time invariant, tombstone and alias-swap acceptance cases
+
+Each case runs against real PostgreSQL and a Qdrant test instance, asserts the user-visible outcome
+(refusal reason or answer) and that no unverified value is ever spoken.
+
+1. **Status:** PostgreSQL `verified`, Qdrant payload not verified ⇒ refuse; reverse ⇒ refuse.
+2. **Digest:** payload digest differs from PostgreSQL's (tampered or partial write) ⇒ refuse; evidence
+   `quarantined` by reconciliation.
+3. **State version:** Qdrant `state_version` lower than PostgreSQL's ⇒ refuse; higher ⇒ refuse; equal ⇒
+   answers.
+4. **Tombstone blocks despite PostgreSQL failure:** withdrawal step 1 succeeds, step 2 (PostgreSQL
+   commit) fails or the process is killed ⇒ evidence still `verified` in PostgreSQL yet the answer
+   refuses; reconciliation reports the pending intent; retrying the withdrawal completes it;
+   cancelling requires a `reapprove` decision with a higher `state_version`.
+5. **Tombstone, PostgreSQL restored older:** tombstone `state_version` ≥ PostgreSQL's ⇒ evidence
+   blocked; with `pg.decision_seq` < `committed_seq` ⇒ global quarantine (`brain_unavailable`).
+6. **Alias swap preserves tombstones and counter:** withdraw evidence W, then run validate/activate to a
+   new generation ⇒ W still refuses, control collection untouched, counters unchanged; a generation
+   built from PostgreSQL carries W as withdrawn.
+7. **Unsafe swap aborted:** candidate generation containing a tombstoned evidence as verified, a point
+   with `state_version` ≠ PostgreSQL's, or a control singleton whose `committed_seq` ≠ PostgreSQL's
+   `decision_seq` ⇒ `activate` fails and the alias is unchanged.
+8. **Control collection lost/emptied/restored older:** missing, empty (with non-zero `decision_seq`),
+   unreadable, or older than PostgreSQL beyond `intent_seq` ⇒ global quarantine; nothing is served
+   until the exit procedure completes.
+9. **Failure to read either store:** PostgreSQL down, control collection down, or control point missing
+   ⇒ `brain_unavailable`, never an answer from one store alone.
+10. **No auto-promotion:** reconciliation never clears a tombstone or raises trust; only a reviewer
+    decision raising `state_version` above the tombstone re-enables the evidence.
+11. **Commit marker failure:** step 3 (`committed_seq`) fails after PostgreSQL commit ⇒ evidence stays
+    withdrawn, no global quarantine (`pg.decision_seq` ≤ `intent_seq`); reconciliation repairs the marker.
+12. **Conflict preserved:** a tombstone-blocked record in the applicable scope is a blocker (not silently
+    removed) unless its withdrawal is committed in PostgreSQL with a non-blocking reason.
