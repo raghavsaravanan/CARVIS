@@ -42,6 +42,7 @@ as a plan.
 | What does the code do now? | The code and its tests | Implementation truth |
 | How do we branch, test, and open PRs? | [`development-workflow.md`](development-workflow.md) | Current workflow |
 | How is the backend built and operated? | [`backend/architecture.md`](backend/architecture.md) | Current backend architecture |
+| What is the proposed V1 production backend design? | [`architecture/README.md`](architecture/README.md) and decision records 0001–0009 in [`decisions/`](decisions/) | Proposed (milestone M1); not implemented until the owner accepts the records |
 
 Conflict rule (from the contract): the PRD and owner-approved decisions define desired behavior;
 fresh repository tests and audits define implementation truth; an older audit or prototype never
@@ -58,6 +59,7 @@ docs/
   product/                   approved product scope (V1 Product Experience Contract)
   audits/                    dated, immutable audit snapshots: YYYY-MM-DD-<topic>.md
   decisions/                 architecture decision records (see decisions/README.md)
+  architecture/              V1 backend architecture (milestone M1): data model, RLS, API, Vapi, Brain, operations
   backend/                   current backend architecture, Qdrant v2 runbook, demo testing
   ios/                       native iOS setup, hands-free, and wake-listener guides
   archive/                   superseded records; read for history, never for current behavior
