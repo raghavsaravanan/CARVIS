@@ -1,0 +1,50 @@
+name: Bug report
+description: Report reproducible incorrect or unsafe CARVIS behavior.
+title: "[Bug]: "
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: What happened? Redact credentials, personal data, transcripts, vehicle identifiers, and proprietary source content.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include build/commit and whether this used mocks, simulator, hardware, or a live provider.
+    validations:
+      required: true
+  - type: dropdown
+    id: safety
+    attributes:
+      label: Safety or privacy impact
+      options:
+        - None known
+        - Incorrect or unsupported technical information
+        - Cross-vehicle context risk
+        - Authentication or tenant-isolation risk
+        - Secret, personal-data, or source-rights risk
+        - Service availability only
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Add logs or screenshots only after removing sensitive content.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Fix acceptance criteria
+      placeholder: |
+        - [ ] Regression test fails before and passes after
+        - [ ] Relevant failure path remains explicit
+        - [ ] Protected contracts remain compatible
