@@ -37,6 +37,7 @@ from spec_retrieval import LookupResult, SpecificationRefusal, lookup, normalize
 from spec_extract import COMPONENTS, component_from_text
 from webhook_auth import (WEBHOOK_SECRET_HEADER, configured_secret, require_webhook_secret_at_boot,
                           webhook_request_authorized)
+from deployment_config import default_shop_id, require_explicit_configuration_at_boot, spacetimedb_db_name
 from upload_security import (MAX_UPLOAD_BYTES, NOT_A_PDF_DETAIL, OPERATOR_TOKEN_ENV, PDF_MAGIC, TOO_LARGE_DETAIL,
                              OperatorUploadRoute, configured_operator_token)
 
@@ -49,7 +50,8 @@ QDRANT_PATH = PROJECT_ROOT / "carvis_mvp_db"
 COLLECTION_NAME = READ_COLLECTION
 _VISION_CLIENT = None
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
-DEFAULT_SHOP_ID = "shop_demo"
+# Explicit outside local (CARVIS_DEFAULT_SHOP_ID); "shop_demo" only with CARVIS_ENV=local.
+DEFAULT_SHOP_ID = default_shop_id()
 MAX_VISION_IMAGE_BYTES = 8 * 1024 * 1024
 VISION_MODEL_NAME = os.getenv("VISION_MODEL", "gpt-5.5")
 VISION_PROVIDER = (os.getenv("VISION_PROVIDER") or "nemotron").strip().lower()
@@ -61,7 +63,7 @@ NEMOTRON_BASE_URL = os.getenv(
 ).strip()
 
 SPACETIMEDB_URI = (os.getenv("SPACETIMEDB_URI") or "").strip().rstrip("/")
-SPACETIMEDB_DB_NAME = (os.getenv("SPACETIMEDB_DB_NAME") or "hackutd").strip()
+SPACETIMEDB_DB_NAME = spacetimedb_db_name()  # explicit outside local when SpacetimeDB is configured
 SPACETIMEDB_TOKEN = (os.getenv("SPACETIMEDB_TOKEN") or "").strip()
 
 
@@ -1100,6 +1102,8 @@ async def lifespan(app: FastAPI):
 
     # Fail fast, before loading models or connecting to Qdrant.
     environment = require_webhook_secret_at_boot()
+    for name in require_explicit_configuration_at_boot(environment):
+        logger.info("%s is not set; using its local default", name)
     if not configured_secret():
         logger.warning("VAPI_WEBHOOK_SECRET is not set; /vapi-tool will reject every request")
     if not configured_operator_token():

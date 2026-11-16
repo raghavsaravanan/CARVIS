@@ -606,6 +606,11 @@ def boot(monkeypatch, app_state):
     monkeypatch.setenv("VAPI_WEBHOOK_SECRET", "webhook-secret-for-boot")
     monkeypatch.setenv("QDRANT_URL", "http://qdrant.invalid")
     monkeypatch.setenv("QDRANT_API_KEY", "test-only")
+    # A non-local deployment must name its shop and collection explicitly (M2 A4).
+    monkeypatch.setenv("CARVIS_DEFAULT_SHOP_ID", "shop_test")
+    monkeypatch.setenv("CARVIS_QDRANT_COLLECTION", "carvis_specs_v2")
+    for name in ("SPACETIMEDB_URI", "SPACETIMEDB_TOKEN", "SPACETIMEDB_DB_NAME"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(main, "TextEmbedding", MagicMock(name="TextEmbedding"))
     monkeypatch.setattr(main, "QdrantClient", FakeQdrant)
     monkeypatch.setattr(main, "_VISION_CLIENT", None)
