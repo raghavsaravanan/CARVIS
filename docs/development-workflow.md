@@ -14,7 +14,9 @@ remote.pushDefault = origin
 ```
 
 Confirm these with `git remote -v`, `git config --get push.default`, and
-`git config --get remote.pushDefault`. `upstream` is fetch/reference-only by policy; do not push to
+`git config --get remote.pushDefault`. The push settings are recommended safety defaults; tooling
+such as `/carvis-continue` verifies the `origin` URL and pushes to `origin` explicitly instead of
+relying on them. `upstream` is fetch/reference-only by policy; do not push to
 it. Fetching upstream never authorizes an automatic merge into the personal fork.
 
 Read `AGENTS.md` and the scoped instructions under `backend/`, `backend/spacetimedb/`, or `ios/`
