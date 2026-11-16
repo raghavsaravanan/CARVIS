@@ -1,6 +1,6 @@
-# Carvis
+# CARVIS
 
-Carvis is a native iOS automotive intelligence platform for delivering vehicle-specific,
+CARVIS is a native iOS automotive intelligence platform for delivering vehicle-specific,
 source-grounded repair information through conversational voice and optional visual context.
 
 The system is designed for professional technicians: it preserves explicit vehicle context,
@@ -30,7 +30,7 @@ The iOS application is the only user-facing client. Carvis has no web frontend.
 
 ## Knowledge safety
 
-Carvis treats retrieval and verification as separate responsibilities. A technical answer must:
+CARVIS treats retrieval and verification as separate responsibilities. A technical answer must:
 
 1. use an explicit, confirmed vehicle and relevant configuration;
 2. match reviewed evidence with exact applicability and provenance;
