@@ -13,10 +13,12 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import re
 import secrets
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -28,6 +30,15 @@ logger = logging.getLogger("carvis.conversation")
 
 SESSION_TTL_SECONDS = 4 * 60 * 60
 MAX_SESSIONS = 256
+# Interim abuse limits for unauthenticated session creation (M2 A3; replaced by identity in Track B).
+# The window is global, not per client: behind Render's proxy every caller shares one peer address.
+SESSION_CREATES_PER_WINDOW = 20
+SESSION_CREATE_WINDOW_SECONDS = 60.0
+# Vapi call IDs remembered per session; older ones are pruned (see ConversationStore.bind_call).
+MAX_BOUND_CALLS_PER_SESSION = 16
+# Generation recorded for a call ID that was superseded: never equal to a real generation, so the
+# ID stays stale and can never be bound again while it is remembered.
+RETIRED_GENERATION = -1
 # Whole budget for one look: reaching the phone, a fresh capture, upload, and vision.
 # The tool's Vapi server timeout must be longer than this (see vapi_assistant.py).
 CAMERA_DEADLINE_SECONDS = 30.0
@@ -48,6 +59,15 @@ class CameraFailure(RuntimeError):
     def __init__(self, code: str, detail: str = ""):
         super().__init__(detail or code)
         self.code = code
+
+
+class SessionLimitExceeded(RuntimeError):
+    """Session creation is throttled or the store is full. ``retry_after`` is in whole seconds."""
+
+    def __init__(self, reason: str, retry_after: int):
+        super().__init__(reason)
+        self.reason = reason
+        self.retry_after = max(1, retry_after)
 
 
 class StaleCameraResult(RuntimeError):
@@ -305,22 +325,46 @@ class ConversationSession:
 
 
 class ConversationStore:
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._sessions: dict[str, ConversationSession] = {}
+        # vapi_call_id -> (session_id, generation). One call ID belongs to one session, ever.
         self._calls: dict[str, tuple[str, int]] = {}
+        # session_id -> its bound call IDs, oldest first, so they are pruned with the session.
+        self._session_calls: dict[str, list[str]] = {}
+        self._clock = clock
+        self._recent_creates: deque[float] = deque()
+
+    def _drop(self, session_id: str, reason: str) -> None:
+        session = self._sessions.pop(session_id)
+        session.cancel_camera(reason)
+        for call_id in self._session_calls.pop(session_id, []):
+            if self._calls.get(call_id, ("",))[0] == session_id:
+                del self._calls[call_id]
 
     def _evict(self) -> None:
+        """Remove expired sessions. Live sessions are never evicted to make room."""
         now = time.monotonic()
         for key, session in list(self._sessions.items()):
             if now - session.last_seen > SESSION_TTL_SECONDS:
-                session.cancel_camera("session expired")
-                del self._sessions[key]
-        while len(self._sessions) >= MAX_SESSIONS:
-            oldest = min(self._sessions, key=lambda key: self._sessions[key].last_seen)
-            self._sessions.pop(oldest).cancel_camera("session evicted")
+                self._drop(key, "session expired")
+
+    def _admit(self) -> None:
+        """Throttle unauthenticated creation and refuse when full; raises SessionLimitExceeded."""
+        now = self._clock()
+        while self._recent_creates and now - self._recent_creates[0] >= SESSION_CREATE_WINDOW_SECONDS:
+            self._recent_creates.popleft()
+        if len(self._recent_creates) >= SESSION_CREATES_PER_WINDOW:
+            wait = SESSION_CREATE_WINDOW_SECONDS - (now - self._recent_creates[0])
+            raise SessionLimitExceeded("throttled", math.ceil(wait))
+        if len(self._sessions) >= MAX_SESSIONS:
+            oldest = min(session.last_seen for session in self._sessions.values())
+            wait = SESSION_TTL_SECONDS - (time.monotonic() - oldest)
+            raise SessionLimitExceeded("full", math.ceil(wait))
+        self._recent_creates.append(now)
 
     def create(self, owner_name: str, vehicle: Vehicle) -> tuple[ConversationSession, str]:
         self._evict()
+        self._admit()
         # Good for this one session only. It is not a backend API key.
         token = secrets.token_urlsafe(32)
         session = ConversationSession(session_id=uuid.uuid4().hex, token_digest=_digest(token),
@@ -337,10 +381,32 @@ class ConversationStore:
         return session
 
     def bind_call(self, session: ConversationSession, generation: int, vapi_call_id: str) -> bool:
+        """Map a Vapi call to this session's current call. False means refused (stale or taken).
+
+        A call ID already mapped elsewhere (another session, or an earlier or superseded call of
+        this one) is never re-pointed; repeating the same binding is accepted. A generation has one
+        current call ID: binding a different one (the phone's bind after a webhook auto-bind)
+        retires the previous ID instead of leaving both current. Interim until Track B5.
+        """
         if generation != session.generation or not session.call_active:
             return False
+        existing = self._calls.get(vapi_call_id)
+        if existing == (session.session_id, generation):
+            session.vapi_call_id = vapi_call_id
+            return True
+        if existing is not None and existing[0] in self._sessions:
+            session.note("call_bind_refused", reason="call already bound")
+            return False
+        previous = session.vapi_call_id
+        if previous and self._calls.get(previous) == (session.session_id, generation):
+            self._calls[previous] = (session.session_id, RETIRED_GENERATION)
+            session.note("call_binding_superseded")
         session.vapi_call_id = vapi_call_id
         self._calls[vapi_call_id] = (session.session_id, generation)
+        bound = self._session_calls.setdefault(session.session_id, [])
+        bound.append(vapi_call_id)
+        while len(bound) > MAX_BOUND_CALLS_PER_SESSION:
+            self._calls.pop(bound.pop(0), None)
         session.note("call_bound", vapi_call_id=vapi_call_id)
         return True
 
@@ -366,7 +432,10 @@ class ConversationStore:
         session.last_seen = time.monotonic()
         if call_id and session.call_active and not session.vapi_call_id:
             self.bind_call(session, session.generation, call_id)
-        return session, False
+            return session, False
+        # An unknown call ID for a session already bound to a different call is not the current
+        # call (for example one pruned from _calls): treat it as stale rather than current.
+        return session, bool(call_id and session.vapi_call_id and call_id != session.vapi_call_id)
 
     def handle_call_event(self, payload: dict) -> None:
         """Vapi says the call is over: stop anything still waiting on the phone."""
