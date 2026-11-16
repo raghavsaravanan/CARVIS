@@ -12,7 +12,7 @@ count here.
 
    ```sh
    cd backend
-   CARVIS_QDRANT_COLLECTION=carvis_specs_v2 ../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 2>&1 | tee ../server.log
+   CARVIS_ENV=local CARVIS_QDRANT_COLLECTION=carvis_specs_v2 ../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 2>&1 | tee ../server.log
    ```
 
 4. In another terminal, run `ngrok http 8000` and copy its `https://` address.

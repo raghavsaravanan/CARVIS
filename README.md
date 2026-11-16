@@ -52,7 +52,7 @@ Requirements: Python 3.12 and a safely configured local or cloud Qdrant collecti
 python3.12 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
 cd backend
-../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+CARVIS_ENV=local ../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 Keep provider credentials in the local `backend/.env`; never commit secrets, source manuals,
@@ -64,6 +64,12 @@ without `VAPI_WEBHOOK_SECRET`. `/vapi-tool` rejects every request whose `X-Vapi-
 exactly match the configured secret (surrounding whitespace in the variable is ignored), so set it
 (any value, matching the assistant's tool headers) to exercise the webhook locally, or set
 `CARVIS_ENV=local` to run the rest of the API without one.
+
+Outside `local` the API also refuses to start unless `CARVIS_DEFAULT_SHOP_ID` (the shop used when a
+request omits `shop_id`, as the iOS app always does) and `CARVIS_QDRANT_COLLECTION` are set, and, when
+both `SPACETIMEDB_URI` and `SPACETIMEDB_TOKEN` are set (telemetry on), `SPACETIMEDB_DB_NAME`. The old fallbacks `shop_demo`,
+`george_specs` and `hackutd` apply only with `CARVIS_ENV=local`. To keep a deployment's current
+behavior, set these variables to the values it was implicitly using.
 
 `/upload` is an operator-only endpoint. It rejects every request (401) that does not carry exactly one
 `X-Carvis-Operator-Token` header exactly matching `CARVIS_OPERATOR_TOKEN` (surrounding whitespace in the variable is

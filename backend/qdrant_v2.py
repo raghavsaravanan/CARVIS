@@ -17,7 +17,8 @@ load_dotenv(Path(__file__).parent / ".env")
 LEGACY_COLLECTION = "george_specs"
 STAGING_COLLECTION = os.getenv("CARVIS_INGEST_COLLECTION", "carvis_specs_v2")
 ACTIVE_ALIAS = "carvis_specs_active"
-READ_COLLECTION = os.getenv("CARVIS_QDRANT_COLLECTION", LEGACY_COLLECTION)
+# Blank or padded values are read the same way the API boot check reads them (M2 A4).
+READ_COLLECTION = (os.getenv("CARVIS_QDRANT_COLLECTION") or "").strip() or LEGACY_COLLECTION
 KEYWORD_FIELDS = ("shop_id", "year", "make", "model", "document_ref", "component",
                   "spec_type", "operation", "transmission", "record_kind",
                   "verification_status", "engine_code", "trim", "market", "wheel_size")

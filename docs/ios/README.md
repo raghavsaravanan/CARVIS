@@ -62,7 +62,7 @@ paused in this build.
 2. Select the Carvis target, choose your team, and keep or change the bundle ID.
 3. In `Carvis-Info.plist`, set `CarvisBaseURL` to the backend. It defaults to a Mac on the same
    Wi-Fi (`http://<mac-name>.local:8000`); for that, run Carvis with
-   `uvicorn main:app --host 0.0.0.0 --port 8000` from `backend/`. Use the HTTPS Render URL once
+   `CARVIS_ENV=local uvicorn main:app --host 0.0.0.0 --port 8000` from `backend/`. Use the HTTPS Render URL once
    deployed.
 4. For a phone call, add a car and follow [Voice setup](#setup), then tap **Talk to Carvis**.
    For camera questions, connect Meta glasses in the app and use **Snap and ask**.
