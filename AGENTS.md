@@ -5,6 +5,14 @@ Carvis is an iOS-only automotive intelligence product. The native SwiftUI applic
 trusted API/orchestration behavior, Qdrant holds reviewed knowledge evidence, and
 `backend/spacetimedb/` is the retained server-side realtime module.
 
+## Documentation authority
+
+Start at `docs/README.md`. `docs/PRD.md` defines product requirements;
+`docs/product/v1-product-experience-contract.md` defines the approved V1 pilot scope (its open
+decisions, such as D-11 and D-12, stay unresolved until a record in `docs/decisions/` resolves
+them); `docs/audits/` holds dated historical snapshots, so verify current behavior against code and
+tests. Link to these documents; do not restate them here.
+
 ## Safety and trust
 
 - Technical answers require a confirmed vehicle, exact applicability, reviewed source evidence,
