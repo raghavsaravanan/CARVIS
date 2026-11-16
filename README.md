@@ -58,6 +58,13 @@ cd backend
 Keep provider credentials in the local `backend/.env`; never commit secrets, source manuals,
 captured images, parse caches, Qdrant data, or review exports.
 
+`CARVIS_ENV` is `local`, `staging` or `production`; when unset the API assumes `production`, and any
+other value, or `local` on Render, refuses to start. Outside `local` the API also refuses to start
+without `VAPI_WEBHOOK_SECRET`. `/vapi-tool` rejects every request whose `X-Vapi-Secret` header does not
+exactly match the configured secret (surrounding whitespace in the variable is ignored), so set it
+(any value, matching the assistant's tool headers) to exercise the webhook locally, or set
+`CARVIS_ENV=local` to run the rest of the API without one.
+
 ### iOS
 
 Open [`ios/Carvis/Carvis.xcodeproj`](ios/Carvis/Carvis.xcodeproj) in Xcode, configure signing and

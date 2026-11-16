@@ -33,6 +33,8 @@ from qdrant_v2 import READ_COLLECTION, STAGING_COLLECTION
 from spec_schema import Vehicle, VARIANTS
 from spec_retrieval import LookupResult, SpecificationRefusal, lookup, normalize_request
 from spec_extract import COMPONENTS, component_from_text
+from webhook_auth import (WEBHOOK_SECRET_HEADER, configured_secret, require_webhook_secret_at_boot,
+                          webhook_request_authorized)
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -1092,6 +1094,12 @@ async def lifespan(app: FastAPI):
     logger.setLevel(logging.INFO)
     logger.info("Carvis webhook starting up")
 
+    # Fail fast, before loading models or connecting to Qdrant.
+    environment = require_webhook_secret_at_boot()
+    if not configured_secret():
+        logger.warning("VAPI_WEBHOOK_SECRET is not set; /vapi-tool will reject every request")
+    logger.info("Carvis environment=%s", environment)
+
     # On Render, cloud Qdrant is mandatory — never fall back to a missing local path.
     on_render = bool((os.getenv("RENDER") or "").strip())
     qdrant_url = (os.getenv("QDRANT_URL") or "").strip()
@@ -1794,14 +1802,12 @@ async def vapi_tool(request: Request) -> JSONResponse:
     started = time.perf_counter()
     outcome = "error"
 
-    webhook_secret = (os.getenv("VAPI_WEBHOOK_SECRET") or "").strip()
-    if webhook_secret:
-        incoming_secret = request.headers.get("x-vapi-secret")
-        if incoming_secret != webhook_secret:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Unauthorized"},
-            )
+    # Fails closed: with no configured secret every request is rejected, before the body is read.
+    if not webhook_request_authorized(request.headers.get(WEBHOOK_SECRET_HEADER)):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Unauthorized"},
+        )
 
     try:
         payload = await request.json()
