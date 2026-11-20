@@ -5,20 +5,46 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT}"
 
-if [[ -f .env ]]; then
-  # Prefer python-dotenv style KEY=value; tolerate KEY = value via xargs trim below.
-  set -a
-  # shellcheck disable=SC1091
-  source .env || true
-  set +a
+# Read settings as data. `.env` is never sourced or evaluated by the shell, so a value such as
+# $(...) or `...` is inert. Variables already in the environment win, as with load_dotenv().
+# CARVIS_SETUP_PYTHON overrides the interpreter; it needs python-dotenv when `.env` exists.
+PYTHON="${CARVIS_SETUP_PYTHON:-}"
+if [[ -z "${PYTHON}" ]]; then
+  if [[ -x "${ROOT}/../.venv/bin/python" ]]; then
+    PYTHON="${ROOT}/../.venv/bin/python"
+  else
+    PYTHON="python3"
+  fi
 fi
 
-QDRANT_URL="${QDRANT_URL:-}"
-QDRANT_API_KEY="${QDRANT_API_KEY:-}"
+if ! SETTINGS="$("${PYTHON}" - <<'PY'
+import os
+import sys
+from pathlib import Path
 
-# Trim accidental spaces around values from KEY = value style .env files
-QDRANT_URL="$(echo "${QDRANT_URL}" | xargs)"
-QDRANT_API_KEY="$(echo "${QDRANT_API_KEY}" | xargs)"
+values = {}
+env_file = Path(".env")
+if env_file.is_file():
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        sys.exit("python-dotenv is not installed, so backend/.env cannot be read safely.")
+    values = dotenv_values(env_file)
+
+for name in ("QDRANT_URL", "QDRANT_API_KEY"):
+    # One line each, surrounding whitespace trimmed.
+    print(" ".join((os.environ.get(name) or values.get(name) or "").split()))
+PY
+)"; then
+  echo "Could not read settings with ${PYTHON}." >&2
+  echo "Install the backend dependencies (see README.md, Development setup) or set CARVIS_SETUP_PYTHON." >&2
+  exit 2
+fi
+
+{
+  IFS= read -r QDRANT_URL || true
+  IFS= read -r QDRANT_API_KEY || true
+} <<< "${SETTINGS}"
 
 if [[ -n "${QDRANT_URL}" && -n "${QDRANT_API_KEY}" ]]; then
   echo "Cloud Qdrant configured: ${QDRANT_URL}"

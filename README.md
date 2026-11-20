@@ -50,10 +50,34 @@ Requirements: Python 3.12 and a safely configured local or cloud Qdrant collecti
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install -r backend/requirements.txt
+.venv/bin/python -m pip install --require-hashes -r backend/requirements-dev.txt
 cd backend
 CARVIS_ENV=local ../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 ```
+
+Dependencies are pinned with hashes. `backend/requirements.in` lists the direct runtime
+dependencies and compiles to `backend/requirements.txt`, which is what Render installs.
+`backend/requirements-dev.in` adds test tooling such as pytest and compiles to
+`backend/requirements-dev.txt`, which is used for local development and CI. Edit only the `.in`
+files, then regenerate both lockfiles with [uv](https://docs.astral.sh/uv/):
+
+```bash
+cd backend
+uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements.txt
+uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements-dev.txt
+```
+
+Add `--upgrade` (or `--upgrade-package <name>`) to move pins forward deliberately.
+`backend/tests/test_dependency_lock.py` fails in any of these cases:
+
+- a lockfile entry is unpinned or unhashed;
+- an input is missing from its lockfile, or is pinned outside its `.in` bound;
+- test tooling reaches the runtime lockfile.
+
+`backend/setup.sh` reads `QDRANT_URL` and `QDRANT_API_KEY` from `backend/.env` with python-dotenv
+and never sources the file as shell. Values already set in the environment take precedence. It uses
+`.venv/bin/python` (or `CARVIS_SETUP_PYTHON`) and exits with status 2 if it cannot read `.env`
+safely, for example when python-dotenv is not installed.
 
 Keep provider credentials in the local `backend/.env`; never commit secrets, source manuals,
 captured images, parse caches, Qdrant data, or review exports.
