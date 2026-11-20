@@ -1,0 +1,4 @@
+# Development and CI only: the runtime set plus test tooling. Not installed on Render.
+-c requirements.txt
+-r requirements.in
+pytest>=8.0.0

@@ -21,7 +21,7 @@ LlamaParse, or any paid/live provider, and never read real manuals or customer d
 | `backend/spacetimedb/module/src/index.ts` | TypeScript compile (section 2) |
 
 Python: use `.venv/bin/python` when it exists, otherwise `python3` (`scripts/verify.sh` does the same).
-`.venv/` is gitignored; create it with `python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt`.
+`.venv/` is gitignored; create it with `python3 -m venv .venv && .venv/bin/python -m pip install --require-hashes -r backend/requirements-dev.txt` (the runtime lockfile `backend/requirements.txt` has no pytest).
 Run `-m pytest backend/tests -q` then `-m compileall -q backend` for the full backend baseline.
 
 ## 2. Full baseline and Swift/TypeScript commands

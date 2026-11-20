@@ -50,10 +50,52 @@ Requirements: Python 3.12 and a safely configured local or cloud Qdrant collecti
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install -r backend/requirements.txt
+.venv/bin/python -m pip install --require-hashes -r backend/requirements-dev.txt
 cd backend
 CARVIS_ENV=local ../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 ```
+
+Dependencies are pinned with hashes. `backend/requirements.in` lists the direct runtime
+dependencies and compiles to `backend/requirements.txt`, which is what Render installs.
+`backend/requirements-dev.in` adds test tooling such as pytest and compiles to
+`backend/requirements-dev.txt`, which is used for local development and CI. Edit only the `.in`
+files, then regenerate both lockfiles with [uv](https://docs.astral.sh/uv/):
+
+```bash
+cd backend
+uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements.txt
+uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements-dev.txt
+```
+
+Add `--upgrade` (or `--upgrade-package <name>`) to move pins forward deliberately.
+`backend/tests/test_dependency_lock.py` fails in any of these cases:
+
+- a lockfile entry is unpinned or unhashed;
+- an input is missing from its lockfile, or is pinned outside its `.in` bound;
+- test tooling reaches the runtime lockfile.
+
+`scripts/check-runtime-lock.sh [python]` runs in CI and needs PyPI access. It:
+
+- installs only `backend/requirements.txt` into a temporary virtual environment, as Render does;
+- confirms that pytest is absent;
+- imports every top-level `backend/*.py` module with `.env` loading disabled, and fails if any
+  environment variable appears;
+- fails on any Python-level network event (DNS lookup, connect, send, urllib request) or process
+  launch during import, even one whose error a module catches;
+- fails if import leaves extra threads running.
+
+Native code that bypasses Python's `socket` module is not covered.
+
+`backend/setup.sh` loads `backend/.env` with python-dotenv's `load_dotenv(override=False)`, as the
+API does, and never sources the file as shell. As a result:
+
+- a variable present in the environment takes precedence even when it is empty;
+- `${VAR}` references resolve the same way;
+- `PYTHON_DOTENV_DISABLED` is honoured.
+
+Surrounding whitespace is trimmed; internal whitespace is kept. The script uses `.venv/bin/python`
+(or `CARVIS_SETUP_PYTHON`). It exits with status 2 if it cannot read `.env` safely, for example when
+python-dotenv is not installed or a value spans several lines.
 
 Keep provider credentials in the local `backend/.env`; never commit secrets, source manuals,
 captured images, parse caches, Qdrant data, or review exports.

@@ -5,20 +5,59 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT}"
 
-if [[ -f .env ]]; then
-  # Prefer python-dotenv style KEY=value; tolerate KEY = value via xargs trim below.
-  set -a
-  # shellcheck disable=SC1091
-  source .env || true
-  set +a
+# Read settings as data. `.env` is never sourced or evaluated by the shell, so a value such as
+# $(...) or `...` is inert. The file is loaded with load_dotenv(override=False), exactly as the API
+# loads it: variables present in the environment, even empty ones, win over `.env`, `${VAR}`
+# references resolve the same way, and PYTHON_DOTENV_DISABLED is honoured.
+# CARVIS_SETUP_PYTHON overrides the interpreter; it needs python-dotenv when `.env` exists.
+PYTHON="${CARVIS_SETUP_PYTHON:-}"
+if [[ -z "${PYTHON}" ]]; then
+  if [[ -x "${ROOT}/../.venv/bin/python" ]]; then
+    PYTHON="${ROOT}/../.venv/bin/python"
+  else
+    PYTHON="python3"
+  fi
 fi
 
-QDRANT_URL="${QDRANT_URL:-}"
-QDRANT_API_KEY="${QDRANT_API_KEY:-}"
+REFUSED_VALUE=3
+settings_status=0
+SETTINGS="$("${PYTHON}" - <<'PY'
+import os
+import sys
+from pathlib import Path
 
-# Trim accidental spaces around values from KEY = value style .env files
-QDRANT_URL="$(echo "${QDRANT_URL}" | xargs)"
-QDRANT_API_KEY="$(echo "${QDRANT_API_KEY}" | xargs)"
+env_file = Path(".env")
+if env_file.is_file():
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        sys.exit("python-dotenv is not installed, so backend/.env cannot be read safely.")
+    load_dotenv(env_file, override=False)
+
+for name in ("QDRANT_URL", "QDRANT_API_KEY"):
+    # Surrounding whitespace is trimmed and internal whitespace kept. A value spanning lines is
+    # refused rather than reshaped; the message names the variable, never its value.
+    value = os.environ.get(name, "").strip()
+    if "\n" in value or "\r" in value:
+        print(f"{name} spans more than one line, so it cannot be read safely.", file=sys.stderr)
+        sys.exit(3)
+    print(value)
+PY
+)" || settings_status=$?
+
+if [[ "${settings_status}" -eq "${REFUSED_VALUE}" ]]; then
+  exit 2
+elif [[ "${settings_status}" -ne 0 ]]; then
+  echo "Could not read settings with ${PYTHON}; see the error above." >&2
+  echo "If Python or python-dotenv is missing, install the backend dependencies (see README.md," >&2
+  echo "Development setup) or set CARVIS_SETUP_PYTHON." >&2
+  exit 2
+fi
+
+{
+  IFS= read -r QDRANT_URL || true
+  IFS= read -r QDRANT_API_KEY || true
+} <<< "${SETTINGS}"
 
 if [[ -n "${QDRANT_URL}" && -n "${QDRANT_API_KEY}" ]]; then
   echo "Cloud Qdrant configured: ${QDRANT_URL}"

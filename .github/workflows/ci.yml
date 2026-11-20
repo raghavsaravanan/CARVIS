@@ -29,10 +29,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Verify runtime lockfile in isolation
+        run: bash scripts/check-runtime-lock.sh python
 
       - name: Install backend dependencies
-        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+        run: python -m pip install --disable-pip-version-check --require-hashes -r backend/requirements-dev.txt
 
       - name: Run backend tests
         run: python -m pytest backend/tests -q
