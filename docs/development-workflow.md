@@ -111,9 +111,15 @@ data contract independently.
 ## Required checks
 
 Run the narrowest relevant checks first. `scripts/verify.sh` is the complete local baseline and
-includes the iOS Simulator build when full Xcode is selected. GitHub CI runs backend tests and
-compilation, repository hygiene and secret-path checks, pure Swift tests, and SpacetimeDB
-TypeScript type checking without provider credentials or production access.
+includes the iOS Simulator build when full Xcode is selected. It does not run the runtime-lockfile
+check, which needs PyPI access; run `scripts/check-runtime-lock.sh` when dependencies change.
+GitHub CI runs these checks without provider credentials or production access:
+
+- an isolated runtime-lockfile install and import check (`scripts/check-runtime-lock.sh`);
+- backend tests and compilation;
+- repository hygiene and secret-path checks;
+- pure Swift tests;
+- SpacetimeDB TypeScript type checking.
 
 Full Xcode builds, signing, TestFlight, physical iPhone audio, Meta hardware, and live-provider
 checks remain explicit local/release validations. Never describe mocks or simulator results as

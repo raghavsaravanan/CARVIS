@@ -31,6 +31,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
 
+      - name: Verify runtime lockfile in isolation
+        run: bash scripts/check-runtime-lock.sh python
+
       - name: Install backend dependencies
         run: python -m pip install --disable-pip-version-check --require-hashes -r backend/requirements-dev.txt
 

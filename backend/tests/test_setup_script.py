@@ -17,7 +17,7 @@ def _run(tmp_path: Path, env_text: str | None, **extra_env: str) -> subprocess.C
     shutil.copy(SETUP, tmp_path / "setup.sh")
     if env_text is not None:
         (tmp_path / ".env").write_text(env_text)
-    env = {k: v for k, v in os.environ.items() if k not in {"QDRANT_URL", "QDRANT_API_KEY"}}
+    env = {k: v for k, v in os.environ.items() if k not in {"QDRANT_URL", "QDRANT_API_KEY", "PYTHON_DOTENV_DISABLED"}}
     env.update(CARVIS_SETUP_PYTHON=sys.executable)
     env.update(extra_env)
     return subprocess.run(
@@ -45,6 +45,54 @@ def test_reads_values_and_trims_spaces(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "Cloud Qdrant configured: https://q.invalid\n" in result.stdout
     assert "secret-value" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("name", ["QDRANT_URL", "QDRANT_API_KEY"])
+def test_explicitly_empty_environment_variable_beats_env_file(tmp_path: Path, name: str) -> None:
+    # load_dotenv(override=False) keeps a present-but-empty variable; setup.sh must agree.
+    result = _run(tmp_path, "QDRANT_URL=https://file.invalid\nQDRANT_API_KEY=k\n", **{name: ""})
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Cloud Qdrant configured" not in result.stdout
+    assert "Database missing" in result.stdout
+
+
+def test_whitespace_only_environment_variable_is_empty_not_a_fallback(tmp_path: Path) -> None:
+    result = _run(tmp_path, "QDRANT_URL=https://file.invalid\nQDRANT_API_KEY=k\n", QDRANT_URL="  \t ")
+    assert result.returncode == 1
+    assert "file.invalid" not in result.stdout
+
+
+def test_internal_whitespace_is_preserved(tmp_path: Path) -> None:
+    result = _run(tmp_path, 'QDRANT_URL="  https://q.invalid/a  b\tc  "\nQDRANT_API_KEY=k\n')
+    assert result.returncode == 0
+    assert "Cloud Qdrant configured: https://q.invalid/a  b\tc\n" in result.stdout
+
+
+@pytest.mark.parametrize("source", ["file", "environment"])
+def test_multiline_value_is_refused(tmp_path: Path, source: str) -> None:
+    if source == "file":
+        result = _run(tmp_path, 'QDRANT_URL="https://q.invalid\nsecond-line"\nQDRANT_API_KEY=secret-value\n')
+    else:
+        result = _run(tmp_path, None, QDRANT_URL="https://q.invalid\nsecond-line", QDRANT_API_KEY="secret-value")
+    assert result.returncode == 2
+    assert "QDRANT_URL spans more than one line" in result.stderr
+    assert "install the backend dependencies" not in result.stderr.lower()
+    assert "second-line" not in result.stdout + result.stderr
+    assert "secret-value" not in result.stdout + result.stderr
+
+
+def test_interpolation_resolves_like_load_dotenv(tmp_path: Path) -> None:
+    # load_dotenv(override=False) expands ${HOST} from the environment, not from the file's own HOST.
+    env_text = "HOST=file-host\nQDRANT_URL=https://${HOST}/x\nQDRANT_API_KEY=k\n"
+    result = _run(tmp_path, env_text, HOST="env-host")
+    assert result.returncode == 0
+    assert "Cloud Qdrant configured: https://env-host/x\n" in result.stdout
+
+
+def test_dotenv_disabled_is_honoured_like_the_api(tmp_path: Path) -> None:
+    result = _run(tmp_path, "QDRANT_URL=https://q.invalid\nQDRANT_API_KEY=k\n", PYTHON_DOTENV_DISABLED="1")
+    assert result.returncode == 1
+    assert "Cloud Qdrant configured" not in result.stdout
 
 
 def test_url_without_key_is_not_cloud(tmp_path: Path) -> None:
