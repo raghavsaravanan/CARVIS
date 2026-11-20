@@ -120,6 +120,23 @@ Accepted files must begin with the `%PDF-` magic and be at most 50 MiB (larger b
 streaming at the cap). These checks run before ingestion is scheduled, so a rejected request never
 reaches LlamaParse.
 
+Every other route caps its request body while it streams, and answers 413 `{"detail": …}` with
+`Connection: close` above the cap:
+
+| Route | Body cap |
+| --- | --- |
+| `/vision-query` and camera photos | 8 MiB image plus 64 KiB of form fields |
+| `/vapi-tool` | 4 MiB |
+| Every other route | 64 KiB |
+
+Unexpected failures return a fixed message, such as `Specification lookup is temporarily
+unavailable.`, never exception text; the reason is logged on the server.
+
+Carvis's own logs are JSON lines by default; set `CARVIS_LOG_FORMAT=text` for the human-readable
+format. Uvicorn's access and error lines keep uvicorn's plain-text format. Carvis's logs never contain
+the mechanic's questions, transcripts, answers or images (see
+[`docs/backend/architecture.md`](docs/backend/architecture.md#api-contracts)).
+
 ### iOS
 
 Open [`ios/Carvis/Carvis.xcodeproj`](ios/Carvis/Carvis.xcodeproj) in Xcode, configure signing and

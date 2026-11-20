@@ -40,6 +40,8 @@ from webhook_auth import (WEBHOOK_SECRET_HEADER, configured_secret, require_webh
 from deployment_config import default_shop_id, require_explicit_configuration_at_boot, spacetimedb_db_name
 from upload_security import (MAX_UPLOAD_BYTES, NOT_A_PDF_DETAIL, OPERATOR_TOKEN_ENV, PDF_MAGIC, TOO_LARGE_DETAIL,
                              OperatorUploadRoute, configured_operator_token)
+from log_config import configure_logging, log_event
+from request_limits import DEFAULT_BODY_LIMIT_BYTES, MULTIPART_ENVELOPE_BYTES, BodyLimit, MiB, body_limited_route
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -53,6 +55,19 @@ EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 # Explicit outside local (CARVIS_DEFAULT_SHOP_ID); "shop_demo" only with CARVIS_ENV=local.
 DEFAULT_SHOP_ID = default_shop_id()
 MAX_VISION_IMAGE_BYTES = 8 * 1024 * 1024
+IMAGE_TOO_LARGE_DETAIL = f"Image must be {MAX_VISION_IMAGE_BYTES // (1024 * 1024)} MB or smaller."
+VISION_UNAVAILABLE_DETAIL = "Image identification is temporarily unavailable."
+LOOKUP_UNAVAILABLE_DETAIL = "Specification lookup is temporarily unavailable."
+# Request body caps (M2 A6), enforced while the body streams; unlisted routes get the default.
+# /upload has its own operator-gated cap in upload_security.
+VAPI_TOOL_BODY_LIMIT_BYTES = 4 * MiB
+BODY_LIMITS = {
+    "/vision-query": BodyLimit(MAX_VISION_IMAGE_BYTES + MULTIPART_ENVELOPE_BYTES, IMAGE_TOO_LARGE_DETAIL),
+    "/conversation/sessions/{session_id}/camera/{request_id}/photo":
+        BodyLimit(MAX_VISION_IMAGE_BYTES + MULTIPART_ENVELOPE_BYTES, IMAGE_TOO_LARGE_DETAIL),
+    "/vapi-tool": BodyLimit(VAPI_TOOL_BODY_LIMIT_BYTES),
+}
+DEFAULT_BODY_LIMIT = BodyLimit(DEFAULT_BODY_LIMIT_BYTES)
 VISION_MODEL_NAME = os.getenv("VISION_MODEL", "gpt-5.5")
 VISION_PROVIDER = (os.getenv("VISION_PROVIDER") or "nemotron").strip().lower()
 NEMOTRON_MODEL_NAME = os.getenv(
@@ -80,14 +95,10 @@ async def _spacetime_call_reducer(reducer_name: str, args: list[Any]) -> None:
         async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.post(url, headers=headers, json=args)
             if resp.status_code >= 400:
-                logger.warning(
-                    "SpacetimeDB reducer %s returned %d: %s",
-                    reducer_name,
-                    resp.status_code,
-                    resp.text[:200],
-                )
+                # No response body: the reducer arguments include the mechanic's question.
+                logger.warning("SpacetimeDB reducer %s returned %d", reducer_name, resp.status_code)
     except Exception as exc:  # noqa: BLE001 - telemetry writes must never break queries
-        logger.debug("SpacetimeDB telemetry write skipped: %s", exc)
+        logger.debug("SpacetimeDB telemetry write skipped: %s", type(exc).__name__)
 
 
 # In-memory vehicle context keyed by Vapi callId (single-process demo/prod hop).
@@ -1066,10 +1077,12 @@ def handle_tool_call(
             context={k: args.get(k) for k in (*VARIANTS, "component", "operation", "spec_type")},
         )
     except Exception as exc:  # noqa: BLE001 - surface as Vapi tool error string
+        # Never speak or return exception text; it can carry provider and configuration details.
+        logger.error("Carvis lookup failed: %s", type(exc).__name__)
         return SpokenAnswer(
             tool_call_id=tool_call_id,
             ok=False,
-            error=f"Specification lookup failed: {exc}.",
+            error=LOOKUP_UNAVAILABLE_DETAIL,
         )
 
     if chunk_text is None:
@@ -1092,11 +1105,7 @@ def handle_tool_call(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        )
+    configure_logging(logging.INFO)  # JSON lines unless CARVIS_LOG_FORMAT=text; no-op if configured
     logger.setLevel(logging.INFO)
     logger.info("Carvis webhook starting up")
 
@@ -1161,6 +1170,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+# Every route declared on the app below is body-capped (M2 A6); routes keep their own path limit.
+app.router.route_class = body_limited_route(BODY_LIMITS, DEFAULT_BODY_LIMIT)
 
 @app.get("/health")
 async def health() -> dict[str, str]:
@@ -1177,10 +1188,7 @@ def _validate_jpeg(image_bytes: bytes, content_type: str | None) -> None:
     if not image_bytes:
         raise HTTPException(status_code=400, detail="A JPEG image is required.")
     if len(image_bytes) > MAX_VISION_IMAGE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Image must be {MAX_VISION_IMAGE_BYTES // (1024 * 1024)} MB or smaller.",
-        )
+        raise HTTPException(status_code=413, detail=IMAGE_TOO_LARGE_DETAIL)
     normalized_type = (content_type or "").lower().split(";", 1)[0].strip()
     if normalized_type not in {"image/jpeg", "image/jpg"}:
         raise HTTPException(status_code=415, detail="Only image/jpeg uploads are supported.")
@@ -1418,14 +1426,16 @@ async def vision_query(
                     visual.get("component") or "error",
                     0.0,
                     "failed",
-                    str(exc),
+                    VISION_UNAVAILABLE_DETAIL,
                     "none",
                     False,
                     max(1, int(round(total_ms))),
                 ],
             )
         )
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        # The reason is a fixed internal string (for example a missing variable's name), logged only.
+        logger.error("Carvis vision unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail=VISION_UNAVAILABLE_DETAIL) from exc
     except Exception as exc:
         total_ms = (time.perf_counter() - started) * 1000
         asyncio.create_task(
@@ -1436,7 +1446,7 @@ async def vision_query(
                     visual.get("component") or "error",
                     0.0,
                     "failed",
-                    "Specification lookup is temporarily unavailable.",
+                    LOOKUP_UNAVAILABLE_DETAIL,
                     "none",
                     False,
                     max(1, int(round(total_ms))),
@@ -1444,7 +1454,7 @@ async def vision_query(
             )
         )
         logger.error("Carvis specification lookup unavailable: %s", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="Specification lookup is temporarily unavailable.") from exc
+        raise HTTPException(status_code=503, detail=LOOKUP_UNAVAILABLE_DETAIL) from exc
     timings = {**result.timings_ms, "inference": inference_ms,
                "total": (time.perf_counter()-started)*1000}
     logger.info("Carvis vision-query timings_ms=%s", timings)
@@ -1822,7 +1832,8 @@ async def receive_camera_photo(session_id: str, request_id: str, file: UploadFil
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Identifying the part took too long.") from exc
     except VisionConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        logger.error("Carvis vision unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail=VISION_UNAVAILABLE_DETAIL) from exc
     return {"status": "identified", "visual": visual}
 
 
@@ -1902,16 +1913,10 @@ async def vapi_tool(request: Request) -> JSONResponse:
     call_id = f"{shop_id}:{raw_call_id}" if raw_call_id else ""
     tool_call_id = fields["tool_call_id"]
 
-    logger.info(
-        "vapi_tool inbound keys=%s tool_calls=%d has_query=%s "
-        "query_preview=%r shop_id=%r toolCallId=%r",
-        sorted(payload.keys()),
-        len(extract_tool_call_list(payload)),
-        bool(query),
-        (query[:120] if query else None),
-        shop_id,
-        tool_call_id,
-    )
+    # Never the query itself: it is the mechanic's spoken question (no transcripts in logs).
+    log_event(logger, logging.INFO, "vapi_tool inbound", keys=sorted(payload.keys()),
+              tool_calls=len(extract_tool_call_list(payload)), query_chars=len(query or ""),
+              shop_id=shop_id, tool_call_id=tool_call_id)
 
     if not query:
         return JSONResponse(
@@ -1944,7 +1949,7 @@ async def vapi_tool(request: Request) -> JSONResponse:
             outcome = "lookup_failed"
             logger.error("Carvis lookup failed: %s", type(exc).__name__)
             return JSONResponse(content={"results": [{
-                "toolCallId": tool_call_id, "error": "Specification lookup is temporarily unavailable.",
+                "toolCallId": tool_call_id, "error": LOOKUP_UNAVAILABLE_DETAIL,
             }]})
         _update_session_vehicle_fields(call_id, make, model, year)
         outcome = "ok"
@@ -1955,17 +1960,8 @@ async def vapi_tool(request: Request) -> JSONResponse:
         }]})
     finally:
         elapsed_ms = (time.perf_counter() - started) * 1000.0
-        logger.info(
-            "vapi_tool outcome=%s elapsed_ms=%.1f query=%r year=%r make=%r "
-            "model=%r shop_id=%r",
-            outcome,
-            elapsed_ms,
-            query,
-            year or None,
-            make or None,
-            model or None,
-            shop_id,
-        )
+        log_event(logger, logging.INFO, "vapi_tool outcome", outcome=outcome, elapsed_ms=round(elapsed_ms, 1),
+                  year=year or None, make=make or None, model=model or None, shop_id=shop_id)
 
 
 if __name__ == "__main__":

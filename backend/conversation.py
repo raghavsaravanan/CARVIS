@@ -22,6 +22,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+from log_config import log_event
 from spec_extract import COMPONENTS
 from spec_retrieval import LookupResult, SpecificationRefusal, format_records, ungrounded_numbers
 from spec_schema import VARIANTS, Vehicle
@@ -135,7 +136,9 @@ class ConversationSession:
     def note(self, stage: str, **details: Any) -> None:
         self.trace.append({"at": round(time.time(), 3), "generation": self.generation, "stage": stage, **details})
         del self.trace[:-MAX_TRACE]
-        logger.info("conversation session=%s gen=%s stage=%s %s", self.session_id[:8], self.generation, stage, details)
+        # The trace keeps every detail for the phone; the log drops content-bearing fields (M2 A6).
+        log_event(logger, logging.INFO, f"conversation {stage}", session=self.session_id[:8],
+                  generation=self.generation, **details)
 
     @property
     def owner_first_name(self) -> str:
@@ -592,7 +595,8 @@ class ConversationTools:
         spoken = format_records(result.records, include_vehicle=False)
         extra = ungrounded_numbers(spoken, result.records)
         if extra:
-            logger.error("Refused to speak ungrounded numbers: %s", extra)
+            # The count only: the numbers are fragments of a generated answer (M2 A6).
+            logger.error("Refused to speak %d ungrounded numbers", len(extra))
             session.note("speech_rejected", numbers=extra)
             return self._entry(name, call_id, {"status": "unverified", "source_grounded": False})
         record = result.records[0]

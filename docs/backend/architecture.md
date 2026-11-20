@@ -67,6 +67,31 @@ There is no cross-vehicle fallback, inferred vehicle identity, model-generated n
 - **Accepted operational decisions (owner, 2026-11-16).** Keep the interim limits (20 creations per minute globally, 256 live sessions) until Track B authentication and durable sessions, then revisit them. Keep refuse-instead-of-evict: protecting existing conversations takes priority over admitting new sessions when capacity is exhausted. These are working rules; they resolve no roadmap owner decision (D-item), and formal records in `docs/decisions/` remain authoritative.
 - **Residual until Track B5.** Before the phone binds, the existing webhook-before-bind path still trusts the payload's `carvis_session_id`. A call ID that was never bound, or was pruned, can therefore act during that short window.
 
+Request limits, errors and logs (M2 A6). These leave request and success shapes unchanged.
+
+- **Body caps.** `backend/request_limits.py` caps every route's body while it streams. Above the cap, the route returns HTTP 413 `{"detail": …}` with `Connection: close` and reads no more of the body.
+  - This is an application-level cap: the server still receives whatever the client sends before the connection closes.
+  - `/vision-query` and camera photos: the 8 MiB image cap plus 64 KiB of form fields, with the existing image detail. The 8 MiB per-image check is unchanged.
+  - `/vapi-tool`: 4 MiB.
+  - Every other route: 64 KiB.
+  - `/upload` keeps its own 50 MiB operator-gated cap.
+- **Auth ordering.** The declared `Content-Length` is checked when the body is first read.
+  - **`/vapi-tool`**, which authenticates before reading, still answers an unauthenticated request with its own 401 and never reads the body. Because that body was announced but not read, the response also carries `Connection: close`.
+  - **Conversation and camera routes** have bodies that FastAPI parses before the handler checks the session token. An over-cap unauthenticated request to them now gets 413 instead of 401. Within the cap they still answer 401.
+- **No swallowed 413s.** An over-cap `/vapi-tool` body gets 413, not the Vapi-shaped "invalid JSON" 200 that the handler returns for parse errors.
+- **Malformed `Content-Length`.** Uvicorn answers it with a plain-text 400 before the app runs; the route's JSON 400 covers servers that do not.
+- **Generic failures.** These responses carry a fixed message and never exception text, which can name configuration or providers. The reason is logged on the server.
+  - `/vision-query` and camera-photo vision failures: 503 `Image identification is temporarily unavailable.`
+  - Lookup failures: 503 `Specification lookup is temporarily unavailable.`, and the same text as the Vapi tool error.
+  - Designed refusal and clarification reasons are unchanged.
+- **Logging scaffold.** `backend/log_config.py` writes one JSON object per line, or the previous text format with `CARVIS_LOG_FORMAT=text`.
+  - Structured fields go through `log_event`, which drops content-bearing names such as `query`, `query_preview`, `transcript` and `answer`. Measures such as `query_chars` are kept.
+  - The mechanic's question is no longer logged by `/vapi-tool`. SpacetimeDB error bodies, which can echo the question, are no longer logged.
+  - Conversation trace notes are logged through `log_event`. Numbers refused from a generated answer stay in the phone's trace but are logged only as a count.
+  - Uvicorn configures its own `uvicorn` and `uvicorn.access` loggers, so access lines and its "Exception in ASGI application" tracebacks stay plain text. Access lines carry paths, including session IDs, but no questions.
+  - `backend/tests/test_logging_privacy.py` drives the lookup, conversation and vision paths with a canary question and fails if it reaches any log record.
+  - Request IDs, call IDs and metrics arrive with Track B1.
+
 ## Nemotron and latency
 
 A reused NVIDIA-compatible AsyncOpenAI client provides visual recognition with bounded timeouts and no repair-fact authority. Complete explicit requests skip unnecessary inference. Ambiguous requests can return a visual hypothesis for mechanic confirmation; hypotheses never become unconfirmed exact component filters.
