@@ -67,6 +67,54 @@ There is no cross-vehicle fallback, inferred vehicle identity, model-generated n
 - **Accepted operational decisions (owner, 2026-11-16).** Keep the interim limits (20 creations per minute globally, 256 live sessions) until Track B authentication and durable sessions, then revisit them. Keep refuse-instead-of-evict: protecting existing conversations takes priority over admitting new sessions when capacity is exhausted. These are working rules; they resolve no roadmap owner decision (D-item), and formal records in `docs/decisions/` remain authoritative.
 - **Residual until Track B5.** Before the phone binds, the existing webhook-before-bind path still trusts the payload's `carvis_session_id`. A call ID that was never bound, or was pruned, can therefore act during that short window.
 
+Request limits, errors and logs (M2 A6). These leave request and success shapes unchanged.
+
+- **Body caps.** `backend/request_limits.py` caps every route's body while it streams. Above the cap, the route returns HTTP 413 `{"detail": …}` with `Connection: close` and reads no more of the body.
+  - This is an application-level cap: the server still receives whatever the client sends before the connection closes.
+  - `/vision-query` and camera photos: the 8 MiB image cap plus 64 KiB of form fields, with the existing image detail. The 8 MiB per-image check is unchanged.
+  - `/vapi-tool`: 4 MiB.
+  - Every other route: 64 KiB.
+  - `/upload` keeps its own 50 MiB operator-gated cap (A2). Its early 401, malformed-length 400 and declared-oversize 413, its streamed 413 at the cap, and a parse-error 400 raised mid-body all carry `Connection: close`. Authentication, PDF validation and the file and body caps are unchanged.
+- **Auth ordering.** The declared `Content-Length` is checked when the body is first read.
+  - **`/vapi-tool`**, which authenticates before reading, still answers an unauthenticated request with its own 401 and never reads the body. Because that body was announced but not read, the response also carries `Connection: close`.
+  - **Conversation and camera routes** have bodies that FastAPI parses before the handler checks the session token. An over-cap unauthenticated request to them now gets 413 instead of 401. Within the cap they still answer 401.
+- **No swallowed 413s.** An over-cap `/vapi-tool` body gets 413, not the Vapi-shaped "invalid JSON" 200 that the handler returns for parse errors.
+- **Malformed `Content-Length`.** Uvicorn answers it with a plain-text 400 before the app runs; the route's JSON 400 covers servers that do not.
+- **Generic failures.** These responses carry a fixed message and never exception text, which can name configuration or providers. The reason is logged on the server.
+  - `/vision-query` and camera-photo vision failures: 503 `Image identification is temporarily unavailable.`
+  - Lookup failures: 503 `Specification lookup is temporarily unavailable.`, and the same text as the Vapi tool error.
+  - Designed refusal and clarification reasons are unchanged.
+- **Logging scaffold.** `backend/log_config.py` writes one JSON object per line, or the previous text format with `CARVIS_LOG_FORMAT=text`.
+  - **Allowlist, not filter.** `log_event` logs only field names listed in `FIELD_POLICY`, each with a rule:
+    - **Measurements and flags.**
+    - **Exact shapes** for server-generated values: 8-hex session prefixes, 32-hex camera request IDs, setting names, lowercase codes and exception type names.
+    - **Closed vocabularies** registered by their owning module: component, operation, spec type, tool name, internal reasons, vehicle fields, and the configured default shop.
+    - **Fingerprints** for caller-supplied identifiers (Vapi call IDs, tool-call IDs, any other `shop_id`): `fp:` plus 12 hex digits of an HMAC-SHA-256 of the field name and value, keyed with a random per-process salt. A fingerprint correlates lines for one field within one process and cannot be reversed. A log reader cannot confirm a guessed value, but someone who can also send requests can, by sending the guess and comparing. Fingerprints protect content, not secrets.
+  - Any other name is dropped (`dropped_fields`). A value that fails its rule becomes `"[redacted]"` (`redacted_fields`). Nested payloads, free text, model output and exception messages never pass.
+  - **Request paths log no conversation content.** The `/vapi-tool`, vision-query, camera, conversation, retrieval and upload-job paths log through `log_event` or with fixed messages, exception type names and counts. Exception messages and tracebacks are no longer logged there. The vision errors log a code and the missing setting's name instead.
+  - **What is no longer logged:**
+    - the mechanic's question;
+    - webhook payload keys, make and model;
+    - caller-supplied IDs (now fingerprints);
+    - unknown tool names;
+    - the request vehicle in retrieval decisions;
+    - the shop catalog's values (counts only);
+    - phone-supplied call-end and camera-failure reasons;
+    - model-supplied work context;
+    - vision-model output;
+    - the vehicle summary;
+    - refused answer numbers;
+    - SpacetimeDB error bodies.
+  - **The phone's trace is separate.** `GET /conversation/sessions/{id}` still returns every note detail to the phone, unchanged.
+  - **Tests.** `backend/tests/test_logging_privacy.py` puts canaries in the question and in the other request-controlled fields and fails if one reaches any log record, at any level, from any logger.
+    - Free-text fields: the camera and call-end reasons, work context, vision output and vehicle trim.
+    - Identifiers, tested as a sentence, as a single token, and joined by `.:-_`: tool names, phone-bind and webhook call IDs, and legacy `shop_id` and tool-call IDs.
+  - **Residual limits.**
+    - Plain `logger.*` calls bypass the policy. The remaining ones on request paths carry only type names, counts, constants or server timings, and a new request-path log must use `log_event`.
+    - Loggers Carvis does not configure are outside the policy: uvicorn's `uvicorn` and `uvicorn.access`, httpx and openai. Uvicorn access lines carry each request's path and query string as sent, including session IDs and any caller-chosen text in them. Uvicorn's "Exception in ASGI application" traceback for an unhandled error can quote that error's message. httpx logs provider request URLs at INFO. Configuring these is deferred to Track B1.
+    - Fingerprints change on restart, so correlation spans one process only.
+    - Request IDs, call IDs and metrics arrive with Track B1.
+
 ## Nemotron and latency
 
 A reused NVIDIA-compatible AsyncOpenAI client provides visual recognition with bounded timeouts and no repair-fact authority. Complete explicit requests skip unnecessary inference. Ambiguous requests can return a visual hypothesis for mechanic confirmation; hypotheses never become unconfirmed exact component filters.

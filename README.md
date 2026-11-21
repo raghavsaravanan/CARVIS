@@ -120,6 +120,26 @@ Accepted files must begin with the `%PDF-` magic and be at most 50 MiB (larger b
 streaming at the cap). These checks run before ingestion is scheduled, so a rejected request never
 reaches LlamaParse.
 
+Every other route caps its request body while it streams, and answers 413 `{"detail": …}` with
+`Connection: close` above the cap:
+
+| Route | Body cap |
+| --- | --- |
+| `/vision-query` and camera photos | 8 MiB image plus 64 KiB of form fields |
+| `/vapi-tool` | 4 MiB |
+| Every other route | 64 KiB |
+
+Unexpected failures return a fixed message, such as `Specification lookup is temporarily
+unavailable.`, never exception text; the reason is logged on the server.
+
+Carvis's own logs are JSON lines by default; set `CARVIS_LOG_FORMAT=text` for the human-readable
+format. Structured log fields pass an explicit allowlist (`FIELD_POLICY` in `backend/log_config.py`),
+so request paths log codes, counts, type names, known vocabularies and salted fingerprints of
+caller-supplied IDs, never the mechanic's questions, transcripts, answers, images, model output,
+phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own access and error lines
+(and the httpx and openai libraries' loggers) stay outside that policy until Track B1. Limits are listed in
+[`docs/backend/architecture.md`](docs/backend/architecture.md#api-contracts).
+
 ### iOS
 
 Open [`ios/Carvis/Carvis.xcodeproj`](ios/Carvis/Carvis.xcodeproj) in Xcode, configure signing and

@@ -22,6 +22,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+from log_config import log_event, register_values
 from spec_extract import COMPONENTS
 from spec_retrieval import LookupResult, SpecificationRefusal, format_records, ungrounded_numbers
 from spec_schema import VARIANTS, Vehicle
@@ -48,6 +49,23 @@ MAX_TRACE = 200
 SESSION_ONLY_TOOLS = ("confirm_vehicle", "set_work_context", "look_at_part")
 OPERATIONS = ("inspection", "installation", "alignment", "oil_and_filter", "oil_only", "overhaul_fill")
 SPEC_TYPES = ("torque", "fluid_capacity", "dimension", "tolerance")
+
+# Internal reasons that may appear in server logs. Phone-supplied reasons (call end, camera failure)
+# are free text: they stay in the phone's trace and are redacted from logs (M2 A6).
+_VEHICLE_FIELDS = ("make", "model", "year")
+# "vehicle corrected: <fields>" is also accepted when every field is a registered vehicle field.
+LOGGED_REASONS = frozenset({
+    "app", "call already bound", "spoken correction of the work context", "vapi end-of-call-report",
+    "vapi status-update", "vehicle edited in the app",
+})
+register_values("reason", LOGGED_REASONS)
+register_values("vehicle_field", (*_VEHICLE_FIELDS, *VARIANTS))
+# The tool names this server implements; any other name a webhook sends is redacted.
+TOOL_NAMES = ("confirm_vehicle", "set_work_context", "lookup_spec", "look_at_part")
+register_values("tool", TOOL_NAMES)
+register_values("component", COMPONENTS)
+register_values("operation", OPERATIONS)
+register_values("spec_type", SPEC_TYPES)
 
 LookupFn = Callable[[str, "ConversationSession", dict], Awaitable[LookupResult]]
 IdentifyFn = Callable[[bytes, str, "ConversationSession"], Awaitable[dict]]
@@ -135,7 +153,10 @@ class ConversationSession:
     def note(self, stage: str, **details: Any) -> None:
         self.trace.append({"at": round(time.time(), 3), "generation": self.generation, "stage": stage, **details})
         del self.trace[:-MAX_TRACE]
-        logger.info("conversation session=%s gen=%s stage=%s %s", self.session_id[:8], self.generation, stage, details)
+        # The trace keeps every detail for the phone; the server log keeps only what FIELD_POLICY
+        # permits, so phone-supplied reasons, model output and vehicle text are dropped (M2 A6).
+        log_event(logger, logging.INFO, "conversation note", stage=stage, session=self.session_id[:8],
+                  generation=self.generation, **details)
 
     @property
     def owner_first_name(self) -> str:
@@ -592,7 +613,8 @@ class ConversationTools:
         spoken = format_records(result.records, include_vehicle=False)
         extra = ungrounded_numbers(spoken, result.records)
         if extra:
-            logger.error("Refused to speak ungrounded numbers: %s", extra)
+            # The count only: the numbers are fragments of a generated answer (M2 A6).
+            logger.error("Refused to speak %d ungrounded numbers", len(extra))
             session.note("speech_rejected", numbers=extra)
             return self._entry(name, call_id, {"status": "unverified", "source_grounded": False})
         record = result.records[0]
