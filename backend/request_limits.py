@@ -30,6 +30,7 @@ from typing import Any, Callable, Coroutine
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Message, Receive
 
 KiB = 1024
@@ -65,9 +66,16 @@ def _declared_length(request: Request) -> int | None:
     return int(raw) if raw.isascii() and raw.isdigit() else -1
 
 
-def _announces_body(request: Request) -> bool:
+def announces_body(request: Request) -> bool:
+    """Whether the client said a body follows (a non-zero ``Content-Length`` or chunked encoding)."""
     length = _declared_length(request)
     return bool(length) or "chunked" in request.headers.get("transfer-encoding", "").lower()
+
+
+def closing(exc: StarletteHTTPException) -> HTTPException:
+    """The same HTTP error, answered with ``Connection: close``."""
+    return HTTPException(status_code=exc.status_code, detail=exc.detail,
+                         headers={**(exc.headers or {}), **CLOSE_CONNECTION})
 
 
 def limited_receive(request: Request, limit: BodyLimit, outcome: dict[str, Any]) -> Receive:
@@ -119,15 +127,20 @@ def body_limited_route(limits: dict[str, BodyLimit], default: BodyLimit) -> type
                 limited = Request(request.scope, receive=limited_receive(request, limit, outcome))
                 try:
                     response = await handler(limited)
-                except Exception:
+                except Exception as exc:
                     # The rejection, or whatever a handler raised after catching it.
                     if "response" in outcome:
                         return outcome["response"]
+                    # Starlette's base class: its multipart parser raises that, not FastAPI's subclass.
+                    if (isinstance(exc, StarletteHTTPException) and announces_body(request)
+                            and not outcome.get("body_complete")):
+                        # For example FastAPI's 400 for a body it could not parse, raised mid-body.
+                        raise closing(exc) from exc
                     raise
                 # A handler that swallowed the rejection must not answer as if the body were fine.
                 if "response" in outcome:
                     return outcome["response"]
-                if _announces_body(request) and not outcome.get("body_complete"):
+                if announces_body(request) and not outcome.get("body_complete"):
                     # Answered without reading the announced body (an unauthenticated /vapi-tool
                     # request, say): close, so the server does not drain it on keep-alive.
                     response.headers.update(CLOSE_CONNECTION)

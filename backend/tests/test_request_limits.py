@@ -192,6 +192,15 @@ def test_unread_announced_body_closes_the_connection(api):
     assert raw_request.last_headers.get("connection") == "close"
 
 
+def test_unparseable_streamed_body_closes_the_connection(no_work):
+    garbage = (b"not multipart at all " + b"\0" * MiB for _ in range(40))
+    status, _, consumed = run(raw_request("/vision-query", garbage, headers=[("content-length", str(5 * MiB))],
+                                          content_type=MULTIPART))
+    assert status == 400
+    assert not consumed["exhausted"]
+    assert raw_request.last_headers.get("connection") == "close"
+
+
 def test_accepted_requests_keep_the_connection_open(api):
     status, _, _ = run(raw_request("/conversation/sessions", [json.dumps(
         {"owner_name": "Gabriel", "vehicle": {"year": "2022", "make": "Subaru", "model": "WRX"}}).encode()]))

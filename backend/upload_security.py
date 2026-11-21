@@ -9,6 +9,10 @@ before FastAPI reads any body byte, and the body is then counted as it streams s
 
 The file itself must start with the ``%PDF-`` magic and be at most :data:`MAX_UPLOAD_BYTES`; the
 route checks both before it schedules ingestion, so no rejected request reaches LlamaParse.
+
+Every rejection that leaves the body unread (early 401/400/413, the streamed 413, and a parse error
+raised mid-body) carries ``Connection: close``, so the server does not drain a declared-huge body on
+keep-alive (M2 A6).
 """
 
 from __future__ import annotations
@@ -20,7 +24,10 @@ from typing import Any, Callable, Coroutine
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Message, Receive
+
+from request_limits import CLOSE_CONNECTION, announces_body, closing
 
 OPERATOR_TOKEN_ENV = "CARVIS_OPERATOR_TOKEN"
 OPERATOR_TOKEN_HEADER = "x-carvis-operator-token"
@@ -72,9 +79,13 @@ def _declared_length(request: Request) -> int | None:
     return int(raw) if raw.isascii() and raw.isdigit() else -1
 
 
-def limited_receive(receive: Receive, limit: int) -> Receive:
-    """Wrap an ASGI ``receive`` so the request body cannot exceed ``limit`` bytes."""
+def limited_receive(receive: Receive, limit: int, state: dict[str, bool] | None = None) -> Receive:
+    """Wrap an ASGI ``receive`` so the request body cannot exceed ``limit`` bytes.
+
+    ``state["complete"]`` becomes true once the whole body has been received.
+    """
     received = 0
+    state = {} if state is None else state
 
     async def wrapped() -> Message:
         nonlocal received
@@ -83,8 +94,11 @@ def limited_receive(receive: Receive, limit: int) -> Receive:
             received += len(message.get("body", b""))
             if received > limit:
                 # FastAPI re-raises HTTPException from body parsing, so this becomes a 413 and the
-                # multipart parser closes its spooled files.
-                raise HTTPException(status_code=413, detail=TOO_LARGE_DETAIL)
+                # multipart parser closes its spooled files. Connection: close stops the server
+                # draining the rest of the body on keep-alive (M2 A6).
+                raise HTTPException(status_code=413, detail=TOO_LARGE_DETAIL, headers=CLOSE_CONNECTION)
+            if not message.get("more_body", False):
+                state["complete"] = True
         return message
 
     return wrapped
@@ -104,14 +118,27 @@ class OperatorUploadRoute(APIRoute):
         async def guarded(request: Request) -> Response:
             presented = request.headers.getlist(OPERATOR_TOKEN_HEADER)
             # Exactly one token header: a duplicate is ambiguous across proxies, so it fails closed.
+            # Every early rejection leaves the body unread, so it closes the connection rather than
+            # let the server drain a declared-huge body on keep-alive (M2 A6).
             if len(presented) != 1 or not operator_request_authorized(presented[0]):
-                return JSONResponse(status_code=401, content=UNAUTHORIZED)
+                return JSONResponse(status_code=401, content=UNAUTHORIZED, headers=CLOSE_CONNECTION)
             declared = _declared_length(request)
             if declared == -1:
-                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length."})
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length."},
+                                    headers=CLOSE_CONNECTION)
             if declared is not None and declared > MAX_UPLOAD_BODY_BYTES:
-                return JSONResponse(status_code=413, content={"detail": TOO_LARGE_DETAIL})
-            limited = Request(request.scope, receive=limited_receive(request.receive, MAX_UPLOAD_BODY_BYTES))
-            return await handler(limited)
+                return JSONResponse(status_code=413, content={"detail": TOO_LARGE_DETAIL}, headers=CLOSE_CONNECTION)
+            state: dict[str, bool] = {}
+            limited = Request(request.scope, receive=limited_receive(request.receive, MAX_UPLOAD_BODY_BYTES, state))
+            try:
+                # FastAPI parses the whole form before the endpoint runs, so a normal response has
+                # always read the body; only a parse error raised mid-body can leave it unread.
+                return await handler(limited)
+            except StarletteHTTPException as exc:
+                # A body Starlette could not parse is rejected mid-stream: close instead of draining it.
+                unread = announces_body(request) and not state.get("complete")
+                if unread and (exc.headers or {}).get("connection") != "close":
+                    raise closing(exc) from exc
+                raise
 
         return guarded

@@ -149,6 +149,7 @@ async def raw_post(headers, chunks, *, path="/upload", method="POST"):
     await main.app(scope, receive, send)
     start = next(m for m in sent if m["type"] == "http.response.start")
     body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    raw_post.last_headers = {k.decode().lower(): v.decode() for k, v in start.get("headers", [])}
     return start["status"], body, consumed
 
 
@@ -648,3 +649,60 @@ def test_token_never_appears_in_logs_or_rejections(boot, spies, monkeypatch, cap
     assert TOKEN not in caplog.text
     for response in responses:
         assert TOKEN not in response.text
+
+
+# --- Connection closing (M2 A6) ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("headers, status", [
+    ({}, 401),
+    ({OPERATOR_TOKEN_HEADER: "wrong-token"}, 401),
+    ([(OPERATOR_TOKEN_HEADER, TOKEN), (OPERATOR_TOKEN_HEADER, TOKEN)], 401),
+    (authorized(**{"content-length": "abc"}), 400),
+    (authorized(**{"content-length": str(MAX_UPLOAD_BODY_BYTES + 1)}), 413),
+], ids=["no-token", "wrong-token", "duplicate-token", "malformed-length", "declared-oversize"])
+def test_early_rejections_close_the_connection_unread(spies, monkeypatch, headers, status):
+    """Without Connection: close the server reads and discards a declared-huge body on keep-alive."""
+    monkeypatch.setenv(OPERATOR_TOKEN_ENV, TOKEN)
+    if isinstance(headers, dict) and "content-length" not in {k.lower() for k in headers}:
+        headers = {**headers, "content-length": str(500 * MiB)}
+    elif isinstance(headers, list):
+        headers = headers + [("content-length", str(500 * MiB))]
+    returned, _, consumed = run(raw_post(headers, multipart_stream(pdf_chunks(200 * MiB))))
+    assert returned == status
+    assert consumed["bytes"] == 0
+    assert raw_post.last_headers.get("connection") == "close"
+    assert_rejected_without_work(spies)
+
+
+@pytest.mark.parametrize("declared", [None, "1024"], ids=["no-content-length", "understated-content-length"])
+def test_streamed_oversize_rejection_closes_the_connection(spies, monkeypatch, declared):
+    monkeypatch.setenv(OPERATOR_TOKEN_ENV, TOKEN)
+    headers = authorized() if declared is None else authorized(**{"content-length": declared})
+    status, body, consumed = run(raw_post(headers, multipart_stream(pdf_chunks(200 * MiB))))
+    assert status == 413
+    assert body.decode() == f'{{"detail":"{TOO_LARGE_DETAIL}"}}'
+    assert MAX_UPLOAD_BODY_BYTES < consumed["bytes"] <= MAX_UPLOAD_BODY_BYTES + MiB
+    assert not consumed["exhausted"]
+    assert raw_post.last_headers.get("connection") == "close"
+    assert_rejected_without_work(spies)
+
+
+def test_accepted_upload_keeps_the_connection_open(spies, monkeypatch):
+    monkeypatch.setenv(OPERATOR_TOKEN_ENV, TOKEN)
+    chunks = list(multipart_stream(pdf_chunks(MiB)))
+    status, _, consumed = run(raw_post(authorized(), chunks))
+    assert status == 202
+    assert consumed["bytes"] == sum(len(chunk) for chunk in chunks), "the whole body was read"
+    assert "connection" not in raw_post.last_headers
+
+
+def test_unparseable_streamed_body_closes_the_connection(spies, monkeypatch):
+    """FastAPI's 400 for a body it cannot parse arrives mid-stream; the rest must not be drained."""
+    monkeypatch.setenv(OPERATOR_TOKEN_ENV, TOKEN)
+    garbage = (b"not multipart at all " + b"\0" * MiB for _ in range(200))
+    status, _, consumed = run(raw_post(authorized(**{"content-length": str(40 * MiB)}), garbage))
+    assert status == 400
+    assert not consumed["exhausted"]
+    assert raw_post.last_headers.get("connection") == "close"
+    assert_rejected_without_work(spies)

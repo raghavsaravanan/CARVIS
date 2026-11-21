@@ -133,9 +133,12 @@ Unexpected failures return a fixed message, such as `Specification lookup is tem
 unavailable.`, never exception text; the reason is logged on the server.
 
 Carvis's own logs are JSON lines by default; set `CARVIS_LOG_FORMAT=text` for the human-readable
-format. Uvicorn's access and error lines keep uvicorn's plain-text format. Carvis's logs never contain
-the mechanic's questions, transcripts, answers or images (see
-[`docs/backend/architecture.md`](docs/backend/architecture.md#api-contracts)).
+format. Structured log fields pass an explicit allowlist (`FIELD_POLICY` in `backend/log_config.py`),
+so request paths log codes, counts, type names, known vocabularies and salted fingerprints of
+caller-supplied IDs, never the mechanic's questions, transcripts, answers, images, model output,
+phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own access and error lines
+(and the httpx and openai libraries' loggers) stay outside that policy until Track B1. Limits are listed in
+[`docs/backend/architecture.md`](docs/backend/architecture.md#api-contracts).
 
 ### iOS
 
