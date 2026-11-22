@@ -76,13 +76,13 @@ path_tier() {
     backend/purge_db.py|backend/conversation.py|backend/vapi_assistant.py|backend/vapi/*|\
     backend/schemas/*|backend/tests/test_specs_v2.py|backend/tests/test_ride_height.py|\
     backend/tests/test_conversation.py|backend/tests/test_vapi_assistant.py|\
-    backend/tests/fixtures/*|docs/backend/qdrant-v2-migration.md) echo 4 ;;
+    backend/tests/fixtures/*|docs/backend/qdrant-v2-migration.md|docs/architecture/07-brain.md) echo 4 ;;
     backend/main.py|backend/webhook_auth.py|backend/upload_security.py|backend/request_limits.py|\
     backend/deployment_config.py|backend/log_config.py|backend/setup.sh|backend/requirements*|\
     backend/spacetimedb/*|backend/tests/*|requirements.txt|runtime.txt|render.yaml|Procfile|\
     .renderignore|.gitignore|.gitattributes|.github/*|scripts/*|.claude/*|AGENTS.md|*/AGENTS.md|\
     CLAUDE.md|orca.yaml|docs/decisions/*|docs/PRD.md|docs/product/*|docs/README.md|\
-    docs/development-workflow.md|docs/architecture/12-m2-roadmap.md|\
+    docs/development-workflow.md|docs/architecture/*|docs/backend/*|\
     ios/Carvis/Carvis/Backend/*|ios/Carvis/Carvis/Config/*|ios/Carvis/*.plist|\
     ios/Carvis/*.entitlements|ios/Carvis/Carvis.xcodeproj/*) echo 3 ;;
     backend/*|ios/*) echo 2 ;;
@@ -201,7 +201,7 @@ if [[ -n "${since}" ]]; then
     prev_fork="$(git merge-base "${prev}" "${against_sha}")"
     if git merge-base --is-ancestor "${base}" "${prev_fork}"; then prev_effective="${prev_fork}"; fi
     task_paths="$( { printf '%s\n' "${paths}"; g diff --no-ext-diff --name-only "${prev_effective}" "${prev}"; } | sort -u)"
-    merged_in="$(g diff --no-ext-diff --name-only "${prev_effective}" "${effective}" | sort -u)"
+    merged_in="$(g diff --no-ext-diff --no-renames --name-only "${prev_effective}" "${effective}" | sort -u)"
     # Path lists go through the environment: BSD awk rejects newlines in -v values.
     delta="$(g diff --no-ext-diff --no-renames --name-status "${prev}" "${candidate}" \
       | RS_TASK="${task_paths}" RS_MERGED="${merged_in}" awk -F'\t' '
@@ -213,10 +213,18 @@ if [[ -n "${since}" ]]; then
     while IFS= read -r p; do
       if [[ -n "${p}" && "$(path_tier "${p}")" -ge 3 ]]; then merged_policy="${merged_policy}${p}"$'\n'; fi
     done <<< "${merged_in}"
+    merged_task="$(comm -12 <(printf '%s\n' "${task_paths}") <(printf '%s\n' "${merged_in}") | grep . || true)"
+    if [[ -n "${merged_task}" ]]; then
+      flag "Merged in since ${prev}: changes to this task's files" "${merged_task}"
+      material=1
+    fi
     if [[ -n "${merged_policy}" ]]; then
       flag "Merged in since ${prev}: T3+ files (policy, CI, scripts, dependencies, security)" "${merged_policy%$'\n'}"
-      echo "MATERIAL UPDATE: the reviews of ${prev} do not carry over; renew review."
       material=1
+    fi
+    if [[ "${material}" -eq 1 ]]; then
+      echo "MATERIAL UPDATE: the reviews of ${prev} do not carry over. Renew review in full: rerun"
+      echo "without --since and review the effective base to the candidate."
     fi
   else
     block "previous candidate ${prev} is not an ancestor; history changed, so a full review is required"
@@ -228,7 +236,7 @@ echo "== Integration drift =="
 drift="$(git rev-list --count "${candidate}..${against_sha}")"
 echo "commits on ${against} not in candidate: ${drift}"
 if [[ "${drift}" -gt 0 ]]; then
-  drifted="$(g diff --no-ext-diff --name-only "${fork}" "${against_sha}" | sort -u)"
+  drifted="$(g diff --no-ext-diff --no-renames --name-only "${fork}" "${against_sha}" | sort -u)"
   overlap="$(comm -12 <(printf '%s\n' "${drifted}") <(printf '%s\n' "${paths}") | grep . || true)"
   policy=""
   while IFS= read -r p; do

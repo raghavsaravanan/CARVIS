@@ -96,6 +96,19 @@ git mv backend/vapi/assistant_prompt.md docs/prompt-moved.md; git commit -qm mov
 expect rename-source-tier 1 'below the T4' bash "${R}" --tier T3 "$(git rev-parse origin/main)" HEAD
 quiet git revert --no-edit HEAD
 
+# Architecture documents: the Brain evidence contract is T4, the others T3.
+mkdir -p docs/architecture; printf 'b\n' > docs/architecture/07-brain.md; git add -A; git commit -qm brain
+expect floor-brain-T4 1 'below the T4' bash "${R}" --tier T3 "${BASE}" HEAD
+quiet git revert --no-edit HEAD
+# Isolated on a fresh branch, so no other task file raises the floor.
+git switch -qc docs/arch origin/main
+ABASE="$(git rev-parse HEAD)"
+mkdir -p docs/architecture docs/backend
+printf 'i\n' > docs/architecture/04-identity-tenancy-rls.md; git add -A; git commit -qm identity-doc
+expect floor-architecture-T3 1 'below the T3' bash "${R}" --tier T1 "${ABASE}" HEAD
+expect floor-architecture-reported 1 'minimum for these paths: T3' bash "${R}" --tier T1 "${ABASE}" HEAD
+git switch -q docs/t
+
 # Unusual path names cannot be classified and are refused; UTF-8 names are read unquoted.
 printf 'c\n' > "backend/vapi/café.py"; git add -A; git commit -qm utf8
 expect utf8-path-tier 1 'below the T4' bash "${R}" --tier T3 "${BASE}" HEAD
@@ -163,7 +176,9 @@ UPREV="$(git rev-parse HEAD)"
 (cd "${T}/origin" && printf 'l1\nl2\nl3-main\n' > docs/shared.md && git commit -qam main-edits-shared)
 quiet git fetch origin; quiet git merge --no-edit origin/main
 printf 'l1\nl2\nl3-main\n' > docs/shared.md; printf 'other\n' > docs/u.md; git add -A; git commit -qm revert-task-change
-expect since-merged-and-reverted 0 'M	docs/shared\.md' bash "${R}" --tier T1 --since "${UPREV}" "${UBASE}" HEAD
+expect since-merged-and-reverted 3 'M	docs/shared\.md' bash "${R}" --tier T1 --since "${UPREV}" "${UBASE}" HEAD
+expect merged-task-file-material 3 "changes to this task's files" bash "${R}" --tier T1 --since "${UPREV}" "${UBASE}" HEAD
+expect material-update-says-full-review 3 'without --since' bash "${R}" --tier T1 --since "${UPREV}" "${UBASE}" HEAD
 git switch -q docs/t
 
 # A clean-looking update that merged in T3+ files is a material update: reviews do not carry over.
@@ -179,16 +194,30 @@ quiet git merge --no-edit origin/main
 VREV2="$(git rev-parse HEAD~1)"
 expect clean-update-keeps-review 0 'no task-file changes' bash "${R}" --tier T1 --since "${VREV2}" "${VBASE}" HEAD
 
+# A T3+ file that main renamed away is material drift (rename sources count).
+git switch -qc docs/r origin/main
+RBASE="$(git rev-parse HEAD)"
+printf 'r\n' > docs/r.md; git add -A; git commit -qm r-task
+(cd "${T}/origin" && git mv scripts/x.sh docs/x-moved.md && git commit -qm move-policy)
+quiet git fetch origin
+expect drift-rename-source 3 'scripts/x\.sh' bash "${R}" --tier T1 "${RBASE}" HEAD
+git switch -q docs/t
+
 # The documented reviewer command (docs/development-workflow.md, "Review protocol"): it falls
 # back to the candidate's copy when main has none, uses main's copy when present, and its result
 # ends with REVIEWABLE. Piping instead would report success for a missing copy.
-run_documented() {
+run_documented() { # the command in docs/development-workflow.md, with --tier T3 <base> <candidate>
+  local rs status
   if git cat-file -e origin/main:scripts/review-scope.sh 2>/dev/null; then
-    git show origin/main:scripts/review-scope.sh > "${T}/review-scope.main.sh" \
-      && bash "${T}/review-scope.main.sh" --tier T3 "$1" "$2"
+    rs="$(mktemp "${TMPDIR:-/tmp}/review-scope.XXXXXX")" \
+      && git show origin/main:scripts/review-scope.sh > "${rs}" \
+      && bash "${rs}" --tier T3 "$1" "$2"
+    status=$?; rm -f "${rs}"
   else
     bash scripts/review-scope.sh --tier T3 "$1" "$2"
+    status=$?
   fi
+  return "${status}"
 }
 git switch -qc chore/w origin/main
 WBASE="$(git rev-parse HEAD)"
@@ -198,10 +227,15 @@ out="$(run_documented "${WBASE}" HEAD 2>&1)"; last="$(printf '%s\n' "${out}" | t
 [[ "${last}" == "REVIEWABLE: $(git rev-parse HEAD)"* ]] && { pass=$((pass+1)); echo "PASS documented-last-line"; } || { fail=$((fail+1)); echo "FAIL documented-last-line: ${last}"; }
 pipe_out="$(git show origin/main:scripts/review-scope.sh 2>/dev/null | bash -s -- --tier T3 "${WBASE}" HEAD; echo "rc=$?")"
 [[ "${pipe_out}" == "rc=0" ]] && { pass=$((pass+1)); echo "PASS pipe-hazard-demonstrated (empty output, exit 0)"; } || { fail=$((fail+1)); echo "FAIL pipe hazard not reproduced: ${pipe_out}"; }
-(cd "${T}/origin" && mkdir -p scripts && cp "${R}" scripts/review-scope.sh && git add -A && git commit -qm main-gets-script)
-quiet git fetch origin; quiet git merge --no-edit origin/main
+refute documented-fallback-is-candidate 'MAIN-COPY-MARKER' '== Review packet' 'REVIEWABLE' run_documented "${WBASE}" HEAD
+# main's copy carries a marker so the test can tell which copy ran.
+(cd "${T}/origin" && mkdir -p scripts && awk 'NR == 2 { print "echo MAIN-COPY-MARKER" } { print }' "${R}" > scripts/review-scope.sh && git add -A && git commit -qm main-gets-script)
+quiet git fetch origin; quiet git merge --no-edit -X theirs origin/main
 printf 'w\n' > docs/w.md; git add -A; git commit -qm w-task
-expect documented-main-copy 0 'REVIEWABLE: ' run_documented "$(git rev-parse origin/main)" HEAD
+expect documented-main-copy 0 'MAIN-COPY-MARKER' run_documented "$(git rev-parse origin/main)" HEAD
+out="$(run_documented "$(git rev-parse origin/main)" HEAD 2>&1)"
+[[ "$(printf '%s\n' "${out}" | tail -n 1)" == "REVIEWABLE: $(git rev-parse HEAD)"* ]] && { pass=$((pass+1)); echo "PASS documented-main-copy-last-line"; } || { fail=$((fail+1)); echo "FAIL documented-main-copy-last-line"; }
+ls "${TMPDIR:-/tmp}"/review-scope.?????? >/dev/null 2>&1 && { fail=$((fail+1)); echo "FAIL temporary copy left behind"; } || { pass=$((pass+1)); echo "PASS temporary-copy-removed"; }
 git switch -q docs/t
 
 # A submodule (gitlink) change is refused.

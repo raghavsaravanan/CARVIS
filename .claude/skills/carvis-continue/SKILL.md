@@ -123,7 +123,9 @@ Reviews inspect a committed candidate, never a working tree.
    `<type>(<area>): <summary> (M2 <row>)`. The body covers what changed, why, and the test count.
    Later corrections are new commits, never amends.
 2. **Review packet.** `git fetch origin main`, then
-   `scripts/review-scope.sh --tier <Tn> <base> <candidate>` must exit 0. Exit 1 is a defect to fix
+   `scripts/review-scope.sh --tier <Tn> <base> <candidate>`, run as the integration branch's copy
+   when it has one (`docs/development-workflow.md`, "Review protocol"), must exit 0 with the
+   last line `REVIEWABLE: <candidate> …`. Exit 1 is a defect to fix
    first; exit 3 means `origin/main` changed this task's files or a T3+ file: merge it (never
    rebase), rerun the checks, and run the packet again. If any review already happened, the merge
    is a correction: renew review as in item 5.
@@ -143,8 +145,8 @@ Reviews inspect a committed candidate, never a working tree.
 4. **`/carvis-pr-review`** on the candidate (`<base>..<candidate>`); in Orca mode the coordinator
    runs it.
 5. **Fix in-scope findings** as new commits, rerun the affected checks and the full baseline, and
-   renew review: a delta review (`review-scope.sh --since <previous candidate>`) for T1 and T2, a
-   full review for T3 and T4, by every required reviewer. Record out-of-scope findings as open
+   renew review: a delta review (`review-scope.sh --since <previous candidate>`) for T1 and T2,
+   unless it reports a material update, and a full review for T3 and T4, by every required reviewer. Record out-of-scope findings as open
    items.
 
 ## 5. Revalidate, push, draft PR, CI

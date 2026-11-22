@@ -224,15 +224,19 @@ changes are T3.
 
    ```bash
    if git cat-file -e origin/main:scripts/review-scope.sh 2>/dev/null; then
-     git show origin/main:scripts/review-scope.sh > "${TMPDIR:-/tmp}/review-scope.main.sh" \
-       && bash "${TMPDIR:-/tmp}/review-scope.main.sh" --tier <Tn> <base> <candidate>
+     rs="$(mktemp "${TMPDIR:-/tmp}/review-scope.XXXXXX")" \
+       && git show origin/main:scripts/review-scope.sh > "${rs}" \
+       && bash "${rs}" --tier <Tn> <base> <candidate>
+     status=$?; rm -f "${rs}"
    else   # main has no copy yet (the change that adds it): read scripts/review-scope.sh first
      bash scripts/review-scope.sh --tier <Tn> <base> <candidate>
+     status=$?
    fi
    ```
- Reviewers do not
-   receive the implementer's summary, reasoning, test conclusions, PR body or earlier verdicts; a
-   renewed review receives only the list of earlier findings to check.
+
+   Use `${status}` as the packet's exit status. Reviewers do not receive the implementer's
+   summary, reasoning, test conclusions, PR body or earlier verdicts; a renewed review receives
+   only the list of earlier findings to check.
 3. **Review.** Reviewers read the pinned revisions (`git show <sha>:<path>`, `git diff`), not a
    working tree that may change, and also read the callers, contracts and scoped policies that the
    change affects. They report on every listed file, with `file:line`, a failure scenario,
@@ -241,7 +245,8 @@ changes are T3.
    own.
 4. **Correction.** A fix makes a new candidate: rerun the affected checks and the full baseline,
    then renew review. A delta review uses `review-scope.sh --since <previous candidate>`, which
-   lists every file the correction touched, including files reverted to the base; a full review
+   lists every file the correction touched, including files reverted to the base (if it reports
+   a material update, review in full instead); a full review
    covers the effective base to the new candidate. Every required reviewer class renews.
 5. **Revalidation before approval.** Fetch again and rerun `review-scope.sh`. Exit 3 means the
    integration branch changed this task's files or a policy, CI, script or dependency file: merge
@@ -249,7 +254,8 @@ changes are T3.
    drift check: read the drifted files for contract, import or fixture effects on this task and
    record the result in the PR. A clean update is a merge of `origin/main` (including GitHub's
    "Update branch") after which `review-scope.sh --since <reviewed candidate>` exits 0: it lists no
-   task-file changes, and nothing merged in has a T3+ floor (otherwise exit 3, "MATERIAL UPDATE"). It keeps its reviews, but needs that drift check, the full baseline and green
+   task-file changes, and nothing merged in changed a task file or has a T3+ floor (otherwise exit
+   3, "MATERIAL UPDATE", and the review is renewed in full). It keeps its reviews, but needs that drift check, the full baseline and green
    CI. Any other change to the candidate, including a conflicted or material update, renews review
    under step 4.
 6. **PR head pinning.** The PR records the reviewed candidate SHA. Before asking the owner to

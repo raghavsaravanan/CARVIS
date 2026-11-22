@@ -131,6 +131,7 @@ venv_valid() {
     && .venv/bin/python -c 'import fastapi, pytest' >/dev/null 2>&1 \
     && locked_versions_installed
 }
+: > "${LOCK_REPORT}"
 if venv_valid; then
   echo "OK: .venv matches ${REQUIREMENTS} and validates; skipped."
 elif [[ "${CHECK_ONLY}" -eq 1 ]]; then
@@ -188,6 +189,7 @@ node_valid() {
     && node_locked_versions_installed \
     && "${MODULE}/node_modules/.bin/tsc" --version >/dev/null 2>&1
 }
+: > "${LOCK_REPORT}"
 if node_valid; then
   echo "OK: node_modules matches package-lock.json and validates; skipped."
 elif [[ "${CHECK_ONLY}" -eq 1 ]]; then

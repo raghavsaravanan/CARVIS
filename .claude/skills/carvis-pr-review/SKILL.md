@@ -2,7 +2,7 @@
 name: carvis-pr-review
 description: Review a CARVIS branch or pull request — git diff, scope, protected boundaries, security and privacy, migration safety, test verification, CI status, PR readiness, and rollback documentation. Use before opening or marking ready a PR, or when asked to review a diff, branch, or PR number. Read-only; never merges, approves, or pushes.
 argument-hint: "[PR number | <base>..<candidate> | branch | blank for current branch] [T1-T4]"
-allowed-tools: Read Grep Glob Bash(git status *) Bash(git fetch origin main) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git ls-files *) Bash(git grep *) Bash(git rev-parse *) Bash(git merge-base *) Bash(gh pr view *) Bash(gh pr diff *) Bash(gh pr checks *)
+allowed-tools: Read Grep Glob Bash(git status *) Bash(git fetch origin main) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git ls-files *) Bash(git grep *) Bash(git rev-parse *) Bash(git merge-base *) Bash(git cat-file *) Bash(gh pr view *) Bash(gh pr diff *) Bash(gh pr checks *)
 ---
 
 # CARVIS pull-request review
@@ -26,11 +26,15 @@ git fetch origin main
 # bash (a pipeline reports bash's status, so a missing copy looks like success). Accept only exit 0
 # with the last line "REVIEWABLE: <candidate> ...".
 if git cat-file -e origin/main:scripts/review-scope.sh 2>/dev/null; then
-  git show origin/main:scripts/review-scope.sh > "${TMPDIR:-/tmp}/review-scope.main.sh" \
-    && bash "${TMPDIR:-/tmp}/review-scope.main.sh" --tier <Tn> <base> <candidate>
+  rs="$(mktemp "${TMPDIR:-/tmp}/review-scope.XXXXXX")" \
+    && git show origin/main:scripts/review-scope.sh > "${rs}" \
+    && bash "${rs}" --tier <Tn> <base> <candidate>
+  status=$?; rm -f "${rs}"
 else   # main has no copy yet (the change that adds it): read scripts/review-scope.sh first
   bash scripts/review-scope.sh --tier <Tn> <base> <candidate>
+  status=$?
 fi
+# status is the packet's exit status; the temporary copy is removed afterwards.
 git diff --no-ext-diff <effective base>..<candidate>      # effective base is printed by review-scope
 gh pr view <n> --repo raghavsaravanan/CARVIS   --json title,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,statusCheckRollup
 gh pr checks <n> --repo raghavsaravanan/CARVIS                    # when a PR exists

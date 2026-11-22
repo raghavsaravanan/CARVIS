@@ -42,6 +42,10 @@ cp "${meta}" "${T}/METADATA.orig"
 sed 's/^Version: .*/Version: 99.0.0/' "${T}/METADATA.orig" > "${meta}"
 expect check-detects-version-drift 1 'not at the locked versions' bash "${B}" --check
 expect check-names-drifted-package 1 'iniconfig: installed 99\.0\.0' bash "${B}" --check
+mv backend/spacetimedb/module/node_modules/.carvis-bootstrap "${T}/node-stamp"
+out="$(bash "${B}" --check 2>&1)"
+if printf '%s\n' "${out}" | sed -n '/== SpacetimeDB/,$p' | grep -q iniconfig; then fail=$((fail+1)); echo "FAIL python mismatch repeated under the Node heading"; else pass=$((pass+1)); echo "PASS mismatch-report-per-section"; fi
+mv "${T}/node-stamp" backend/spacetimedb/module/node_modules/.carvis-bootstrap
 cp "${T}/METADATA.orig" "${meta}"
 expect version-restored 0 'Bootstrap complete' bash "${B}" --check
 # A Node package at a version other than the locked one (npm ls would accept it) is detected.
