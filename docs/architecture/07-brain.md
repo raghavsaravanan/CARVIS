@@ -28,14 +28,15 @@ resolved subject, operation, property and position):
 1. **Authoritative scope (PostgreSQL first, read first).** One read-only transaction at
    `REPEATABLE READ` enumerates the applicable scope conservatively: every evidence record for the
    resolved subject (through reviewed aliases and across all revisions of the same source) whose
-   applicability matches the confirmed snapshot, **plus its dependency closure** (procedure steps,
-   prerequisite specifications, linked warnings), in any state, with `state_version`,
-   `payload_digest`, withdrawal reason and publication status (whether its decision is in the
-   generation the serving alias activated, as recorded in PostgreSQL), plus
-   `system_meta.decision_seq`. Applicability is exact: an attribute the record requires that the
-   snapshot lacks is unknown, not a wildcard, and yields `clarification`. More than **256** records
-   in the scope, dependency closure included, refuses with today's `clarification` ("narrow the
-   component and operation"); the set is never truncated.
+   applicability matches the confirmed snapshot or depends on an attribute the snapshot lacks
+   (included as *undetermined*, never dropped), **plus its dependency closure** (procedure steps,
+   prerequisite specifications, linked warnings), in the states `verified`, `withdrawn` and
+   `quarantined`, with `state_version`, `payload_digest`, withdrawal reason and publication status
+   (whether its decision is in the generation the serving alias activated, as recorded in
+   PostgreSQL), plus `system_meta.decision_seq`. `pending` and `rejected` records are excluded here,
+   before any applicability evaluation, and do not count toward the limit: they neither authorize
+   nor block. More than **256** records in the scope, dependency closure included, refuses with
+   today's `clarification` ("narrow the component and operation"); the set is never truncated.
 2. **Projection completeness, both directions.** (a) Every *verified and published* authoritative
    record must have a matching serving point (conditions 1 to 3 below); missing or stale is a
    **blocker** for its scope (`unverified`) and is flagged for reconciliation. (b) The same exact
@@ -46,8 +47,11 @@ resolved subject, operation, property and position):
    PostgreSQL record is withdrawn with a non-blocking reason (`incorrect_extraction`, `superseded`,
    `rights`) and has a matching tombstone is removed exactly as in the table below. Any other point
    that is not a verified and published authoritative record (unknown to PostgreSQL, or ahead of or
-   mismatched with it) is a **blocker** (`unverified`): the projection is ahead of PostgreSQL or
-   PostgreSQL was restored older, and reconciliation runs.
+   mismatched with it, including a point for a `pending` or `rejected` record) is a **blocker**
+   (`unverified`): it is a projection-integrity anomaly (the projection is ahead of PostgreSQL, or
+   PostgreSQL was restored older), and reconciliation runs. Record state and projection integrity
+   are separate checks: an excluded `pending` record never blocks, but its presence in the serving
+   collection does.
 3. **Control witness, after the snapshot.** The read order is fixed: PostgreSQL snapshot, then the
    serving-collection read, then one batched control-collection read for every authoritative
    evidence ID, compared against the captured `state_version` (condition 4 below) and the snapshot
@@ -55,8 +59,10 @@ resolved subject, operation, property and position):
    so one that started before the control read is caught by the snapshot or by the tombstone.
 4. **Evaluation over the authoritative set, not the top results.** Conflict, applicability,
    procedure-completeness and dependency checks run over every authoritative record not removed by
-   the table below. A missing required step or dependency is `incomplete`; an unresolved conflict is
-   `conflict`.
+   the table below. Applicability is exact: an *undetermined* record among them (an attribute it
+   requires is unknown, never a wildcard) yields `clarification`. A missing required step or
+   dependency is `incomplete`; an unresolved conflict is `conflict`. Integrity blockers from steps 2
+   and 3 and the table refuse before any clarification.
 5. **Final witness before release.** Immediately before the compiled answer is released for
    delivery, one batched control read re-checks the tombstones of **every** authoritative evidence ID
    in the scope and the control singleton. Because a withdrawal writes its tombstone before it
@@ -101,8 +107,9 @@ and the final control-singleton read (no per-record round trips).
 | All four conditions hold | continues to the unchanged `evaluate_candidates` |
 | `verified` and published, but missing or stale in the projection | **blocker** for its scope: `unverified`; flagged for reconciliation |
 | `verified` but not yet published (activation pending) | does not authorize; **blocks** only if it conflicts with the answer or is a required step or dependency of it |
-| `pending` or `rejected` | not evidence: neither authorizes nor blocks (review only) |
-| Serving point in scope that is not a verified and published authoritative record, other than a matching non-blocking withdrawal | **blocker**: `unverified`; reconciliation |
+| `pending` or `rejected` in PostgreSQL | not evidence: excluded before applicability evaluation and from the 256 limit; neither authorizes nor blocks (review only) |
+| Serving point in scope that is not a verified and published authoritative record (including a point for a `pending` or `rejected` record), other than a matching non-blocking withdrawal | **blocker**: `unverified` (projection-integrity anomaly); reconciliation |
+| Remaining record (not removed) whose applicability is undetermined | `clarification`, after any integrity blocker |
 | Withdrawn in PostgreSQL with reason `incorrect_extraction`, `superseded` or `rights`, and a matching tombstone | removed **before** conflict evaluation |
 | Withdrawn with reason `suspect_conflict`, or `quarantined`, or unknown to PostgreSQL | **blocker**: the scope refuses (`conflict` or `unverified`) |
 | Any condition above fails (digest, status, version mismatch, tombstone with no matching PostgreSQL withdrawal) | **blocker** for the evidence's scope: `unverified` refusal; evidence flagged for reconciliation |
@@ -393,8 +400,11 @@ Each case runs against real PostgreSQL and a Qdrant test instance, asserts the u
 17. **Withdrawal race:** a withdrawal's tombstone is written after the PostgreSQL snapshot but
     before the control read ⇒ the record is blocked; a decision committed between the control read
     and the final witness ⇒ rerun, and a second change ⇒ `unverified`.
-18. **Pending is inert:** a `pending` record neither authorizes an answer nor blocks a verified one;
-    a verified but unpublished record blocks only when it conflicts or is a required step.
+18. **Pending is inert in PostgreSQL:** a `pending` or `rejected` record neither authorizes an answer
+    nor blocks a verified one, is not evaluated for applicability and does not count toward the
+    scope limit; a verified but unpublished record blocks only when it conflicts or is a required
+    step. A serving point for a `pending` or `rejected` record is a projection-integrity anomaly:
+    `unverified` and reconciliation.
 19. **Unknown applicability:** a record requiring an attribute the snapshot lacks ⇒
     `clarification`, never a wildcard match.
 20. **Ranking boundary:** lexical or dense discovery that surfaces a record outside the
@@ -409,3 +419,7 @@ Each case runs against real PostgreSQL and a Qdrant test instance, asserts the u
     advances ⇒ the final witness sees the tombstone and reruns; the evidence is blocked.
 24. **Serving-side overflow:** 256 authoritative records plus a 257th applicable serving point that is
     unknown to PostgreSQL ⇒ `clarification`; no truncated read that misses the unknown point.
+25. **Inert states do not interfere:** with a verified answer in scope, 300 `pending` records and a
+    `rejected` record that require an attribute the snapshot lacks ⇒ the verified answer is
+    delivered: no `clarification`, no scope-limit refusal. A `superseded` withdrawal with a matching
+    tombstone and an undetermined attribute is removed and does not trigger `clarification`.
