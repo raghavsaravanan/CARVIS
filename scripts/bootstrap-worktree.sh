@@ -39,24 +39,28 @@ NODE_STAMP="${MODULE}/node_modules/.carvis-bootstrap"
 TARGET_PYTHON="3.12"
 problems=0
 
-# One bootstrap per checkout at a time. The lock lives in this worktree's private git directory,
-# never in the working tree, so it cannot appear in a diff or block review-scope.
+# One installing bootstrap per checkout at a time (--check takes no lock). The lock is a symlink in
+# this worktree's private git directory whose target is the holder's pid: creating it is atomic,
+# so the lock never exists without an owner, and it can never appear in a diff. A lock left by a
+# killed run is reported, never taken over, because a takeover can race another takeover.
 LOCK="$(git rev-parse --absolute-git-dir)/carvis-bootstrap.lock"
-if ! mkdir "${LOCK}" 2>/dev/null; then
-  holder="$(cat "${LOCK}/pid" 2>/dev/null || true)"
-  if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
-    echo "ERROR: another bootstrap (pid ${holder}) is running in this checkout." >&2
-    exit 1
-  fi
-  echo "NOTE: removing a stale bootstrap lock."
-  rm -rf "${LOCK}"
-  mkdir "${LOCK}"
-fi
-echo $$ > "${LOCK}/pid"
+owns_lock=0
 # The cleanup must never turn a failure into success. Bash 3.2 (macOS) reports status 0 to an EXIT
 # trap after a `set -u` abort, so success is only what reaches the end of the script.
 finished=0
-trap 'status=$?; rm -rf "${LOCK}"; [[ "${finished}" -eq 1 || "${status}" -ne 0 ]] || status=1; exit "${status}"' EXIT
+trap 'status=$?; [[ "${owns_lock}" -eq 0 ]] || rm -f "${LOCK}"; [[ "${finished}" -eq 1 || "${status}" -ne 0 ]] || status=1; exit "${status}"' EXIT
+if [[ "${CHECK_ONLY}" -eq 0 ]]; then
+  if ! ln -s "$$" "${LOCK}" 2>/dev/null; then
+    holder="$(readlink "${LOCK}" 2>/dev/null || true)"
+    if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
+      echo "ERROR: another bootstrap (pid ${holder}) is running in this checkout." >&2
+    else
+      echo "ERROR: stale bootstrap lock from pid ${holder:-unknown}; if no bootstrap is running, remove ${LOCK} and rerun." >&2
+    fi
+    exit 1
+  fi
+  owns_lock=1
+fi
 
 digest() { shasum -a 256 "$@" | awk '{print $1}' | tr '\n' ' '; }
 
@@ -85,15 +89,50 @@ if [[ -x .venv/bin/python ]]; then
   fi
 fi
 venv_want="${TARGET_PYTHON} $(digest "${REQUIREMENTS}" backend/requirements.txt)"
+# Every locked requirement that applies to this platform is installed at exactly its locked
+# version (pip check alone accepts compatible upgrades).
+locked_versions_installed() {
+  .venv/bin/python -I - "${REQUIREMENTS}" >/dev/null 2>&1 <<'LOCKCHECK'
+import re
+import sys
+from importlib import metadata
+
+try:
+    from packaging.markers import Marker
+except ImportError:  # pip vendors packaging; every venv has pip
+    from pip._vendor.packaging.markers import Marker
+
+
+def norm(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+want = {}
+for line in open(sys.argv[1], encoding="utf-8"):
+    m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([^\s;\\]+)\s*(?:;\s*([^\\]+?))?\s*\\?$", line.rstrip("\n"))
+    if not m:
+        continue
+    name, version, marker = m.groups()
+    if marker and not Marker(marker).evaluate():
+        continue
+    want[norm(name)] = version
+have = {norm(d.metadata["Name"]): d.version for d in metadata.distributions()}
+bad = [f"{n}: installed {have.get(n, 'missing')}, locked {v}" for n, v in sorted(want.items()) if have.get(n) != v]
+if bad or not want:
+    print("\n".join(bad[:10]) or "no locked requirements parsed", file=sys.stderr)
+    sys.exit(1)
+LOCKCHECK
+}
 venv_valid() {
   [[ -f "${VENV_STAMP}" && "$(cat "${VENV_STAMP}")" == "${venv_want}" ]] \
     && .venv/bin/python -m pip check >/dev/null 2>&1 \
-    && .venv/bin/python -c 'import fastapi, pytest' >/dev/null 2>&1
+    && .venv/bin/python -c 'import fastapi, pytest' >/dev/null 2>&1 \
+    && locked_versions_installed
 }
 if venv_valid; then
   echo "OK: .venv matches ${REQUIREMENTS} and validates; skipped."
 elif [[ "${CHECK_ONLY}" -eq 1 ]]; then
-  echo "MISSING: .venv absent, out of date with ${REQUIREMENTS}, or failing pip check."
+  echo "MISSING: .venv absent, out of date with ${REQUIREMENTS}, failing pip check, or not at the locked versions."
   problems=1
 else
   reinstall=()

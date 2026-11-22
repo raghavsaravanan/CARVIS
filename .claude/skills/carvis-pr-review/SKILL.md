@@ -27,11 +27,14 @@ gh pr view <n> --repo raghavsaravanan/CARVIS   --json title,baseRefName,baseRefO
 gh pr checks <n> --repo raghavsaravanan/CARVIS                    # when a PR exists
 ```
 
-For a PR, check out its head first and use its `headRefOid` as the candidate; if the local
-checkout differs, the review is of the wrong revision. `review-scope.sh` lists every changed file
+Run this skill only in a worktree whose `HEAD` is the candidate (the implementer's frozen
+worktree, or one the coordinator creates at the PR's `headRefOid`); the skill never checks out,
+switches, or creates branches. For a PR, compare its `headRefOid` with the local `HEAD` and stop if
+they differ: the review would be of the wrong revision. `review-scope.sh` lists every changed file
 with its type and mode, flags symlinks, binary files, mode changes, archive moves, quality-gate
 and dependency changes and shared git hooks, enforces the path-based minimum tier, and reports
-integration drift. Without a tier argument, use the minimum it prints.
+integration drift. Review at the highest of the tier argument, the tier the PR or task contract
+declares, and the minimum it prints.
 
 Read the full diff of every listed file, each changed file's nearest `AGENTS.md`, and the
 unchanged callers, contracts and tests the change affects. Report on every listed file, even when

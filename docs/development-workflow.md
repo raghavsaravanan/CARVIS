@@ -56,11 +56,15 @@ Implement only the assigned scope
         ↓
 Run relevant tests and inspect the diff
         ↓
-Commit and push to origin
+Commit the candidate locally
         ↓
-Open a draft PR targeting main
+Review packet (scripts/review-scope.sh) and independent review of that candidate
         ↓
-CI and independent review
+Fix as new commits, rerun checks, renew review
+        ↓
+Revalidate against origin/main, then push to origin
+        ↓
+Open a draft PR targeting main; CI
         ↓
 Human-approved squash merge
 ```
@@ -129,7 +133,10 @@ fresh-context reviewer because there is no coordinator.
 Dispatch is not authorization. Git writes need the owner's approval (`../AGENTS.md`), so a task
 contract records who authorized which writes (commit, push to `origin`, draft PR). A roadmap row
 still needs the owner to invoke `/carvis-continue` or say "continue M2"; the contract records that
-instruction. Without an authorization line the implementer stops before committing.
+instruction. Without an authorization line the implementer stops before committing. The
+implementer cannot verify that line, so it is an instruction-only control: it names where the owner
+gave the approval (session, message or comment) so the owner can audit it, and it can never cover
+merging, marking ready, deployment, or any provider or production change.
 
 ### Task contract
 
@@ -191,7 +198,7 @@ changes are T3.
 
 | | T1 docs and cosmetic | T2 product | T3 security, identity, tenancy, privacy, persistence, migration | T4 evidence, automotive safety, production data |
 | --- | --- | --- | --- | --- |
-| Architecture | None | Conform to accepted contracts; a contract change makes it T3 | An accepted decision record covers the design; stop if a relevant decision is open | T3, plus the safety invariants listed in the contract; owner sign-off on any change to evidence policy |
+| Architecture | None | Conform to accepted contracts; a contract change makes it T3 | Name the decision records the design relies on; a materially affecting decision that is not accepted blocks it (the Track B gate in `/carvis-continue`) | T3, plus the safety invariants listed in the contract; owner sign-off on any change to evidence policy |
 | Regression | Narrowest checks and the full baseline | Plus success and failure tests for new behavior | Plus `/carvis-regression` section 5 isolation and authorization negatives; migrations up and down on a scratch store; `scripts/check-runtime-lock.sh` when dependencies change | Plus `/carvis-regression` sections 3 and 4: pipeline preservation and adversarial refusals |
 | Mutation | Each new guard, if any | Each new guard is disabled and the suite must fail | Plus every touched authentication, tenant, secret and limit check | Plus every touched applicability, evidence and refusal condition |
 | Security | `/carvis-pr-review` | `/carvis-pr-review` | Plus threat notes in the PR (spoofing, IDOR, replay, secrets, logging) | Plus a provider and production boundary statement |
@@ -204,8 +211,9 @@ changes are T3.
 1. **Candidate.** Implement, run the narrow checks, and commit. Corrections are new commits, never
    amends, so each delta stays reviewable.
 2. **Packet.** `git fetch origin main`, then `scripts/review-scope.sh --tier <Tn> <base> <candidate>`
-   must exit 0. Its output, the task contract and the list of policy files form the review
-   packet. Reviewers do not receive the implementer's summary, reasoning, test conclusions, PR
+   must exit 0. `<base>` is the integration commit the task started from, never a task commit; the
+   script refuses a task commit, a missing integration ref, and a declared tier below the path
+   floor. Its output, the task contract and the list of policy files form the review packet. Reviewers do not receive the implementer's summary, reasoning, test conclusions, PR
    body or earlier verdicts; a renewed review receives only the list of earlier findings to check.
 3. **Review.** Reviewers read the pinned revisions (`git show <sha>:<path>`, `git diff`), not a
    working tree that may change, and also read the callers, contracts and scoped policies that the
@@ -214,13 +222,17 @@ changes are T3.
    evidence; a reviewer that can run checks read-only (see the isolated Codex profile) may add its
    own.
 4. **Correction.** A fix makes a new candidate: rerun the affected checks and the full baseline,
-   then renew review. A delta review uses `review-scope.sh --since <previous candidate>`; a full
-   review covers the effective base to the new candidate. Every required reviewer class renews.
+   then renew review. A delta review uses `review-scope.sh --since <previous candidate>`, which
+   lists every file the correction touched, including files reverted to the base; a full review
+   covers the effective base to the new candidate. Every required reviewer class renews.
 5. **Revalidation before approval.** Fetch again and rerun `review-scope.sh`. Exit 3 means the
    integration branch changed this task's files or a policy, CI, script or dependency file: merge
    `origin/main` (never rebase), rerun the checks and renew review. Exit 0 with drift still needs a
    drift check: read the drifted files for contract, import or fixture effects on this task and
-   record the result in the PR.
+   record the result in the PR. A conflict-free update merge of non-material drift (including
+   GitHub's "Update branch") needs that drift check, the full baseline and green CI, but no renewed
+   review: `review-scope.sh --since` then shows no task-file changes. A conflicted or material
+   update renews review under step 4.
 6. **PR head pinning.** The PR records the reviewed candidate SHA. Before asking the owner to
    approve, and again at merge, compare the PR's current head and base with the reviewed values:
 
@@ -229,8 +241,7 @@ changes are T3.
      --json headRefOid,baseRefName,baseRefOid,headRepositoryOwner,isCrossRepository,statusCheckRollup
    ```
 
-   Any later push, including GitHub's "Update branch", makes the review stale until it is renewed
-   under step 5.
+   Any later push makes the review stale until step 5 is applied to the new head.
 
 ### Handoff and workflow record
 
@@ -260,7 +271,7 @@ permission option and inherits the user's own settings for that agent.
 
 | Profile | Command | Filesystem | Network and GitHub | Orca reporting | Use |
 | --- | --- | --- | --- | --- | --- |
-| Codex isolated | `codex --cd <scratch> --sandbox workspace-write --ask-for-approval never -c 'projects."<scratch>".trust_level="trusted"'` | Enforced: writes only to `<scratch>` and temporary directories; reads anywhere | Enforced: no network, so no GitHub API, push or DNS | None: the Orca CLI is blocked, so the worker writes its report in `<scratch>` and the coordinator collects it | Cross-model review of T3 and T4; can run `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider` read-only |
+| Codex isolated | `codex --cd <scratch> --sandbox workspace-write --ask-for-approval never -c 'projects."<scratch>".trust_level="trusted"'` | Enforced: writes only to `<scratch>` and temporary directories; reads anywhere | Enforced: no network, so no GitHub API, push or DNS | None: the Orca CLI is blocked. The worker writes its report in `<scratch>` and ends its turn; Orca escalates "stopped without reporting" with the last output line. The coordinator reads the report, then settles with `orca orchestration worker-abandon --dispatch <id>` and `task-update --status completed --result "<summary>"` (`worker-stop` reports `stop_unknown` for these terminals). Tested 2026-11-22 | Cross-model review of T3 and T4; can run `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider` read-only |
 | Codex connected | the isolated command plus `-c sandbox_workspace_write.network_access=true` | Enforced, as above | **Not restricted**: the user's GitHub credentials in the keyring work (`gh api`, authenticated `git push --dry-run` both succeeded); clearing `GH_*` variables is bypassed by `env -u` | `worker_done` works | T1 and T2 review, and any task whose worker must report through Orca |
 | Codex read-only | `--sandbox read-only` | Enforced, no writes at all | No network | Blocked, and no scratch to write a report | Do not use |
 | Claude worker | `orca orchestration worker-start --agent claude` | Inherits the user's Claude settings, which may bypass permission prompts | Inherits | Works | Implementer; restrictions are instruction-only. A restricted Claude profile is untested |
@@ -293,7 +304,9 @@ procedural controls until the owner changes them.
   unpushed or pushed, and the owner decides whether to continue it by hand, re-dispatch it from a
   fresh worktree, or abandon it. There is no automatic resume.
 - If Orca is unavailable, `/carvis-continue` still works in standalone mode under its own
-  invocation rules; the PR remains the record.
+  invocation rules for T1 and T2. T3 and T4 need the isolated Codex review, which runs through Orca;
+  without it the draft PR is not opened and the review is reported as outstanding. The PR remains
+  the record.
 
 ## Required checks
 

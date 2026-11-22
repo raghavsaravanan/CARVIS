@@ -84,8 +84,9 @@ decisions.
 **Tier.** Determine the risk tier (`docs/development-workflow.md`, "Risk tiers"): the contract's
 tier in Orca mode, otherwise the highest that applies to the row. Roadmap rows touching identity,
 tenancy, persistence, privacy or migration are T3; rows touching evidence, retrieval, answers or
-production data are T4. For T3 and T4, an accepted decision record must cover the design; a
-`proposed` record does not. Run every requirement of the tier on top of the steps below.
+production data are T4. For T3 and T4, name the decision records the design relies on; the Track B
+gate above decides whether an open one blocks the row. Run every requirement of the tier on top of
+the steps below.
 
 ## 3. Implement
 
@@ -130,8 +131,9 @@ Reviews inspect a committed candidate, never a working tree.
      the review-scope output, but not your conclusions, summary or test results. Ask for findings
      on every listed file, with `file:line`, a failure scenario, VERIFIED or INFERRED, and the
      candidate SHA. For T3 and T4 the Codex cross-model review is also required
-     (`docs/development-workflow.md`, "Worker launch profiles", isolated profile). If it cannot be
-     run, do not open the PR; report the review as outstanding.
+     (`docs/development-workflow.md`, "Worker launch profiles", isolated profile); for that one
+     review this session acts as its coordinator through Orca. If Orca or Codex is unavailable, do
+     not open the PR; report the review as outstanding.
    - Orca mode: send the coordinator a handoff (`worker_done`) with the base and candidate SHAs, the
      review-scope exit status, and the checks run with labels, then wait. The coordinator
      commissions every review and sends findings, or approval to open the PR, as a follow-up task.

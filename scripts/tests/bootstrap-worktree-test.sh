@@ -30,12 +30,19 @@ expect check-fresh 1 'MISSING: \.venv' bash "${B}" --check
 expect install 0 'Bootstrap complete' bash "${B}"
 expect rerun-skips 0 'validates; skipped\..*' bash "${B}"
 expect check-ok 0 'Bootstrap complete' bash "${B}" --check
-[[ -z "$(git status --porcelain --untracked-files=all | grep -v '^?? scripts/bootstrap-worktree.sh$')" ]] \
+[[ -z "$(git status --porcelain --untracked-files=all | grep -vE '^(\?\?| M) scripts/bootstrap-worktree.sh$')" ]] \
   && { pass=$((pass+1)); echo "PASS tree-clean-after-install"; } || { fail=$((fail+1)); echo "FAIL install left files in git status"; git status --short; }
 # Corrupt the Python environment: the stamp still matches, validation must catch it.
 rm -rf .venv/lib/python3.12/site-packages/fastapi
 expect check-detects-broken-venv 1 'MISSING: \.venv' bash "${B}" --check
 expect repairs-venv 0 'OK: \.venv installed' bash "${B}"
+# A package at a version other than the locked one (pip check would accept it) is detected.
+meta="$(ls -d .venv/lib/python3.12/site-packages/iniconfig-*.dist-info)/METADATA"
+cp "${meta}" "${T}/METADATA.orig"
+sed 's/^Version: .*/Version: 99.0.0/' "${T}/METADATA.orig" > "${meta}"
+expect check-detects-version-drift 1 'not at the locked versions' bash "${B}" --check
+cp "${T}/METADATA.orig" "${meta}"
+expect version-restored 0 'Bootstrap complete' bash "${B}" --check
 # Corrupt node_modules.
 rm -rf backend/spacetimedb/module/node_modules/typescript
 expect check-detects-broken-node 1 'MISSING: .*node_modules' bash "${B}" --check
@@ -61,14 +68,18 @@ awk '{ print } /^trap .status=/ { print ": \"${carvis_test_unbound_variable}\"" 
 grep -q carvis_test_unbound_variable scripts/bootstrap-abort.sh || { fail=$((fail+1)); echo "FAIL could not inject abort"; }
 expect unbound-abort-fails 1 'unbound variable' bash scripts/bootstrap-abort.sh --check
 rm -f scripts/bootstrap-abort.sh
-# Lock held by a live process, then a stale lock.
+# Lock held by a live process, then a stale lock; --check takes no lock.
 LOCK="$(git rev-parse --absolute-git-dir)/carvis-bootstrap.lock"
 sleep 30 & live=$!
-mkdir "${LOCK}"; echo "${live}" > "${LOCK}/pid"
-expect lock-held 1 'another bootstrap' bash "${B}" --check
+ln -s "${live}" "${LOCK}"
+expect lock-held 1 'another bootstrap \(pid' bash "${B}"
+expect check-ignores-lock 0 'Bootstrap complete' bash "${B}" --check
 kill "${live}" 2>/dev/null; wait "${live}" 2>/dev/null
-expect lock-stale 0 'removing a stale bootstrap lock' bash "${B}" --check
-[[ ! -e "${LOCK}" ]] && { pass=$((pass+1)); echo "PASS lock-released"; } || { fail=$((fail+1)); echo "FAIL lock left behind"; }
+expect lock-stale-refused 1 'stale bootstrap lock' bash "${B}"
+[[ -L "${LOCK}" ]] && { pass=$((pass+1)); echo "PASS stale-lock-not-taken-over"; } || { fail=$((fail+1)); echo "FAIL stale lock removed"; }
+rm -f "${LOCK}"
+expect install-after-unlock 0 'Bootstrap complete' bash "${B}"
+[[ ! -e "${LOCK}" && ! -L "${LOCK}" ]] && { pass=$((pass+1)); echo "PASS lock-released"; } || { fail=$((fail+1)); echo "FAIL lock left behind"; }
 grep -nE '(^|[^_A-Z])(source|\.)[[:space:]]+[^ ]*\.env|load_dotenv|dotenv_values' "${B}" \
   && { fail=$((fail+1)); echo "FAIL script references .env loading"; } || { pass=$((pass+1)); echo "PASS no-dotenv-loading"; }
 echo "bootstrap tests: ${pass} passed, ${fail} failed"

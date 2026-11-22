@@ -19,3 +19,9 @@ remain authoritative; these resolve no D-item.
   deployment. Do not add it to `render.yaml` or the Render dashboard in a roadmap task.
 - **Track B gating.** A Track B row blocks only on unresolved owner decisions that materially
   affect it (`/carvis-continue` section 2, "Select the task").
+
+## Recorded elsewhere
+
+- **A3 interim session limits and refuse-instead-of-evict** (owner, 2026-11-16) remain with the
+  behavior they govern in [`../backend/architecture.md`](../backend/architecture.md), "Accepted
+  operational decisions". They resolve no D-item either.
