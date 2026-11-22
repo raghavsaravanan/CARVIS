@@ -156,7 +156,8 @@ Scope:           <owned files or globs>; excluded: <paths that must not change>
 Acceptance:      <observable criteria>
 Verification:    <narrowest checks, tier requirements, scripts/verify.sh, validation labels>
 Completion:      committed candidate SHA, review-scope exit 0, checks with labels, handoff record
-Stop if:         an open decision affects the task; preflight STOP; the change needs files outside
+Budget:          <tier review budget>; time budget <agreed estimate>
+Stop if:         a stopping condition ("Review budget, findings and stopping"); an open decision affects the task; preflight STOP; the change needs files outside
                  Scope; a failing check outside scope; a sensitive or production operation is
                  needed; material drift cannot be merged cleanly; the tier rises above what the
                  contract authorizes
@@ -208,6 +209,8 @@ changes are T3.
 | Fresh-context review | Required | Required | Required | Required |
 | Cross-model review (Codex) | Optional | Optional | Required, isolated profile | Required, isolated profile |
 | Renewed review after a correction | Delta | Delta | Full | Full |
+| Design review before implementation | Not required | Not required | Required, both reviewer classes | Required, both reviewer classes |
+| Autonomous review budget | 1 round | 2 rounds | 2 implementation rounds | 2 implementation rounds |
 
 ### Review protocol
 
@@ -248,6 +251,8 @@ changes are T3.
    lists every file the correction touched, including files reverted to the base (if it reports
    a material update, review in full instead); a full review
    covers the effective base to the new candidate. Every required reviewer class renews.
+   Corrections follow the correction discipline below, and every renewal counts against the
+   review budget.
 5. **Revalidation before approval.** Fetch again and rerun `review-scope.sh`. Exit 3 means the
    integration branch changed this task's files or a policy, CI, script or dependency file: merge
    `origin/main` (never rebase), rerun the checks and renew review. Exit 0 with drift still needs a
@@ -267,6 +272,42 @@ changes are T3.
    ```
 
    A head that is neither the reviewed candidate nor a clean update of it has stale reviews.
+
+### Review budget, findings and stopping
+
+Autonomous iteration is bounded; the budget never waives a mandatory review or acceptance gate.
+
+- **Round.** One round is every required reviewer class reviewing one pinned candidate. A renewed
+  review is a round. The T3/T4 design review is one round, by both reviewer classes, before
+  implementation; it is outside the implementation budget, but the time budget and stopping
+  conditions apply to it, and needing a second design round is a stop.
+- **Renewal.** The tier's renewal requirement is unchanged: delta for T1 and T2, always full for T3
+  and T4. Targeted verification of a correction may supplement a required renewal, never replace
+  it.
+- **Findings.** Every finding states reproducible evidence (a command and its output, or
+  `path:line` with a failure scenario), severity, affected scope, the requirement violated, and
+  BLOCKING or NONBLOCKING. A finding is blocking only if it shows a concrete violation of
+  correctness, security, privacy, tenancy, evidence integrity, automotive safety, or an approved
+  requirement; weakening or bypassing a mandatory gate or tier, or making a mandatory step
+  unusable, violates an approved requirement. Nonblocking findings are recorded in the PR as
+  deferred and not implemented within the task.
+- **Correction discipline.** Collect all blocking findings of a round before changing anything, then
+  make one correction that addresses only those findings, with a regression test (and the tier's
+  mutation check) for each corrected executable defect; documentation defects need no invented
+  executable test. No unrelated refactoring; reviews stay pinned to the exact candidate SHA.
+- **Stopping conditions.** Stop autonomous iteration when:
+  - all mandatory gates pass and no blocking finding remains: the task completes;
+  - the review budget is exhausted, including when the last permitted round leaves a blocker;
+  - the same defect category (the same requirement violated by the same mechanism) recurs in a
+    second round;
+  - reviewers disagree on a rule, or a correction would change a safety or review mechanism;
+  - elapsed time exceeds twice the agreed time budget;
+  - an owner decision, an unexpected permission escalation, or a scope expansion is needed.
+- **Escalation.** On every stop except the first, report each blocker with its evidence, severity
+  and proposed correction, and the options, then wait for the owner. With the owner's approval a
+  draft PR may record open blocking findings, marked not merge-ready, but only after the packet,
+  every required review and every mandatory check have run on that candidate and every gate for
+  opening a draft PR is met. It never substitutes for a review, packet or check that did not run.
 
 ### Handoff and workflow record
 

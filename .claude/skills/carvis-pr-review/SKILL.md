@@ -118,7 +118,10 @@ they are renewed.
 ## 4. Report
 
 Findings first, most severe first, each with `file:line`, the concrete failure scenario, a
-suggested fix, and VERIFIED or INFERRED. Then:
+suggested fix, VERIFIED or INFERRED, and the finding format of `docs/development-workflow.md`,
+"Review budget, findings and stopping": reproducible evidence, severity, affected scope, the requirement violated,
+and BLOCKING or NONBLOCKING. Nonblocking findings alone never make the verdict "needs
+changes". Then:
 
 - **Reviewed:** effective base and candidate SHAs, tier, and every changed file with "finding" or
   "no finding".

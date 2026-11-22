@@ -19,6 +19,13 @@ remain authoritative; these resolve no D-item.
 - **Track B gating.** A Track B row blocks only on unresolved owner decisions that materially
   affect it (`/carvis-continue` section 2, "Select the task").
 
+## Accepted by the owner on 2026-11-22
+
+- **Bounded autonomous review.** Autonomous review iteration follows the tier budgets, finding
+  classification, correction discipline and stopping conditions in
+  [`../development-workflow.md`](../development-workflow.md), "Review budget, findings and stopping". Only
+  blocking findings are corrected within a task; budgets never waive a mandatory gate.
+
 ## Recorded elsewhere
 
 - **A3 interim session limits and refuse-instead-of-evict** (owner, 2026-11-16) remain with the
