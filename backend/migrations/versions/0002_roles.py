@@ -8,7 +8,7 @@ the readiness check without elevation. Grants touch only the CARVIS-owned ``carv
 issuer- or host-specific role. Login credentials and which login runs migrations belong to B2/B10.
 
 Fail closed, never modify: a pre-existing CARVIS role is validated and adopted only if compatible
-(no elevated attribute, member of no role, no members except the migration login's administrative
+(NOLOGIN, no elevated attribute, member of no role, no members except the migration login's administrative
 grant on carvis_owner); otherwise the upgrade stops before any change. Downgrade drops only what this revision marked.
 Requires PostgreSQL 16 or later.
 
@@ -57,7 +57,8 @@ def _validate_existing(role: str, login: str, superuser: bool) -> None:
     elevated = [name for name in ELEVATED_ATTRIBUTES if attributes[name]]
     if elevated:
         raise RoleMigrationError(f"Existing role {role} has incompatible attributes: {', '.join(elevated)}.")
-    if role == OWNER_ROLE and attributes["rolcanlogin"]:
+    if attributes["rolcanlogin"]:
+        # Owner decision: no CARVIS role may log in during B1 (logins and credentials are B2/B10).
         raise RoleMigrationError(f"Existing role {role} must be NOLOGIN.")
     held = _scalar("SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member "
                    "WHERE r.rolname = :r", r=role)

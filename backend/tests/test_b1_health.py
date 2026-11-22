@@ -324,29 +324,178 @@ def test_lookup_resumes_after_the_stalled_one_finishes(stalled_dns):
             await asyncio.sleep(0.01)
         return await resolver.resolve("db.stalled.invalid", "5432")
 
-    assert asyncio.run(scenario()) == "127.0.0.1"
+    assert asyncio.run(scenario()) == ["127.0.0.1"]
     assert len(calls) == 2
     resolver.shutdown()
 
 
-@pytest.mark.parametrize("conninfo,expected_hostaddr", [
-    ("postgresql://u:p@db.example.test:5433/carvis", "192.0.2.10"),
-    ("postgresql://u:p@192.0.2.20/carvis", "192.0.2.20"),
-    ("postgresql://u:p@db.example.test,192.0.2.30/carvis", "192.0.2.10,192.0.2.30"),
-    ("postgresql://u:p@db.example.test/carvis?hostaddr=192.0.2.40", "192.0.2.40"),
-    ("postgresql://u:p@%2Fvar%2Frun%2Fpostgresql/carvis", None),
-])
-def test_psycopg_receives_a_resolved_hostaddr(conninfo, expected_hostaddr):
-    """psycopg resolves names itself unless hostaddr is set; the probe always sets it for names."""
+class _FakeResolver:
+    def __init__(self, table):
+        self.table = table
+
+    async def resolve(self, host, port):
+        if host not in self.table:
+            raise OSError("not found")
+        return list(self.table[host])
+
+
+def _attempts(conninfo, table):
     from psycopg.conninfo import conninfo_to_dict
 
-    from db.readiness import resolved_conninfo
+    from db.readiness import connection_attempts
 
-    class FakeResolver:
-        async def resolve(self, host, port):
-            assert host == "db.example.test"
-            return "192.0.2.10"
+    return [conninfo_to_dict(a) for a in asyncio.run(connection_attempts(conninfo, _FakeResolver(table)))]
 
-    params = conninfo_to_dict(asyncio.run(resolved_conninfo(conninfo, FakeResolver())))
-    assert params.get("hostaddr") == expected_hostaddr
-    assert params["dbname"] == "carvis"
+
+@pytest.mark.parametrize("conninfo,table,expected", [
+    ("postgresql://u:p@db.example.test:5433/carvis", {"db.example.test": ["192.0.2.10"]},
+     [("db.example.test", "192.0.2.10", "5433")]),
+    ("postgresql://u:p@db.example.test/carvis", {"db.example.test": ["2001:db8::10"]},
+     [("db.example.test", "2001:db8::10", "5432")]),
+    ("postgresql://u:p@db.example.test/carvis", {"db.example.test": ["2001:db8::10", "192.0.2.10"]},
+     [("db.example.test", "2001:db8::10", "5432"), ("db.example.test", "192.0.2.10", "5432")]),
+    ("postgresql://u:p@192.0.2.20/carvis", {}, [("192.0.2.20", "192.0.2.20", "5432")]),
+    ("postgresql://u:p@[2001:db8::20]:6000/carvis", {}, [("2001:db8::20", "2001:db8::20", "6000")]),
+    ("postgresql://u:p@a.test:1,b.test:2/carvis", {"a.test": ["192.0.2.1"], "b.test": ["192.0.2.2", "192.0.2.3"]},
+     [("a.test", "192.0.2.1", "1"), ("b.test", "192.0.2.2", "2"), ("b.test", "192.0.2.3", "2")]),
+    ("postgresql://u:p@gone.test,b.test/carvis", {"b.test": ["192.0.2.2"]}, [("b.test", "192.0.2.2", "5432")]),
+    ("postgresql://u:p@%2Fvar%2Frun%2Fpostgresql/carvis", {}, [("/var/run/postgresql", None, "5432")]),
+])
+def test_every_resolved_address_becomes_an_attempt_keeping_the_host(conninfo, table, expected):
+    """IPv4, IPv6, mixed and multi-host; host stays for TLS verification; psycopg never resolves."""
+    got = [(a["host"], a.get("hostaddr"), a["port"]) for a in _attempts(conninfo, table)]
+    assert got == expected
+    for attempt in _attempts(conninfo, table):
+        assert attempt["dbname"] == "carvis" and attempt["user"] == "u"
+
+
+def test_caller_hostaddr_is_used_as_given():
+    from db.readiness import connection_attempts
+
+    conninfo = "postgresql://u:p@db.example.test/carvis?hostaddr=192.0.2.40"
+    assert asyncio.run(connection_attempts(conninfo, _FakeResolver({}))) == [conninfo]
+
+
+def test_no_resolvable_host_is_unreachable():
+    from db.readiness import NoAddress, connection_attempts
+
+    with pytest.raises(NoAddress):
+        asyncio.run(connection_attempts("postgresql://u:p@gone.test/carvis", _FakeResolver({})))
+
+
+class _FakeCursor:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def execute(self, sql):
+        pass
+
+    async def fetchall(self):
+        return [(HEAD,)]
+
+
+class _FakeConnection:
+    closed = 0
+
+    def cursor(self):
+        return _FakeCursor()
+
+    async def rollback(self):
+        pass
+
+    async def close(self):
+        _FakeConnection.closed += 1
+
+
+@pytest.fixture
+def scripted_connect(monkeypatch):
+    """psycopg connect scripted per hostaddr: 'refuse', 'hang' or 'ok'; records the order tried."""
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict
+
+    behaviour, tried = {}, []
+
+    async def connect(conninfo, **kwargs):
+        address = conninfo_to_dict(conninfo).get("hostaddr")
+        tried.append(address)
+        action = behaviour[address]
+        if action == "refuse":
+            raise psycopg.OperationalError("connection refused")
+        if action == "hang":
+            await asyncio.sleep(3600)
+        return _FakeConnection()
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", staticmethod(connect))
+    return behaviour, tried
+
+
+def _probe_with(table, budget=2.0):
+    from db.readiness import BoundedResolver
+
+    resolver = BoundedResolver()
+
+    class Resolver(_FakeResolver):
+        def shutdown(self):
+            pass
+
+    fetch = postgres_fetch("postgresql://u:p@db.example.test/carvis", Resolver(table), budget)
+    return ReadinessProbe(HEAD, fetch, budget)
+
+
+@pytest.mark.parametrize("first", ["refuse", "hang"])
+def test_first_address_failure_then_success(scripted_connect, first):
+    behaviour, tried = scripted_connect
+    behaviour.update({"2001:db8::1": first, "192.0.2.1": "ok"})
+    probe = _probe_with({"db.example.test": ["2001:db8::1", "192.0.2.1"]})
+    started = time.monotonic()
+    result = asyncio.run(probe.check())
+    assert result.reason == READY
+    assert tried == ["2001:db8::1", "192.0.2.1"]
+    assert time.monotonic() - started < 2.0
+
+
+def test_hanging_addresses_share_one_deadline(scripted_connect):
+    behaviour, tried = scripted_connect
+    behaviour.update({"192.0.2.1": "hang", "192.0.2.2": "hang", "192.0.2.3": "ok"})
+    probe = _probe_with({"db.example.test": ["192.0.2.1", "192.0.2.2", "192.0.2.3"]})
+    started = time.monotonic()
+    assert asyncio.run(probe.check()).reason == READY
+    assert tried == ["192.0.2.1", "192.0.2.2", "192.0.2.3"]
+    assert time.monotonic() - started < 2.0
+
+
+def test_all_addresses_failing_is_unreachable_within_the_deadline(scripted_connect):
+    behaviour, tried = scripted_connect
+    behaviour.update({"192.0.2.1": "hang", "2001:db8::1": "refuse", "192.0.2.2": "hang"})
+    probe = _probe_with({"db.example.test": ["192.0.2.1", "2001:db8::1", "192.0.2.2"]})
+
+    async def scenario():
+        started = time.monotonic()
+        result = await probe.check()
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+        return result, time.monotonic() - started, pending
+
+    result, elapsed, pending = asyncio.run(scenario())
+    assert result.reason == DATABASE_UNREACHABLE
+    assert elapsed < 2.3 and not pending
+    assert tried == ["192.0.2.1", "2001:db8::1", "192.0.2.2"]
+
+
+def test_repeated_failing_probes_leave_no_background_work(scripted_connect):
+    behaviour, _ = scripted_connect
+    behaviour.update({"192.0.2.1": "hang"})
+    probe = _probe_with({"db.example.test": ["192.0.2.1"]}, budget=0.2)
+
+    async def scenario():
+        baseline = threading.active_count()
+        for _ in range(5):
+            assert (await probe.check()).reason == DATABASE_UNREACHABLE
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+        return pending, threading.active_count() - baseline
+
+    pending, extra_threads = asyncio.run(scenario())
+    assert not pending and extra_threads <= 0
+    assert probe.probes_started == 5

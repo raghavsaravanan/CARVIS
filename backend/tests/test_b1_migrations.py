@@ -253,10 +253,10 @@ def test_login_without_database_create_fails_with_named_privilege(scratch):
 
 
 def test_compatible_preexisting_role_is_adopted_and_survives_downgrade(scratch):
-    _sql(scratch.admin, "CREATE ROLE carvis_app LOGIN")
+    _sql(scratch.admin, "CREATE ROLE carvis_app NOLOGIN")
     ok(alembic(scratch.db_admin, "upgrade", "head"))
     app = [row for row in catalog(scratch.db_admin)["roles"] if row[0] == "carvis_app"][0]
-    assert app[6] is True and app[8] is None, "adopted role is not modified or marked"
+    assert app[6] is False and app[8] is None, "adopted role is not modified or marked"
     ok(alembic(scratch.db_admin, "downgrade", "base"))
     assert [row[0] for row in catalog(scratch.db_admin)["roles"]] == ["carvis_app"]
 
@@ -265,7 +265,9 @@ def test_compatible_preexisting_role_is_adopted_and_survives_downgrade(scratch):
     (["CREATE ROLE carvis_app NOLOGIN BYPASSRLS"], "incompatible attributes: rolbypassrls"),
     (["CREATE ROLE carvis_worker NOLOGIN CREATEROLE"], "incompatible attributes: rolcreaterole"),
     (["CREATE ROLE carvis_app NOLOGIN SUPERUSER"], "incompatible attributes: rolsuper"),
-    (["CREATE ROLE carvis_owner LOGIN"], "must be NOLOGIN"),
+    (["CREATE ROLE carvis_owner LOGIN"], "carvis_owner must be NOLOGIN"),
+    (["CREATE ROLE carvis_app LOGIN"], "carvis_app must be NOLOGIN"),
+    (["CREATE ROLE carvis_worker LOGIN PASSWORD 'x'"], "carvis_worker must be NOLOGIN"),
     (["CREATE ROLE carvis_app NOLOGIN", "GRANT pg_read_all_data TO carvis_app"], "member of another role"),
     (["CREATE ROLE carvis_owner NOLOGIN", "CREATE ROLE b1_other LOGIN", "GRANT carvis_owner TO b1_other"],
      "members other than"),
@@ -370,3 +372,84 @@ def test_session_factory_runs_one_unit_of_work(scratch):
             assert session.execute(text("SELECT 1")).scalar() == 1
     finally:
         engine.dispose()
+
+
+# --- Readiness address fallback against real PostgreSQL (round-2 review) -------------------------
+
+@pytest.fixture
+def fake_dns(monkeypatch):
+    """Resolve ``db.fallback.test`` to a chosen address list; other names resolve normally."""
+    import socket as socket_module
+
+    real = socket_module.getaddrinfo
+    answers: list[str] = []
+
+    def fake(host, port, *args, **kwargs):
+        if host == "db.fallback.test":
+            out = []
+            for address in answers:
+                family = socket_module.AF_INET6 if ":" in address else socket_module.AF_INET
+                sockaddr = (address, int(port), 0, 0) if family == socket_module.AF_INET6 else (address, int(port))
+                out.append((family, socket_module.SOCK_STREAM, socket_module.IPPROTO_TCP, "", sockaddr))
+            return out
+        return real(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket_module, "getaddrinfo", fake)
+    return answers
+
+
+def _named_url(admin: str, database: str | None = None) -> str:
+    from sqlalchemy.engine import make_url
+
+    url = make_url(admin)
+    url = url.set(host="db.fallback.test", query={**url.query, "sslmode": "disable"})
+    if database is not None:
+        url = url.set(database=database)
+    return url.set(drivername="postgresql").render_as_string(hide_password=False)
+
+
+def _timed_readiness(url: str) -> tuple[str, float, int]:
+    import time
+
+    from db.readiness import BoundedResolver
+
+    resolver = BoundedResolver()
+    probe = ReadinessProbe("0002_roles", postgres_fetch(url, resolver, 2.0), 2.0, resolver=resolver)
+
+    async def scenario():
+        started = time.monotonic()
+        result = await probe.check()
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+        return result.reason, time.monotonic() - started, len(pending)
+
+    try:
+        return asyncio.run(scenario())
+    finally:
+        resolver.shutdown()
+
+
+@pytest.mark.parametrize("first", ["192.0.2.1", "2001:db8::1", "::1"])
+def test_unreachable_first_address_falls_back_within_one_deadline(scratch, fake_dns, first):
+    """TEST-NET (silently dropped or unroutable) and IPv6 first addresses, then the reachable IPv4 one."""
+    from sqlalchemy.engine import make_url
+
+    host = make_url(scratch.admin).host
+    fake_dns[:] = [first, host]
+    ok(alembic(scratch.db_admin, "upgrade", "head"))
+    reason, elapsed, pending = _timed_readiness(_named_url(scratch.admin, scratch.database))
+    assert reason == READY, reason
+    assert elapsed < 2.5 and pending == 0
+
+
+def test_mixed_addresses_report_pending_until_migrated(scratch, fake_dns):
+    from sqlalchemy.engine import make_url
+
+    fake_dns[:] = ["2001:db8::2", make_url(scratch.admin).host, "192.0.2.2"]
+    assert _timed_readiness(_named_url(scratch.admin, scratch.database))[0] == MIGRATIONS_PENDING
+
+
+def test_all_addresses_unreachable_is_bounded(scratch, fake_dns):
+    fake_dns[:] = ["192.0.2.3", "2001:db8::3", "192.0.2.4"]
+    reason, elapsed, pending = _timed_readiness(_named_url(scratch.admin, scratch.database))
+    assert reason == DATABASE_UNREACHABLE
+    assert elapsed < 2.5 and pending == 0

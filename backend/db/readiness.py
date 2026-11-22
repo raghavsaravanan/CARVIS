@@ -11,9 +11,12 @@ Bounds:
 - Host names are resolved by :class:`BoundedResolver`, never by psycopg: a blocking
   ``getaddrinfo`` cannot be cancelled, so it runs on one dedicated thread owned by the probe (never
   the shared default executor that the voice path's lookups use), and while a lookup is still
-  running no new one starts and the probe answers ``database_unreachable`` at once. The resolved
-  address is passed to libpq as ``hostaddr`` (``host`` is kept for TLS verification), so psycopg
-  does not resolve again. At most one resolver thread exists, whatever the outage length.
+  running no new one starts or queues and the probe answers ``database_unreachable`` at once.
+  Every resolved address (IPv6 and IPv4) becomes its own connection attempt with ``hostaddr`` set
+  (``host`` is kept for TLS verification), so psycopg does not resolve again, and an unreachable
+  first address falls back to the next within the same deadline. At most one resolver thread
+  exists, whatever the outage length; a lookup hung at shutdown can delay process exit until the
+  system resolver returns.
 - Each probe opens one fresh connection and closes it, so there is no pool checkout to exhaust.
 - At most one probe runs at a time. Concurrent ``/readyz`` requests share it, so an outage cannot
   multiply connections or tasks, whatever the request rate.
@@ -51,6 +54,8 @@ OUTCOMES = (READY, STARTING, DATABASE_UNCONFIGURED, DATABASE_MISCONFIGURED, DATA
 STATEMENT_TIMEOUT_MS = 1500
 LOCK_TIMEOUT_MS = 500
 CONNECT_TIMEOUT_SECONDS = 2
+READINESS_BUDGET_SECONDS = 2.0
+QUERY_RESERVE_SECONDS = 0.25
 VERSION_QUERY = f"SELECT version_num FROM {METADATA_SCHEMA}.{VERSION_TABLE}"
 # Missing schema or table: nothing has been migrated yet.
 _NOT_MIGRATED_SQLSTATES = frozenset({"3F000", "42P01"})
@@ -91,7 +96,8 @@ class BoundedResolver:
         self._pending: Future | None = None
         self.lookups_started = 0
 
-    async def resolve(self, host: str, port: str) -> str:
+    async def resolve(self, host: str, port: str) -> list[str]:
+        """Every address ``host`` resolves to, in resolver order, without duplicates."""
         if self._pending is not None and not self._pending.done():
             raise ResolverBusy()
         if self._executor is None:
@@ -100,11 +106,13 @@ class BoundedResolver:
         self._pending = self._executor.submit(socket.getaddrinfo, host, port, proto=socket.IPPROTO_TCP,
                                               type=socket.SOCK_STREAM)
         answers = await asyncio.wrap_future(self._pending)
-        return answers[0][4][0]
+        return list(dict.fromkeys(str(answer[4][0]) for answer in answers))
 
     def shutdown(self) -> None:
         if self._executor is not None:
-            # Never wait for a hung lookup at shutdown; the thread ends when the resolver returns.
+            # The lifespan never waits for a hung lookup. Its one thread still ends only when the
+            # system resolver returns, and the interpreter joins it at exit, so a lookup hung at
+            # shutdown can delay process exit by up to the resolver's own timeout.
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
 
@@ -117,56 +125,97 @@ def _is_ip(host: str) -> bool:
     return True
 
 
-async def resolved_conninfo(conninfo: str, resolver: BoundedResolver) -> str:
-    """``conninfo`` with ``hostaddr`` filled in by ``resolver`` so libpq/psycopg never resolve names.
+class NoAddress(RuntimeError):
+    """No configured host resolved to an address."""
 
-    Mirrors libpq: ``host`` (or ``PGHOST``) may list several hosts; socket paths and IP literals need
-    no lookup; one address is used per host name.
+
+async def connection_attempts(conninfo: str, resolver: BoundedResolver) -> list[str]:
+    """One single-address connection string per resolved address, in the order libpq would try them.
+
+    Mirrors libpq and psycopg: ``host`` (or ``PGHOST``) may list several hosts with matching ports;
+    socket paths and IP literals need no lookup; a host name yields one attempt per address it
+    resolves to (IPv6 and IPv4 alike); a host that fails to resolve is skipped;
+    ``load_balance_hosts=random`` shuffles the attempts. Each attempt keeps ``host`` (TLS
+    verification) and sets ``hostaddr``, so psycopg never resolves names itself. A caller-supplied
+    ``hostaddr`` is used as given.
     """
+    import random
+
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     params = conninfo_to_dict(conninfo)
     if params.get("hostaddr"):
-        return conninfo
+        return [conninfo]
     hosts_value = str(params.get("host") or os.getenv("PGHOST") or "")
     if not hosts_value:
-        return conninfo
+        return [conninfo]
     hosts = hosts_value.split(",")
     ports = str(params.get("port") or os.getenv("PGPORT") or "5432").split(",")
-    addresses = []
+    entries: list[tuple[str, str | None, str]] = []
     for index, host in enumerate(hosts):
-        port = ports[index] if len(ports) == len(hosts) else ports[0]
+        port = (ports[index] if len(ports) == len(hosts) else ports[0]) or "5432"
         if not host or host.startswith("/") or host[1:2] == ":":
-            addresses.append("")  # Unix socket or default: nothing to resolve
+            entries.append((host, None, port))  # Unix socket or libpq default: nothing to resolve
         elif _is_ip(host):
-            addresses.append(host)
+            entries.append((host, host, port))
         else:
-            addresses.append(await resolver.resolve(host, port or "5432"))
-    if not any(addresses):
-        return conninfo
-    return make_conninfo(conninfo, host=hosts_value, hostaddr=",".join(addresses))
+            try:
+                addresses = await resolver.resolve(host, port)
+            except OSError:
+                continue  # as psycopg does: try the remaining hosts
+            entries.extend((host, address, port) for address in addresses)
+    if not entries:
+        raise NoAddress()
+    if str(params.get("load_balance_hosts") or "") == "random":
+        random.shuffle(entries)
+    attempts = []
+    for host, address, port in entries:
+        overrides = {"host": host, "port": port}
+        if address is not None:
+            overrides["hostaddr"] = address
+        attempts.append(make_conninfo(conninfo, **overrides))
+    return attempts
 
 
-def postgres_fetch(conninfo: str, resolver: BoundedResolver | None = None) -> Fetch:
-    """A fetch that opens one psycopg ``AsyncConnection``, reads the version table and closes it."""
+def postgres_fetch(conninfo: str, resolver: BoundedResolver | None = None,
+                   budget_seconds: float = READINESS_BUDGET_SECONDS) -> Fetch:
+    """A fetch that connects to the first reachable address, reads the version table and closes.
+
+    The probe's single deadline covers everything; within it, each remaining address gets a fair
+    share of the time left (less a reserve for the query), so an address that silently drops
+    packets cannot consume the whole deadline before a later, reachable one is tried.
+    """
     resolver = resolver or BoundedResolver()
 
     async def fetch() -> list[str]:
         import psycopg
 
-        target = await resolved_conninfo(conninfo, resolver)
-        connection = await psycopg.AsyncConnection.connect(
-            target, connect_timeout=CONNECT_TIMEOUT_SECONDS, prepare_threshold=None, autocommit=False)
-        try:
-            async with connection.cursor() as cursor:
-                await cursor.execute(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}")
-                await cursor.execute(f"SET LOCAL lock_timeout = {LOCK_TIMEOUT_MS}")
-                await cursor.execute(VERSION_QUERY)
-                rows = await cursor.fetchall()
-            await connection.rollback()
-            return [row[0] for row in rows]
-        finally:
-            await connection.close()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + budget_seconds
+        attempts = await connection_attempts(conninfo, resolver)
+        last_error: BaseException | None = None
+        for index, target in enumerate(attempts):
+            remaining = deadline - loop.time() - QUERY_RESERVE_SECONDS
+            if remaining <= 0:
+                break
+            try:
+                async with asyncio.timeout(remaining / (len(attempts) - index)):
+                    connection = await psycopg.AsyncConnection.connect(
+                        target, connect_timeout=CONNECT_TIMEOUT_SECONDS, prepare_threshold=None, autocommit=False)
+            except (OSError, psycopg.OperationalError, TimeoutError) as exc:
+                last_error = exc
+                continue
+            try:
+                async with connection.cursor() as cursor:
+                    await cursor.execute(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                    await cursor.execute(f"SET LOCAL lock_timeout = {LOCK_TIMEOUT_MS}")
+                    await cursor.execute(VERSION_QUERY)
+                    rows = await cursor.fetchall()
+                await connection.rollback()
+                return [row[0] for row in rows]
+            finally:
+                await connection.close()
+        raise last_error if last_error is not None else TimeoutError()
 
     return fetch
 
@@ -198,7 +247,8 @@ class ReadinessProbe:
 
         assert settings.database_url is not None
         resolver = BoundedResolver()
-        return cls(head, postgres_fetch(libpq_conninfo(settings.database_url), resolver),
+        return cls(head, postgres_fetch(libpq_conninfo(settings.database_url), resolver,
+                                        settings.readiness_timeout_seconds),
                    settings.readiness_timeout_seconds, resolver=resolver)
 
     async def _probe(self) -> Readiness:
