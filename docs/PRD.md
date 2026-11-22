@@ -199,6 +199,14 @@ V1 is the first complete field-testable CARVIS release: an audio-first iOS build
 
 The pilot may support a limited set of vehicles and specification categories, provided the scope is explicitly disclosed.
 
+**Tyler's workflow priorities (discussion of November 20, 2026).** Highest value: exact
+specifications that vary by vehicle (for example lug-nut torque and minimum brake service limits,
+with rotor versus pad resolved), vehicle-specific electronic parking brake retraction and service
+methods, and selected fluids, capacities and tools. Manufacturer communications about known issues
+are a conditional V1 enhancement (CAR-042). Previous shop repair history in Tekmetric is deferred
+(§16). Routine repair tutorials are lower value. The discussion does not establish data licensing,
+a diagnosis, API access or demand at other shops.
+
 ## 6.2 Connected Shop Experience (P1, post-V1)
 
 P1 is a post-V1 priority. No product version number, release name, or date is assigned to it. After V1, P1 work may add:
@@ -436,6 +444,9 @@ The application must not promise continuous background listening or locked-phone
 | CAR-038 | Track supported and unsupported information coverage | P0 |
 | CAR-039 | Provider-specific retrieval adapters | P1 |
 | CAR-040 | Expanded procedures and diagnostic workflows | P1 |
+| CAR-041 | Spoken output preserves server-approved facts, units, qualifications and refusals | P0 (release gate) |
+| CAR-042 | Known-issue, TSB and recall discovery with attribution | Conditional V1 enhancement |
+| CAR-043 | Selected complete, reviewed procedures for supported tasks (for example EPB service), refused rather than given partially | P0 |
 
 **Acceptance conditions:**
 
@@ -444,6 +455,11 @@ No numerical technical specification may be presented as verified without eviden
 The user must be able to identify the source of each verified answer.
 
 Conflicting or incomplete sources must trigger clarification or refusal rather than arbitrary selection.
+
+CAR-042 may ship in V1 only if authorized sources, applicable coverage, validated quality and
+implementation cost justify it; it is neither a V1 release gate nor a committed post-V1 item. A TSB
+is not a recall, and neither proves a fault or an open campaign on an individual vehicle; a
+model-level recall match is not VIN-level open status.
 
 ## 8.5 Conversation History and Feedback
 
@@ -773,6 +789,7 @@ V1 is ready for Tyler's field test only when all required criteria are satisfied
 - [ ] Critical API contracts and failure paths are tested.
 - [ ] Authentication and tenant isolation are validated.
 - [ ] Real-device audio and interruption testing is completed.
+- [ ] Actual spoken technical output preserves server-approved facts, units, qualifications and refusals, including after interruption, retry and vehicle switch (CAR-041); otherwise a controlled delivery path is added or technical voice release is blocked.
 - [ ] Service failures are observable and recoverable.
 - [ ] Release configuration and secrets are appropriately secured.
 - [ ] Crash reporting and operational monitoring are available.
@@ -814,6 +831,25 @@ V1 will not attempt to deliver:
 - A comprehensive multi-location shop-management platform.
 
 These features may be evaluated later if they support demonstrated customer value.
+
+**Intentional deferrals and extension paths.** Nothing below gets speculative schemas or services
+now; each is reopened only by demand, data rights, validation or a concrete V1 blocker.
+
+| Deferred | Why | Later path / trigger |
+|---|---|---|
+| Broad ALLDATA/MOTOR integrations | Rights, cost, unvalidated demand | Limited licensed pilot data if needed; later an authorized source adapter (CAR-039) |
+| Tekmetric and plate-based lookup | Shop authorization, privacy, external API dependency | Read-only, tenant-scoped records and confirmed external vehicle IDs after demand and access |
+| Universal coverage | Acquisition and review scale | Incremental coverage manifest driven by missed real tasks |
+| Automated evidence approval | Safety and extraction uncertainty | Reviewer assistance, independently validated before any policy change |
+| Statistical associations | Benefit unproven | Optional discovery index; never trust promotion |
+| Full ontology or graph database | Modeling and operations overhead | Reviewed relations as needed; a graph only on measured benefit |
+| ColBERT, SPLADE, custom neural retrieval | No demonstrated V1 requirement | Replace the discovery adapter only after a benchmark improvement (R3 method) |
+| Autonomous diagnosis, OBD-II | Requires real observations and stronger evidence and safety | Structured observation and diagnostic-evidence interfaces (CAR-040) |
+| Automated shop documentation or management | Not core pilot utility | Technician-confirmed notes and authorized repair export |
+| Advanced visual reasoning | Model, dataset, physical and evidence validation | Preserved vision boundary; reviewed component evidence |
+| Glasses and background wake | Hardware, OS privacy and reliability | Existing adapters retained; independently tested active-session invocation |
+| CARVIS Hub, offline, consumer product | Hardware economics; different users and safety | Shared versioned Brain interface; validate deployment and use case later |
+| Mechanic upload and admin dashboard | Review and publication risk; no pilot need | Operator CLI and report now; permission-controlled workspace later |
 
 # 17. Dependencies and Risks
 

@@ -1,6 +1,6 @@
 # CARVIS V1 backend architecture (milestone M1)
 
-**Status:** proposed for owner review. Documentation only: no application code, migration, provider
+**Status:** proposed for owner review, except [ADR-0001](../decisions/0001-single-store-postgresql.md), accepted by the owner on 2026-11-22. Proposed ADR-0006's serve path is amended by proposed ADR-0010. Documentation only: no application code, migration, provider
 configuration, or infrastructure changed in the PR that introduces these files. The owner approved
 the direction in principle on 2026-11-15; each decision record stays `proposed` until the owner moves
 it to `accepted` ([`../decisions/README.md`](../decisions/README.md)).
@@ -47,14 +47,15 @@ architecture that scales without fundamental redesign, nothing more than necessa
 | [04-identity-tenancy-rls.md](04-identity-tenancy-rls.md) | Authentication, authorization, RLS, roles, workers, `resolve_call` |
 | [05-api-v1.md](05-api-v1.md) | Versioned iOS/backend contract |
 | [06-vapi-ingress.md](06-vapi-ingress.md) | Webhook authentication, call binding, provider validation gates |
-| [07-brain.md](07-brain.md) | CARVIS Brain ownership, evidence lifecycle, restore safety |
+| [07-brain.md](07-brain.md) | CARVIS Brain ownership, authoritative scope, knowledge model and construction, retrieval layers, outcomes, spoken-output integrity, restore safety |
 | [08-migration-and-spacetimedb.md](08-migration-and-spacetimedb.md) | Migration invariants, rollback tests, SpacetimeDB retirement |
 | [09-deployment-operations.md](09-deployment-operations.md) | Environments, backups, costs, observability, privacy, runbooks |
 | [10-threat-model-and-tests.md](10-threat-model-and-tests.md) | Threats, security acceptance tests, release gates |
 | [11-traceability-matrix.md](11-traceability-matrix.md) | P0 requirement → screen → entity → endpoint → test |
-| [12-m2-roadmap.md](12-m2-roadmap.md) | Track A / Track B PR sequence and owner decisions |
+| [12-m2-roadmap.md](12-m2-roadmap.md) | Track A / Track B PR sequence, B7a–f, R3, M3 acquisition, owner decisions, B1 contract |
 
-Decision records: [`../decisions/`](../decisions/) 0001–0009.
+Decision records: [`../decisions/`](../decisions/) 0001–0010. ADR-0001 was accepted by the owner on
+2026-11-22; the others remain `proposed`.
 
 ## Scope guard for V1
 
@@ -63,6 +64,7 @@ evidence display, feedback, account deletion, internal Brain review through CLI/
 staging and one production environment, an independent nightly database dump.
 
 Deferred: invitations/SSO/multi-organization UI, owner dashboards, usage billing, a generic job
-queue, OpenTelemetry collectors, hybrid search/reranking, HA/multi-region, Brain upload UI, phone
+queue, OpenTelemetry collectors, rank fusion or reranking unless the R3 comparison adopts it
+([12-m2-roadmap.md](12-m2-roadmap.md)), HA/multi-region, Brain upload UI, phone
 camera input, a paid VIN-decode vendor. A PR that adds a table or service not required by a P0 row
 in [11-traceability-matrix.md](11-traceability-matrix.md) needs written justification.

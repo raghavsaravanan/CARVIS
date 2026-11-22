@@ -1,6 +1,6 @@
 # CARVIS — V1 Product Experience Contract
 
-**Document revision:** 1.1 · Approved V1 scope; items marked Proposed or Open remain unresolved  
+**Document revision:** 1.2 · Approved V1 scope; items marked Proposed or Open remain unresolved (1.2, 2026-11-22: §6.5 and gate additions)  
 **Date:** November 15, 2026 (terminology revised November 15, 2026)  
 **Purpose:** Define the exact experience to validate whether CARVIS is useful to working automotive technicians before Claude Max designs the canonical multi-tenant platform and before Tyler receives an independent TestFlight build.  
 **Authority:** CARVIS PRD (document revision 1.1; first drafted Nov 14, 2026); CARVIS P0 Readiness Audit (Nov 15, 2026); historical architecture/consolidation reports; verified phone-to-knowledge demonstration.  
@@ -32,10 +32,10 @@
 | D-05 | P0 navigation = Home, Garage, CARVIS, History, Profile | **Specified in PRD** | Simple, mechanic-first navigation |
 | D-06 | No owner dashboard, jobs, guided repair, analytics suite or Brain upload UI in V1 | **Proposed default for approval** | Avoid adding untested product complexity |
 | D-07 | Shop association can be configured by an operator for the pilot | **Proposed default** | Avoid invitations and manager admin as a first-run obstacle |
-| D-08 | V1 uses one transactional application store and server-enforced tenant scope | **Required principle; vendor unselected** | Privacy, durability, isolation |
+| D-08 | V1 uses one transactional application store and server-enforced tenant scope | **Required principle; store accepted: PostgreSQL** (ADR-0001, owner 2026-11-22) | Privacy, durability, isolation |
 | D-09 | Brain dashboard is internal/read-only and optional before Tyler's pilot | **Proposed default** | Coverage can initially be inspected with CLI/report |
 | D-10 | Pilot sources must be specifically authorized for CARVIS's intended processing and presentation | **Required by PRD** | ALLDATA subscription is not permission to copy/index |
-| D-11 | Provider-agnostic auth contracts; exact OIDC/database vendors not yet chosen | **Open technical choice** | Define experience before implementation |
+| D-11 | Provider-agnostic auth contracts; exact OIDC/database vendors not yet chosen | **Open technical choice** for the OIDC vendor (roadmap D-2); database store accepted (ADR-0001) | Define experience before implementation |
 | D-12 | Duration of conversation history, transcripts, feedback and raw audio retention | **Open policy choice** | Consent, deletion and vendor settings required |
 
 **Change-control rule:** If a proposed default is rejected, change this contract and its entity/API implications **before** asking Claude to implement the database. Do not silently expand V1.
@@ -192,6 +192,40 @@ Present one side-by-side supported lookup using the shop's existing process vers
 | Technician adoption | Tyler uses CARVIS voluntarily again | Qualitative product signal |
 | Buyer interest | Owner agrees to extend pilot or offers concrete purchasing assessment | Commercial signal |
 
+### 6.5 Tyler workflow, proposed pilot coverage and acquisition gates (document revision 1.2, 2026-11-22)
+
+**Workflow traceability.** Tyler's November 20 priorities map to PRD §6.1: exact vehicle-specific
+specifications (lug-nut torque; brake service limits, rotor or pad to be confirmed) and EPB service
+methods → J-04 and P07–P09 (CAR-030–037, CAR-041, CAR-043); manufacturer communications → conditional
+CAR-042; Tekmetric shop history → deferred (PRD §16).
+
+**Proposed pilot coverage targets (unconfirmed; D-16).** 3–5 exact vehicle configurations, at least
+25 representative lookup tasks, 200–500 reviewed facts, 5–10 complete procedures, and at least 60%
+coverage of the agreed representative tasks as a proposed minimum usefulness threshold. These are
+planning targets, not quotas or achieved results; every mandatory pilot category needs meaningful
+supported examples, and an unmet core task is never hidden by changing the denominator.
+
+Three kinds of criteria stay separate:
+
+- **Engineering validation:** the B7 acceptance cases, the R3 safety suite and the PRD §15.2 checks;
+  synthetic fixtures may validate engineering but never support real repair advice.
+- **Pilot utility targets:** §6.4 and the coverage targets above; hypotheses until measured.
+- **Release blockers:** §10 gates plus these outstanding items: documented rights for every active
+  source; a named qualified technical reviewer and publisher (D-17); Tyler-confirmed coverage;
+  spoken-output integrity validated on staging and devices (D-14); accepted ADRs; Apple Developer
+  account and budget; naming clearance before distribution; Tyler's and the shop's consent.
+
+**Acquisition gates (all outstanding).** The owner or operator obtains representative tasks and
+configurations without unnecessary customer data. The existing 2022 WRX corpus (audit-time 24
+records, 9 verified, 15 pending) must be re-audited for counts, source identity, accuracy and
+permission; it is not evidence of current coverage or rights. NHTSA vPIC may supply VIN context and
+NHTSA datasets may support conditional recall or TSB discovery, subject to their terms and
+document-specific rights. Manufacturer documents need affirmative permission to process, store and
+present; public availability is not reuse permission. If rights-cleared coverage or qualified
+review is insufficient, engineering continues on synthetic fixtures and the independent pilot is
+narrowed with Tyler's agreement or delayed; limited licensed data (for example MOTOR or ALLDATA) is
+an owner decision. No scraping, restricted subscriptions, employer data or web-search fallback.
+
 **Decision after pilot:** Continue, modify focus, or stop. A useful positive signal is not merely a demo that works—it is repeated self-initiated use for actual problems and credible owner interest. Record unmet needs explicitly; these drive post-V1 priorities rather than being added speculatively now.
 
 ## 7. Platform and data contract — schema-independent
@@ -291,9 +325,9 @@ These gates restate PRD §15 for the V1 field test. They are the completion test
 
 **Backend/security:** authenticated principal and tenant authorization for every protected route; durable data and migrations; signed/bound Vapi tools; secure upload/review boundary; cross-tenant negative tests; restart resilience; secrets and retention policies; monitoring.
 
-**Brain:** documented authorized rights for all active sources; exact scope disclosure; reviewer records; positive and adversarial evaluation; zero unsupported numerical answers on required suite; revision invalidation and recall plan.
+**Brain:** documented authorized rights for all active sources; exact scope disclosure; reviewer records; positive and adversarial evaluation; zero unsupported numerical answers on required suite; revision invalidation and recall plan; authoritative-scope acceptance cases ([07-brain.md](../architecture/07-brain.md)).
 
-**Device/release:** physical iPhone mic/Bluetooth/interruption/network tests; stable HTTPS host (not Mac+ngrok); app signing/TestFlight install; crash reporting; rollback and incident owner.
+**Device/release:** actual spoken technical output preserves server-approved facts, units, qualifications and refusals (CAR-041, D-14), or a controlled delivery path is added, or technical voice release is blocked; physical iPhone mic/Bluetooth/interruption/network tests; stable HTTPS host (not Mac+ngrok); app signing/TestFlight install; crash reporting; rollback and incident owner.
 
 **Commercial validation:** Tyler has agreed to the test, the shop authorizes the activity, baseline tasks/time are recorded, and a method for feedback/repeat-use measurement exists. PRD targets are not marked achieved before measurement.
 

@@ -1,4 +1,4 @@
-# 07 — CARVIS Brain: ownership, evidence lifecycle, restore safety
+# 07 — CARVIS Brain: ownership, evidence lifecycle, knowledge model, restore safety
 
 ## Ownership
 
@@ -13,7 +13,121 @@ internal API; no mechanic-facing administration.
 The existing ingestion and review tooling (`backend/ingest.py`, `backend/migrate_v2.py`) is kept; it
 gains Postgres-backed decisions and an authenticated reviewer identity.
 
-## Serve-time rule (intersection)
+## Serve-time rule (mandatory requirements; detailed protocol proposed)
+
+Status: ADR-0006 and ADR-0010 are `proposed` (roadmap D-8 open). The requirements below were
+approved by the owner on 2026-11-22 (roadmap D-13, at requirement level, including the
+delivery-window residual for V1). The detailed evidence-state and distributed-consistency protocol
+that implements them (record-class decision table, evaluation-stage precedence, witness protocol and
+its acceptance cases) is **proposed** and gated (see "Protocol gate" below).
+
+**Current implementation unchanged.** The existing prototype and retrieval path
+(`backend/spec_retrieval.py`, the legacy Qdrant verified path and its tests) keep serving exactly as
+today until B7f's reviewed activation switch. Nothing here authorizes a new serving path, a gate
+bypass or a production fallback. The new PostgreSQL-first Brain serves nothing until it satisfies
+the accepted protocol and its acceptance cases.
+
+These requirements replace the earlier candidate-first description, in which the Qdrant
+exact-filter `scroll` produced the candidates and only those were checked in PostgreSQL: a record
+missing from the projection must never hide a conflict, a withdrawal or a missing procedure step.
+
+### Mandatory serve-time requirements
+
+1. **Authoritative scope, PostgreSQL first.** One consistent, read-only PostgreSQL snapshot, read
+   first, enumerates the full potentially applicable scope for the resolved query (confirmed vehicle
+   snapshot, server-derived `brain_scopes`, subject, operation, property and position): every record
+   through reviewed aliases and across all revisions of the same source, **plus its dependency
+   closure** (procedure steps, prerequisite specifications, linked warnings). A record whose
+   applicability depends on an attribute the snapshot lacks is included as *undetermined*, never
+   dropped and never a wildcard; a record a known attribute excludes never interferes with the
+   answer. The scope is never truncated: over the bound (256 records today, dependency closure
+   included) the query refuses with `clarification` ("narrow the component and operation").
+2. **Projection completeness, both directions.** A verified and published record without a matching
+   serving point refuses (`unverified`) and is flagged for reconciliation. A serving point in scope
+   that is not a verified and published authoritative record (unknown to PostgreSQL, ahead of or
+   mismatched with it, or for a `pending` or `rejected` record), other than the point of a
+   non-blocking withdrawal committed with a matching tombstone, is a projection-integrity anomaly:
+   `unverified` and reconciliation. The serving read is never truncated, so more than 256 applicable
+   serving points always refuses with `clarification`.
+3. **State-specific treatment.** Record state, publication status, applicability and projection
+   integrity are separate checks.
+   - `pending` and `rejected` records neither authorize nor block; they are excluded before
+     applicability evaluation and do not count toward the scope bound.
+   - A verified but unpublished record never authorizes. It blocks only through a material conflict
+     with, or as a required dependency of, an authorizing record: `clarification` while its
+     applicability is undetermined, `conflict` or `incomplete` once it is applicable. Undetermined
+     applicability alone never yields `clarification` for an unrelated unpublished record.
+   - A verified and published record with unresolved required applicability yields
+     `clarification`.
+   - A withdrawal with a non-blocking reason (`incorrect_extraction`, `superseded`, `rights`) is
+     removed before applicability, conflict and completeness evaluation only when it is committed in
+     PostgreSQL with a matching tombstone; a missing required tombstone refuses (`unverified`).
+     Removing a required step makes the procedure `incomplete`.
+   - `suspect_conflict` withdrawals, `quarantined` records, blocking tombstones, unresolved conflicts
+     and integrity anomalies block within the potentially applicable scope, whether the record is
+     applicable or undetermined.
+4. **Fail closed, availability first.** PostgreSQL, the control collection or the projection
+   unreadable, the control point missing, or global quarantine (mismatch table) refuses with
+   `brain_unavailable` before any other evaluation; never a guess. Scope overflow refuses before the
+   detailed integrity evaluation; both refuse.
+5. **Evidence-affecting decisions are detected before release.** The read order is fixed:
+   PostgreSQL snapshot, then the serving read, then one batched control read for every authoritative
+   evidence ID. Any evidence-affecting decision (verify, publish or activate, withdraw, quarantine,
+   reapprove) committed or started between the snapshot and release is detected before release and
+   reruns evaluation once; a second change refuses (`unverified`). Where a decision cannot be
+   detected, the answer refuses.
+6. **Final witness and accepted residual.** Immediately before release, one batched control read
+   re-checks the tombstones of **every** authoritative evidence ID in the scope and the control
+   singleton. **Residual (accepted by the owner for V1 on 2026-11-22, D-13):** a withdrawal whose
+   tombstone is written after the final witness (from that read until delivery completes, including
+   before speech starts) is not recalled from the delivered answer; the answer's evidence reference
+   then renders "source withdrawn" in history, and the operator runbook treats a withdrawal of
+   safety-critical evidence as an incident to notify affected recent users. This never permits reuse
+   of the withdrawn evidence in any later answer. Delivery-side recall is a future enhancement.
+7. **Deterministic outcomes.** Every input is classified into exactly one outcome under an explicit
+   precedence of ordered stages with terminal refusals; removal and classification are
+   non-terminal steps, not first-match rules.
+8. **Discovery never authorizes.** Lexical or dense discovery may only propose a subject or
+   operation mapping, which re-enters requirement 1, or order equivalent citations inside the
+   evaluated set. It never adds a record, removes one, or chooses the scope.
+9. **No bypass.** If the gate cannot run, the outcome is `brain_unavailable` (quarantine). This
+   replaces the "disable the gate by flag" rollback in proposed
+   [ADR-0006](../decisions/0006-brain-ownership-and-restore-safety.md) for the serve path
+   ([ADR-0010](../decisions/0010-brain-knowledge-model-and-retrieval.md)). Proposed records authorize
+   no implementation; ADR-0006 is accepted only as amended by ADR-0010 (roadmap D-8), and where their
+   texts differ this document and ADR-0010 govern.
+10. **Existing checks stay mandatory.** Python verification stays authoritative; the gate adds
+    checks and never relaxes one. The existing `evaluate_candidates` safety checks (schema and
+    evidence validation, variant clarification, revision and value conflict, procedure grouping and
+    ordered completeness) remain mandatory. The current implementation does not implement these
+    requirements; B7e extends it, or the gate around it, without relaxing any existing check.
+
+### Open protocol findings (mandatory B7 design and acceptance requirements)
+
+The detailed protocol reviewed on 2026-11-22 left three findings open. Each is a mandatory design
+requirement and acceptance case for B7d and B7e (and B7c for F3):
+
+- **F1, missing projection by publication status:** a conflicting verified record with no
+  projection point is classified explicitly: published ⇒ `unverified` (requirement 2); unpublished
+  ⇒ the conflict and dependency checks of requirement 3. No input may have two outcomes.
+- **F2, non-overlapping blocking states:** the classification of committed withdrawals, tombstones
+  and serving points must not overlap, so each blocking state keeps its specific outcome (a
+  committed `suspect_conflict` withdrawal ⇒ `conflict`, `quarantined` ⇒ `unverified`), including
+  when applicability is undetermined.
+- **F3, non-withdrawal decisions in the witness:** a verify or publish decision made between the
+  snapshot and release (for example verification of a record that conflicts with the answer) must be
+  detected before release (requirement 5) or the answer refuses. Today only withdrawals write the
+  control collection; the protocol must close this gap, not accept it as a residual.
+
+### Protocol gate
+
+The detailed protocol must resolve F1 to F3, pass T4 design review by both reviewer classes, and
+receive the owner's final D-13 sign-off **before** design acceptance of B7c, B7d and B7e, and before
+any B7a schema element that encodes publication status or decision counters. B7f activation
+additionally requires the protocol's acceptance cases to pass on real PostgreSQL and a Qdrant test
+instance.
+
+### Per-record invariant (existing, unchanged)
 
 An evidence record may be spoken only if **all** of the following hold, evaluated per record, in
 **both** stores:
@@ -29,19 +143,15 @@ An evidence record may be spoken only if **all** of the following hold, evaluate
    or equal to** the PostgreSQL `state_version`. A tombstone **blocks the answer by itself**, even if
    the PostgreSQL withdrawal transaction failed or PostgreSQL still says `verified`.
 
-After the existing exact-filter `scroll`, the candidate IDs are checked with one indexed PostgreSQL
-query and one batched read of the control collection (two reads, no per-record round trips).
-
-| Candidate status | Outcome |
+| Record status | Outcome |
 | --- | --- |
-| All four conditions hold | continues to the unchanged `evaluate_candidates` |
+| All four conditions hold | continues to the existing `evaluate_candidates` checks (requirement 10) |
 | Withdrawn in PostgreSQL with reason `incorrect_extraction`, `superseded` or `rights`, and a matching tombstone | removed **before** conflict evaluation |
-| Withdrawn with reason `suspect_conflict`, or `quarantined`, or unknown to PostgreSQL | **blocker**: the scope refuses (`conflict` or `unverified`) |
+| Withdrawn with reason `suspect_conflict`, or `quarantined`, or unknown to PostgreSQL | **blocker**: the scope refuses (`conflict` or `unverified`; exact assignment per F2) |
 | Any condition above fails (digest, status, version mismatch, tombstone with no matching PostgreSQL withdrawal) | **blocker** for the evidence's scope: `unverified` refusal; evidence flagged for reconciliation |
-| PostgreSQL unreadable, control collection unreadable or missing | `brain_unavailable` refusal (global fail closed); never a guess |
+| PostgreSQL unreadable, control collection unreadable or missing, projection unreadable | `brain_unavailable` refusal (global fail closed); never a guess |
 
-Python verification stays authoritative; this gate adds a check and never relaxes one. Removal
-happens before the unchanged conflict, applicability and procedure-completeness logic, so removing
+Removal happens before conflict, applicability and procedure-completeness evaluation, so removing
 one step makes a procedure `incomplete`, and removing one of two conflicting records still refuses
 unless the withdrawal reason is non-blocking.
 
@@ -166,6 +276,102 @@ as an additive schema generation, activated only through the full acceptance sui
 (`backend/tests/fixtures/wrx-acceptance.json` plus new global/shop cases). The existing
 "no cross-vehicle or shop fallback" tests are extended to global-versus-shop.
 
+## Knowledge model (logical)
+
+Physical tables, indexes and API payloads are designed in roadmap B7a under bounded review; this is
+the logical contract they must satisfy ([ADR-0010](../decisions/0010-brain-knowledge-model-and-retrieval.md)).
+
+- **Source document and revision:** origin, rights basis and permitted processing and presentation,
+  `global` or workspace scope, source hash, revision, integrity.
+- **Source fragment:** original text, table, row, page, section, warning or figure locator, parser
+  and extraction version, exact link to the source revision.
+- **Entity and terminology:** canonical component, system, tool or identifier; scoped, reviewed
+  aliases; typed relationships. An actuator is not an alias for its whole system.
+- **Applicability:** explicit configuration (market, engine, transmission, trim, equipment, build or
+  VIN constraints where required). Unknown is never a wildcard; a VIN decode is not sufficient for
+  every variant.
+- **Specification:** subject, operation, property, position, raw and decimal value, unit, range,
+  limit, tolerance or ordered torque-angle sequence, conditions and warnings, at source precision.
+  Only deterministic, explicitly supported unit conversions.
+- **Procedure:** prerequisites, tools, warnings, ordered steps, conditional branches, dependencies
+  and linked specifications; completeness is checked as a group.
+- **Manufacturer communication (conditional V1 enhancement):** type, attribution, applicability,
+  date or revision, documented conditions and limits. A TSB is not a recall; neither proves a fault
+  or an open campaign on an individual vehicle; no automatic diagnosis.
+- **Reviewed relationships**, only as needed: `part_of`, `alias_of`, `applies_to`, `requires`,
+  `precedes`, `references`, `supersedes`. A statistical association is discovery only, never proof.
+- Review decisions, evidence versions, immutable answer evidence references and coverage entries
+  (existing entities; [03-data-model.md](03-data-model.md)).
+
+Only accepted evidence authorizes a technical claim. Verified facts, attributed manufacturer
+communications, technician observations, shop records, visual hypotheses, statistical associations,
+AI inference and pending extractions stay distinguishable; observation or assistant history is never
+proof that a repair was performed.
+
+## Knowledge construction (operator only)
+
+Register the source and its permitted processing **before** upload or any third-party transmission;
+parse into page-, section- and table-aware fragments; normalize without losing the original
+representation; extract typed `pending` records; resolve reviewed terminology and dependencies;
+validate layout, values, applicability, revisions, conflicts and completeness; a qualified reviewer
+compares against the original; digest-bound review decision; build and validate the projection;
+the publisher activates; publish the coverage manifest; monitor gaps and supersede, withdraw or
+reconcile.
+
+- Structured JSON or CSV maps directly through the validated schema. Digital PDFs use the existing
+  LlamaParse adapter; complex or scanned tables use review and exact source transcription. Diagrams
+  keep their location and references, never an automatic mechanical interpretation.
+- No cloud parser and no external model receives a source, shop data or restricted content without
+  source-specific permission. Docling is a conditional alternative, adopted only if measured
+  extraction quality or cost warrants it.
+- Normalization preserves technical forms (`3.5 L`, `P0302`, `10.5 Ω`, `M12 × 1.5`, `90° + 45°`),
+  left/right and front/rear, sign, decimal, range and tolerance, units, row and column association,
+  warning scope and heading context; ingestion and query normalization use the same rules.
+- The original source is the evidence, not the generated extraction. Synthetic fixtures are never
+  published to a real pilot scope.
+
+## Retrieval layers
+
+1. **Structured exact retrieval** over the authoritative scope (above). Always on.
+2. **Reviewed aliases and technical lexical matching** for discovery of the subject and operation.
+3. **Dense semantic discovery** (existing `BAAI/bge-small-en-v1.5` embeddings) as an optional,
+   measured enhancement.
+
+Layers 2 and 3 only help find the scope or choose a citation; they never authorize, add or remove
+evidence. Adopting layer 2, layer 3 or any rank fusion requires the bounded R3 comparison
+([12-m2-roadmap.md](12-m2-roadmap.md), "R3"); until then the existing baseline is retained.
+
+## Outcomes and response compiler
+
+Outcomes: `verified`, `clarification`, `unsupported`, `incomplete`, `conflict`, `unverified`,
+`brain_unavailable`. `unsupported` is the canonical name for the no-match refusal, which the
+legacy path reports today as code `unavailable` (`SpecificationRefusal` default). The legacy code
+and its API behavior stay unchanged until B7f's reviewed switch; B7e defines the versioned mapping
+from `unavailable` to `unsupported`. Where a test below expects `unavailable` (conflict handling),
+it means this no-match refusal. A partial answer is allowed only for separable parts of a multipart question,
+each independently verified and labeled as covering only that part. A procedure is never delivered
+partially: a missing required step or dependency makes it `incomplete`, which refuses (CAR-043).
+Ambiguity is never resolved by guessing. A vehicle switch invalidates derived facts and pending
+responses.
+
+A deterministic compiler builds each answer from approved facts, units, conditions and citations
+into one versioned answer from which both the spoken and the displayed output derive. An LLM may
+interpret the question or phrase the delivery; it cannot override the gate or supply a critical
+value, unit, condition, step or refusal. Each answer records the exact source and record versions;
+withdrawn evidence remains in history marked withdrawn and is never reused as active guidance.
+Source deletion and retention rights are respected; revocation metadata is kept without retaining
+restricted content.
+
+## Spoken-output integrity (V1 release gate)
+
+Approved by the owner on 2026-11-22 as a mandatory V1 release gate (roadmap D-14). Actual technical
+speech must preserve the server-approved facts, units, qualifications and refusal outcomes,
+including after interruption, retry and vehicle switch. A prompt instruction is not assurance: the
+gate is validated against real spoken output on staging (B5, D-9; a live staging call still needs
+its own owner approval) and on physical devices (M5). If the voice provider cannot deliver
+controlled critical content reliably, CARVIS adds a controlled speech-delivery path or blocks
+technical voice release; verification is never relaxed.
+
 ## Tests
 
 - Crash between activation steps 1 and 2 ⇒ not served; reconciliation re-queues.
@@ -216,3 +422,20 @@ Each case runs against real PostgreSQL and a Qdrant test instance, asserts the u
     withdrawn, no global quarantine (`pg.decision_seq` ≤ `intent_seq`); reconciliation repairs the marker.
 12. **Conflict preserved:** a tombstone-blocked record in the applicable scope is a blocker (not silently
     removed) unless its withdrawal is committed in PostgreSQL with a non-blocking reason.
+
+### Authoritative-scope acceptance requirements
+
+The detailed acceptance cases belong to the proposed protocol ("Protocol gate"). Whatever their
+final form, B7d and B7e acceptance must cover, against real PostgreSQL and a Qdrant test instance,
+each with its user-visible outcome and with no unverified value ever spoken:
+
+- each of the ten mandatory serve-time requirements, including a record missing from the projection,
+  a conflict ranked below any top-k cut-off, a missing step or dependency (never a partial
+  procedure), both scope overflows, unknown applicability, the ranking boundary and the reverse
+  projection direction;
+- each state class of requirement 3, including inert `pending` and `rejected` records (also when
+  projected), non-interfering unpublished evidence, conflicting unpublished evidence that is
+  undetermined and then applicable, a required unpublished dependency, and a committed non-blocking
+  withdrawal with and without its matching tombstone;
+- the withdrawal races before the control read and between the control read and the final witness;
+- F1, F2 and F3 ("Open protocol findings").
