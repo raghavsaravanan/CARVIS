@@ -136,4 +136,3 @@ def test_url_value_is_never_rendered(env):
 
 def test_database_url_equality_does_not_render():
     assert DatabaseUrl("a") == DatabaseUrl("a") and DatabaseUrl("a") != DatabaseUrl("b")
-
