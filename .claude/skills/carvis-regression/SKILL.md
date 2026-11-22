@@ -1,7 +1,7 @@
 ---
 name: carvis-regression
 description: Run and extend CARVIS regression checks — Python backend tests, pure Swift checks, SpacetimeDB TypeScript, voice-pipeline preservation, deterministic verified answers and refusals, tenant-isolation and authorization tests — and report mocked versus physical-device and live-provider validation honestly. Use before and after backend, iOS, or contract changes, and whenever asked whether something still works.
-allowed-tools: Read Grep Glob Bash(scripts/verify.sh) Bash(scripts/bootstrap-worktree.sh *) Bash(scripts/tests/review-scope-test.sh) Bash(.venv/bin/python -m pytest *) Bash(.venv/bin/python -m compileall *) Bash(python3 -m pytest *) Bash(python3 -m compileall *) Bash(git status *) Bash(git diff *)
+allowed-tools: Read Grep Glob Bash(scripts/verify.sh) Bash(.venv/bin/python -m pytest *) Bash(.venv/bin/python -m compileall *) Bash(python3 -m pytest *) Bash(python3 -m compileall *) Bash(git status *) Bash(git diff *)
 ---
 
 # CARVIS regression workflow

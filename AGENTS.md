@@ -62,8 +62,9 @@ model:
 
 - Dispatch is not authorization. Commit, push, and pull-request creation need the owner's approval,
   recorded in the task contract or given by invoking `/carvis-continue`.
-- Review only committed candidates, through `scripts/review-scope.sh`. A change to the candidate or
-  material drift in `origin/main` makes earlier reviews stale.
+- Review only committed candidates, through `scripts/review-scope.sh`. Any change to the candidate
+  makes earlier reviews stale, except a clean update from `origin/main` that the script shows
+  touches no task file.
 - Risk tiers only add requirements; only the owner lowers a tier.
 - Workers never dispatch other workers, create branches or worktrees the coordinator owns, answer
   another agent's permission prompts, or edit outside their assigned worktree.

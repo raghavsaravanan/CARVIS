@@ -5,14 +5,26 @@
 # Usage: preflight.sh                      standalone: the skill creates the task branch
 #        preflight.sh --assigned <branch>  Orca mode: the coordinator created <branch> and its
 #                                          worktree; this checkout must be on it, and it must be fresh
+#        preflight.sh --assigned <branch> --non-roadmap
+#                                          the same for an assigned task that is not a roadmap row:
+#                                          the roadmap-row PR checks (section 3) are skipped
 set -u
 REPO=raghavsaravanan/CARVIS
 stop() { echo "STOP: $*"; exit 1; }
 ASSIGNED=
+NON_ROADMAP=
+USAGE="usage: preflight.sh [--assigned <branch> [--non-roadmap]]"
 case "${1:-}" in
-  "") ;;
-  --assigned) ASSIGNED="${2:-}"; [ -n "$ASSIGNED" ] && [ $# -eq 2 ] || stop "usage: preflight.sh [--assigned <branch>]" ;;
-  *) stop "usage: preflight.sh [--assigned <branch>]" ;;
+  "") [ $# -eq 0 ] || stop "$USAGE" ;;
+  --assigned)
+    ASSIGNED="${2:-}"
+    case "${ASSIGNED}" in ""|-*) stop "$USAGE" ;; esac
+    case "$#:${3:-}" in
+      2:) ;;
+      3:--non-roadmap) NON_ROADMAP=1 ;;
+      *) stop "$USAGE" ;;
+    esac ;;
+  *) stop "$USAGE" ;;
 esac
 
 # 1. origin must be the CARVIS fork (any https/ssh spelling); pushes name origin explicitly.
@@ -66,6 +78,11 @@ elif [ -n "$(git rev-list origin/main..HEAD)" ]; then
     [ -n "$safe" ] || stop "$branch has commits that are not pushed and not in any merged PR"
     echo "NOTE: $branch was squash-merged in #$safe; it stays in place"
   fi
+fi
+
+if [ -n "$NON_ROADMAP" ]; then
+  echo "OK: non-roadmap task; roadmap-row PR checks skipped"
+  exit 0
 fi
 
 # 3. Roadmap-row PRs: none open, the latest merged, and its merge commit on origin/main.

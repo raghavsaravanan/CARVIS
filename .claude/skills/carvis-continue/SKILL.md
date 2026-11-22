@@ -124,8 +124,9 @@ Reviews inspect a committed candidate, never a working tree.
    Later corrections are new commits, never amends.
 2. **Review packet.** `git fetch origin main`, then
    `scripts/review-scope.sh --tier <Tn> <base> <candidate>` must exit 0. Exit 1 is a defect to fix
-   first; exit 3 means `origin/main` changed this task's files or a policy file: merge it (never
-   rebase), rerun the checks, and run the packet again.
+   first; exit 3 means `origin/main` changed this task's files or a T3+ file: merge it (never
+   rebase), rerun the checks, and run the packet again. If any review already happened, the merge
+   is a correction: renew review as in item 5.
 3. **Independent review.**
    - Standalone: give a fresh subagent the roadmap row, the tier, the repository policy files, and
      the review-scope output, but not your conclusions, summary or test results. Ask for findings
@@ -137,6 +138,8 @@ Reviews inspect a committed candidate, never a working tree.
    - Orca mode: send the coordinator a handoff (`worker_done`) with the base and candidate SHAs, the
      review-scope exit status, and the checks run with labels, then wait. The coordinator
      commissions every review and sends findings, or approval to open the PR, as a follow-up task.
+     A follow-up task does not rerun step 1: confirm the tree is clean and `HEAD` is the candidate
+     the follow-up names, then continue at item 5 (findings) or step 5 (approval).
 4. **`/carvis-pr-review`** on the candidate (`<base>..<candidate>`); in Orca mode the coordinator
    runs it.
 5. **Fix in-scope findings** as new commits, rerun the affected checks and the full baseline, and
@@ -146,9 +149,11 @@ Reviews inspect a committed candidate, never a working tree.
 
 ## 5. Revalidate, push, draft PR, CI
 
-- **Revalidate.** `git fetch origin main` and rerun `scripts/review-scope.sh`. Handle exit 3 as in
-  step 4. With drift but exit 0, check the drifted files for contract, import or fixture effects on
-  this task and record the result. Rerun the open roadmap-PR query and stop if another row's PR is
+- **Revalidate.** `git fetch origin main` and rerun `scripts/review-scope.sh`. Exit 3 means a
+  merge and renewed review (step 4, items 2 and 5) before anything is pushed. Push only a head that
+  was reviewed, or one that differs from it only by a clean update (`review-scope.sh --since
+  <reviewed>` lists no task-file changes). With drift but exit 0, check the drifted files for
+  contract, import or fixture effects on this task and record the result. Rerun the open roadmap-PR query and stop if another row's PR is
   now open:
   ```bash
   gh pr list --repo raghavsaravanan/CARVIS --state open --search "M2 in:title" --json number,title

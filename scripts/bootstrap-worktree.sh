@@ -158,15 +158,37 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 node_want="$(node --version) $(digest "${MODULE}/package-lock.json")"
+# Every package in package-lock.json is installed at exactly its locked version (npm ls alone
+# accepts any version inside the declared ranges).
+node_locked_versions_installed() {
+  node -e 'const fs = require("fs");
+const path = require("path");
+const dir = process.argv[1];
+const lock = JSON.parse(fs.readFileSync(path.join(dir, "package-lock.json"), "utf8"));
+const entries = Object.entries(lock.packages || {}).filter(([p]) => p.startsWith("node_modules/"));
+const bad = [];
+for (const [p, e] of entries) {
+  const manifest = path.join(dir, p, "package.json");
+  if (e.optional && !fs.existsSync(manifest)) continue;
+  let v = "missing";
+  try { v = JSON.parse(fs.readFileSync(manifest, "utf8")).version; } catch (_) {}
+  if (v !== e.version) bad.push(`${p}: installed ${v}, locked ${e.version}`);
+}
+if (bad.length || entries.length === 0) {
+  console.error(bad.slice(0, 10).join("\n") || "no locked packages found");
+  process.exit(1);
+}' "${MODULE}" >/dev/null 2>&1
+}
 node_valid() {
   [[ -f "${NODE_STAMP}" && "$(cat "${NODE_STAMP}")" == "${node_want}" ]] \
     && npm ls --prefix "${MODULE}" --all >/dev/null 2>&1 \
+    && node_locked_versions_installed \
     && "${MODULE}/node_modules/.bin/tsc" --version >/dev/null 2>&1
 }
 if node_valid; then
   echo "OK: node_modules matches package-lock.json and validates; skipped."
 elif [[ "${CHECK_ONLY}" -eq 1 ]]; then
-  echo "MISSING: ${MODULE}/node_modules absent, out of date with package-lock.json, or invalid."
+  echo "MISSING: ${MODULE}/node_modules absent, out of date with package-lock.json, invalid, or not at the locked versions."
   problems=1
 else
   # Lockfile-exact install. Install scripts are disabled; CI runs plain `npm ci`, and no locked

@@ -15,8 +15,9 @@
 #
 # The reviewed diff runs from the effective base: <base>, or the merge-base with the integration
 # branch when the task branch has been updated from it since (git merge, never rebase).
-# REVIEW_SCOPE_AGAINST overrides the integration ref (default origin/main). If this script itself
-# is among the changed files, also run the integration branch's copy:
+# The integration ref is always origin/main; there is deliberately no override. Reviewers run the
+# integration branch's copy of this script when it has one, so a candidate cannot weaken the check
+# that reviews it:
 #   git show origin/main:scripts/review-scope.sh | bash -s -- <same arguments>
 #
 # Exit status:
@@ -43,7 +44,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ $# -eq 2 ]] || usage
 case "${tier}" in ""|T1|T2|T3|T4) ;; *) usage ;; esac
-against="${REVIEW_SCOPE_AGAINST:-origin/main}"
+against="origin/main"
 
 # Unquoted UTF-8 path names; names git must still quote (quotes, backslashes, control characters)
 # are refused below rather than matched wrongly.
@@ -101,7 +102,8 @@ git merge-base --is-ancestor "${base}" "${candidate}" || block "base is not an a
 git merge-base --is-ancestor "${base}" "${against_sha}" \
   || block "base ${base} is not on ${against}; pass the integration commit the task started from (use --since for a previous candidate)"
 effective="${base}"
-fork="$(git merge-base "${candidate}" "${against_sha}")"
+fork="$(git merge-base "${candidate}" "${against_sha}")" \
+  || { echo "NOT REVIEWABLE: the candidate shares no history with ${against}"; exit 1; }
 if [[ "${fork}" != "${base}" ]] && git merge-base --is-ancestor "${base}" "${fork}"; then
   effective="${fork}"
 fi
@@ -156,7 +158,7 @@ archive="$(printf '%s\n' "${paths}" | grep -E '^docs/archive/' || true)"
 gates="$(printf '%s\n' "${paths}" | grep -E '^(\.github/|scripts/|\.claude/skills/)' || true)"
 [[ -z "${gates}" ]] || flag "Quality-gate changes (a change that weakens a gate can pass that gate; review against the previous gate)" "${gates}"
 if printf '%s\n' "${paths}" | grep -qx 'scripts/review-scope.sh'; then
-  echo "NOTE: this script changed; also run ${against}'s copy if it has one:"
+  echo "NOTE: this script changed; the review must use ${against}'s copy if it has one:"
   echo "  git show ${against}:scripts/review-scope.sh | bash -s -- <same arguments>"
 fi
 locks="$(printf '%s\n' "${paths}" | grep -E '^(backend/requirements|requirements\.txt|runtime\.txt|backend/spacetimedb/module/package)' || true)"

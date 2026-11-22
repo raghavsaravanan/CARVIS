@@ -168,16 +168,19 @@ Stop if:         an open decision affects the task; preflight STOP; the change n
    --base-branch origin/main --no-parent --setup skip`. The branch has no upstream. In Orca mode the
    coordinator is the only creator of task branches; `/carvis-continue` creates one only in
    standalone mode.
-2. **Prepare (implementer).** `.claude/skills/carvis-continue/preflight.sh --assigned <branch>`,
-   then `git merge --ff-only origin/main` (the branch has no commits of its own, so this only moves
-   it forward), then `scripts/bootstrap-worktree.sh`.
+2. **Prepare (implementer).** `.claude/skills/carvis-continue/preflight.sh --assigned <branch>`
+   for a roadmap row, or with `--non-roadmap` added for any other task (it skips the roadmap-row PR
+   checks, so an open M2 PR does not block the second package). Then `git merge --ff-only
+   origin/main` (the branch has no commits of its own, so this only moves it forward), then
+   `scripts/bootstrap-worktree.sh`.
 3. **Work and review** as described below. The implementer stays idle while a review runs.
 4. **Release (coordinator), after the owner merges.** Remove the worktree only when its branch is
    merged or the owner abandons it, and its tree is clean. Never stash, reset or delete to recover.
 
 Orca can run a committed `orca.yaml` setup script when it creates a worktree. It is not configured:
-Orca can start that script beside the agent, it re-prompts for trust only when `orca.yaml` changes
-(not when the script it calls changes), and its behavior for this repository is untested. Enabling
+according to Orca 1.4.269's own settings and trust-dialog text (not tested here), it can start that
+script beside the agent and re-prompts for trust only when `orca.yaml` changes, not when the script
+it calls changes; its behavior for this repository is untested. Enabling
 it is an owner decision after a test in a disposable worktree.
 
 A Git worktree is not a security boundary. Every worktree shares the repository's objects, refs,
@@ -213,8 +216,12 @@ changes are T3.
 2. **Packet.** `git fetch origin main`, then `scripts/review-scope.sh --tier <Tn> <base> <candidate>`
    must exit 0. `<base>` is the integration commit the task started from, never a task commit; the
    script refuses a task commit, a missing integration ref, and a declared tier below the path
-   floor. Its output, the task contract and the list of policy files form the review packet. Reviewers do not receive the implementer's summary, reasoning, test conclusions, PR
-   body or earlier verdicts; a renewed review receives only the list of earlier findings to check.
+   floor. Its output, the task contract and the list of policy files form the review packet.
+   Reviewers run the integration branch's copy of the script when it has one (`git show
+   origin/main:scripts/review-scope.sh | bash -s -- …`), so a candidate cannot weaken its own
+   review, and they never run candidate scripts without reading them first. Reviewers do not
+   receive the implementer's summary, reasoning, test conclusions, PR body or earlier verdicts; a
+   renewed review receives only the list of earlier findings to check.
 3. **Review.** Reviewers read the pinned revisions (`git show <sha>:<path>`, `git diff`), not a
    working tree that may change, and also read the callers, contracts and scoped policies that the
    change affects. They report on every listed file, with `file:line`, a failure scenario,
@@ -229,10 +236,11 @@ changes are T3.
    integration branch changed this task's files or a policy, CI, script or dependency file: merge
    `origin/main` (never rebase), rerun the checks and renew review. Exit 0 with drift still needs a
    drift check: read the drifted files for contract, import or fixture effects on this task and
-   record the result in the PR. A conflict-free update merge of non-material drift (including
-   GitHub's "Update branch") needs that drift check, the full baseline and green CI, but no renewed
-   review: `review-scope.sh --since` then shows no task-file changes. A conflicted or material
-   update renews review under step 4.
+   record the result in the PR. A clean update is a merge of `origin/main` (including GitHub's
+   "Update branch") after which `review-scope.sh --since <reviewed candidate>` exits 0 and lists no
+   task-file changes. It keeps its reviews, but needs that drift check, the full baseline and green
+   CI. Any other change to the candidate, including a conflicted or material update, renews review
+   under step 4.
 6. **PR head pinning.** The PR records the reviewed candidate SHA. Before asking the owner to
    approve, and again at merge, compare the PR's current head and base with the reviewed values:
 
@@ -241,7 +249,7 @@ changes are T3.
      --json headRefOid,baseRefName,baseRefOid,headRepositoryOwner,isCrossRepository,statusCheckRollup
    ```
 
-   Any later push makes the review stale until step 5 is applied to the new head.
+   A head that is neither the reviewed candidate nor a clean update of it has stale reviews.
 
 ### Handoff and workflow record
 

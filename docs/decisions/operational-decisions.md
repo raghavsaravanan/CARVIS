@@ -1,9 +1,8 @@
 # Owner operational decisions
 
-Working rules the repository owner accepted for the engineering workflow. They are not
-architecture decision records: they resolve no D-item, and formal ADRs and accepted records in this
-directory remain authoritative. Only the owner adds, changes, or removes an entry; agents cite them
-and never edit them.
+Working rules the repository owner accepted for the engineering workflow, kept here rather than in
+numbered records. Only the owner adds, changes, or removes an entry; agents cite them and never
+edit them.
 
 ## Accepted by the owner on 2026-11-16
 

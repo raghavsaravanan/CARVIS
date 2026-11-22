@@ -26,10 +26,16 @@ git switch -q --detach origin/main
 expect usage-bad-flag 1 'usage' bash "$PF" --bogus
 expect usage-missing-branch 1 'usage' bash "$PF" --assigned
 expect usage-extra-arg 1 'usage' bash "$PF" --assigned chore/x extra
+expect usage-flag-as-branch 1 'usage' bash "$PF" --assigned --non-roadmap
+expect usage-standalone-extra 1 'usage' bash "$PF" extra
 git switch -qc chore/wf-test origin/main
 expect standalone-ok 0 '^OK: merged M2 rows' bash "$PF"
 expect assigned-ok 0 'OK: assigned branch chore/wf-test is fresh' bash "$PF" --assigned chore/wf-test
 expect assigned-wrong-branch 1 'not the assigned branch chore/other' bash "$PF" --assigned chore/other
+expect non-roadmap-ok 0 'non-roadmap task; roadmap-row PR checks skipped' bash "$PF" --assigned chore/wf-test --non-roadmap
+out="$(bash "$PF" --assigned chore/wf-test --non-roadmap 2>&1)"
+if printf '%s' "$out" | grep -q 'merged M2 rows'; then fail=$((fail+1)); echo "FAIL non-roadmap-skips-row-checks"; else pass=$((pass+1)); echo "PASS non-roadmap-skips-row-checks"; fi
+expect non-roadmap-still-validates 1 'not the assigned branch chore/other' bash "$PF" --assigned chore/other --non-roadmap
 git switch -qc wip/no-prefix origin/main
 expect assigned-bad-prefix 1 'lacks an allowed prefix' bash "$PF" --assigned wip/no-prefix
 git switch -qc chore/behind "origin/main~1"

@@ -2,13 +2,14 @@
 name: carvis-pr-review
 description: Review a CARVIS branch or pull request — git diff, scope, protected boundaries, security and privacy, migration safety, test verification, CI status, PR readiness, and rollback documentation. Use before opening or marking ready a PR, or when asked to review a diff, branch, or PR number. Read-only; never merges, approves, or pushes.
 argument-hint: "[PR number | <base>..<candidate> | branch | blank for current branch] [T1-T4]"
-allowed-tools: Read Grep Glob Bash(git status *) Bash(git fetch origin main) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git ls-files *) Bash(git grep *) Bash(git rev-parse *) Bash(git merge-base *) Bash(scripts/review-scope.sh *) Bash(gh pr view *) Bash(gh pr diff *) Bash(gh pr checks *)
+allowed-tools: Read Grep Glob Bash(git status *) Bash(git fetch origin main) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git ls-files *) Bash(git grep *) Bash(git rev-parse *) Bash(git merge-base *) Bash(gh pr view *) Bash(gh pr diff *) Bash(gh pr checks *)
 ---
 
 # CARVIS pull-request review
 
 Target: `$ARGUMENTS`: a PR number, an explicit `<base>..<candidate>` pair, or a branch; otherwise
-the current branch, with `<base>` = `git merge-base origin/main HEAD` and `<candidate>` = `HEAD`.
+the current branch. Unless a pair is given, `<candidate>` is `HEAD` (for a PR, its `headRefOid`) and
+`<base>` is `git merge-base origin/main <candidate>`, never the PR's `baseRefOid`.
 An optional tier (`T1`–`T4`) follows. This skill reports; it does not edit, commit, push, approve,
 or merge. It reviews committed revisions only: uncommitted or untracked changes make the target
 unreviewable, so report that and stop.
@@ -21,7 +22,9 @@ repository's PR (`docs/development-workflow.md`).
 
 ```bash
 git fetch origin main
-scripts/review-scope.sh --tier <Tn> <base> <candidate>   # must exit 0 (3: update and re-review)
+# Run main's copy, so the candidate cannot weaken the check that reviews it. Only when main has no
+# copy yet (the change that introduces it), read the candidate's script first, then run that.
+git show origin/main:scripts/review-scope.sh | bash -s -- --tier <Tn> <base> <candidate>  # must exit 0
 git diff --no-ext-diff <effective base>..<candidate>      # effective base is printed by review-scope
 gh pr view <n> --repo raghavsaravanan/CARVIS   --json title,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,statusCheckRollup
 gh pr checks <n> --repo raghavsaravanan/CARVIS                    # when a PR exists
@@ -98,7 +101,9 @@ up to date with `main` before human-approved squash merge.
 Also confirm: the PR states a risk tier no lower than the minimum `review-scope.sh` reports, and
 the evidence shows every requirement of that tier (`docs/development-workflow.md`, "Risk tiers");
 the "Review and workflow record" names the reviewed candidate SHA, and the PR's current
-`headRefOid` equals it. Any later push makes earlier reviews stale until they are renewed.
+`headRefOid` equals it, or differs only by a clean update: `review-scope.sh --since <reviewed SHA>`
+exits 0 and lists no task-file changes. Any other later change makes earlier reviews stale until
+they are renewed.
 
 ## 4. Report
 

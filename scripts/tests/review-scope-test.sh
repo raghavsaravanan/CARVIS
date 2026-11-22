@@ -20,7 +20,12 @@ expect() { # <name> <exit> <output-regex or ''> <cmd...>
 }
 refute() { # <name> <regex that must NOT appear in the named section> <section-start> <section-end> <cmd...>
   local name="$1" re="$2" from="$3" to="$4"; shift 4
-  if "$@" 2>&1 | sed -n "/${from}/,/${to}/p" | grep -Eq -- "${re}"; then
+  local out rc; out="$("$@" 2>&1)"; rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    fail=$((fail+1)); echo "FAIL ${name}: command exited ${rc}"; printf '%s\n' "${out}" | sed 's/^/    /'
+  elif ! printf '%s\n' "${out}" | grep -q -- "${from#^}"; then
+    fail=$((fail+1)); echo "FAIL ${name}: section ${from} missing"
+  elif printf '%s\n' "${out}" | sed -n "/${from}/,/${to}/p" | grep -Eq -- "${re}"; then
     fail=$((fail+1)); echo "FAIL ${name}: /${re}/ present"
   else
     pass=$((pass+1)); echo "PASS ${name}"
@@ -48,13 +53,16 @@ expect usage-bad-tier 2 '' bash "${R}" --tier T9 "${BASE}" HEAD
 expect usage-bad-flag 2 '' bash "${R}" --bogus "${BASE}" HEAD
 expect empty-diff 1 'no changes' bash "${R}" "${BASE}" "${BASE}"
 expect bad-revision 1 'cannot resolve nosuchref' bash "${R}" nosuchref HEAD
-expect missing-integration-ref 1 'integration ref missing/ref not found' env REVIEW_SCOPE_AGAINST=missing/ref bash "${R}" "${BASE}" HEAD
+git clone -q "${T}/origin" "${T}/noref" && (cd "${T}/noref" && git update-ref -d refs/remotes/origin/main)
+expect missing-integration-ref 1 'integration ref origin/main not found' bash -c 'cd "$1" && bash "$2" "$3" HEAD' _ "${T}/noref" "${R}" "${BASE}"
+expect no-override 1 'integration ref origin/main not found' bash -c 'cd "$1" && REVIEW_SCOPE_AGAINST=origin/HEAD bash "$2" "$3" HEAD' _ "${T}/noref" "${R}" "${BASE}"
 
 git switch -qc docs/t; printf 'a2\n' >> docs/a.md; git commit -qam change
 C1="$(git rev-parse HEAD)"
 expect clean-T1 0 'REVIEWABLE' bash "${R}" --tier T1 "${BASE}" "${C1}"
 expect lists-file 0 'M +:100644 -> 100644  docs/a\.md' bash "${R}" "${BASE}" "${C1}"
 expect floor-T1 0 'minimum for these paths: T1' bash "${R}" "${BASE}" "${C1}"
+expect runs-from-stdin 0 'REVIEWABLE' bash -s -- --tier T1 "${BASE}" "${C1}" < "${R}"
 printf 'dirty\n' >> docs/b.md
 expect dirty-tracked 1 'not clean' bash "${R}" "${BASE}" "${C1}"
 git checkout -q -- docs/b.md
@@ -143,6 +151,20 @@ for policy_file in AGENTS.md .claude/skills/s/SKILL.md docs/development-workflow
 done
 drift docs/bin.dat conflict-free-append
 expect drift-overlap 3 'overlaps this task' bash "${R}" --tier T4 "${BASE}" "${C5}"
+
+# A correction that reverts a task change to a file main also changed (and that was merged in)
+# still appears in the delta.
+(cd "${T}/origin" && printf 'l1\nl2\nl3\n' > docs/shared.md && git add -A && git commit -qm shared)
+quiet git fetch origin
+git switch -qc docs/u origin/main
+UBASE="$(git rev-parse HEAD)"
+printf 'L1-task\nl2\nl3\n' > docs/shared.md; git commit -qam task-edits-shared
+UPREV="$(git rev-parse HEAD)"
+(cd "${T}/origin" && printf 'l1\nl2\nl3-main\n' > docs/shared.md && git commit -qam main-edits-shared)
+quiet git fetch origin; quiet git merge --no-edit origin/main
+printf 'l1\nl2\nl3-main\n' > docs/shared.md; printf 'other\n' > docs/u.md; git add -A; git commit -qm revert-task-change
+expect since-merged-and-reverted 0 'M	docs/shared\.md' bash "${R}" --tier T1 --since "${UPREV}" "${UBASE}" HEAD
+git switch -q docs/t
 
 # A submodule (gitlink) change is refused.
 git update-index --add --cacheinfo "160000,${BASE},vendor/sub"; git commit -qm gitlink
