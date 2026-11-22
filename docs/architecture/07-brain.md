@@ -39,7 +39,10 @@ resolved subject, operation, property and position):
 2. **Projection completeness, both directions.** (a) Every *verified and published* authoritative
    record must have a matching serving point (conditions 1 to 3 below); missing or stale is a
    **blocker** for its scope (`unverified`) and is flagged for reconciliation. (b) The same exact
-   filter is enumerated in the serving collection (at most 256 points, as today). A point whose
+   filter is enumerated in the serving collection, reading at least 257 points (paging if needed) so
+   that more than 256 applicable serving points is always detected. Overflow refuses with
+   `clarification` ("narrow the component and operation"), as the current code does; the read is
+   never truncated, so an unknown point cannot sit beyond it. Within that bound, a point whose
    PostgreSQL record is withdrawn with a non-blocking reason (`incorrect_extraction`, `superseded`,
    `rights`) and has a matching tombstone is removed exactly as in the table below. Any other point
    that is not a verified and published authoritative record (unknown to PostgreSQL, or ahead of or
@@ -72,7 +75,9 @@ resolved subject, operation, property and position):
 The gate has no bypass for technical answers: if it cannot run, the outcome is `brain_unavailable`
 (quarantine). This replaces the "disable the gate by flag" rollback in proposed
 [ADR-0006](../decisions/0006-brain-ownership-and-restore-safety.md) for the serve path
-([ADR-0010](../decisions/0010-brain-knowledge-model-and-retrieval.md)).
+([ADR-0010](../decisions/0010-brain-knowledge-model-and-retrieval.md)). Proposed records authorize
+no implementation; ADR-0006 is accepted only as amended by ADR-0010 (roadmap D-8), and where their
+texts differ this document and ADR-0010 govern.
 
 An evidence record may be spoken only if **all** of the following hold, evaluated per record, in
 **both** stores:
@@ -101,7 +106,7 @@ and the final control-singleton read (no per-record round trips).
 | Withdrawn in PostgreSQL with reason `incorrect_extraction`, `superseded` or `rights`, and a matching tombstone | removed **before** conflict evaluation |
 | Withdrawn with reason `suspect_conflict`, or `quarantined`, or unknown to PostgreSQL | **blocker**: the scope refuses (`conflict` or `unverified`) |
 | Any condition above fails (digest, status, version mismatch, tombstone with no matching PostgreSQL withdrawal) | **blocker** for the evidence's scope: `unverified` refusal; evidence flagged for reconciliation |
-| Scope larger than 256 records, dependency closure included | `clarification` (narrow the component and operation), as today; never truncated |
+| Authoritative scope larger than 256 records (dependency closure included), or more than 256 applicable serving points | `clarification` (narrow the component and operation), as today; never truncated |
 | New or higher tombstone, or changed control singleton, at the final witness, twice | `unverified` refusal |
 | PostgreSQL unreadable, control collection unreadable or missing, projection unreadable | `brain_unavailable` refusal (global fail closed); never a guess |
 
@@ -299,8 +304,9 @@ evidence. Adopting layer 2, layer 3 or any rank fusion requires the bounded R3 c
 ## Outcomes and response compiler
 
 Outcomes: `verified`, `clarification`, `unsupported`, `incomplete`, `conflict`, `unverified`,
-`brain_unavailable`. A partial answer is allowed only when it is independently verified and
-explicitly scoped; a safety-critical procedure is never partial while presented as complete.
+`brain_unavailable`. A partial answer is allowed only for separable parts of a multipart question,
+each independently verified and labeled as covering only that part. A procedure is never delivered
+partially: a missing required step or dependency makes it `incomplete`, which refuses (CAR-043).
 Ambiguity is never resolved by guessing. A vehicle switch invalidates derived facts and pending
 responses.
 
@@ -401,3 +407,5 @@ Each case runs against real PostgreSQL and a Qdrant test instance, asserts the u
     blocking reason ⇒ the procedure refuses.
 23. **Witness gap:** a tombstone written after the step-3 control read but before `intent_seq`
     advances ⇒ the final witness sees the tombstone and reruns; the evidence is blocked.
+24. **Serving-side overflow:** 256 authoritative records plus a 257th applicable serving point that is
+    unknown to PostgreSQL ⇒ `clarification`; no truncated read that misses the unknown point.
