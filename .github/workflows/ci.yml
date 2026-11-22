@@ -60,6 +60,9 @@ jobs:
             exit 1
           fi
 
+      - name: Review packet tests
+        run: bash scripts/tests/review-scope-test.sh
+
       - name: Check repository structure and whitespace
         shell: bash
         run: |

@@ -95,13 +95,23 @@ case "${stale_status}" in
     ;;
 esac
 
+echo "== Review packet tests =="
+bash scripts/tests/review-scope-test.sh
+
 echo "== Documentation links =="
 "$PYTHON" - <<'PY'
 import pathlib
 import re
 
 bad = []
-for path in [pathlib.Path("README.md"), pathlib.Path("AGENTS.md"), *pathlib.Path("docs").rglob("*.md")]:
+documents = [
+    pathlib.Path("README.md"),
+    pathlib.Path("AGENTS.md"),
+    pathlib.Path("CLAUDE.md"),
+    *pathlib.Path("docs").rglob("*.md"),
+    *pathlib.Path(".claude/skills").rglob("*.md"),
+]
+for path in documents:
     for target in re.findall(r"\[[^]]*\]\(([^)#]+)(?:#[^)]*)?\)", path.read_text()):
         if re.match(r"^(?:https?:|mailto:)", target):
             continue

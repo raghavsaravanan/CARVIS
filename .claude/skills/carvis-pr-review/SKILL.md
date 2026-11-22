@@ -1,28 +1,41 @@
 ---
 name: carvis-pr-review
 description: Review a CARVIS branch or pull request — git diff, scope, protected boundaries, security and privacy, migration safety, test verification, CI status, PR readiness, and rollback documentation. Use before opening or marking ready a PR, or when asked to review a diff, branch, or PR number. Read-only; never merges, approves, or pushes.
-argument-hint: "[PR number | branch | blank for current branch]"
-allowed-tools: Read Grep Glob Bash(git status *) Bash(git fetch origin main) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git ls-files *) Bash(git grep *) Bash(gh pr view *) Bash(gh pr diff *) Bash(gh pr checks *)
+argument-hint: "[PR number | <base>..<candidate> | branch | blank for current branch] [T1-T4]"
+allowed-tools: Read Grep Glob Bash(git status *) Bash(git fetch origin main) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git ls-files *) Bash(git grep *) Bash(git rev-parse *) Bash(git merge-base *) Bash(scripts/review-scope.sh *) Bash(gh pr view *) Bash(gh pr diff *) Bash(gh pr checks *)
 ---
 
 # CARVIS pull-request review
 
-Target: `$ARGUMENTS` (a PR number or branch), otherwise the current branch against `origin/main`.
-This skill reports; it does not edit, commit, push, approve, or merge.
+Target: `$ARGUMENTS`: a PR number, an explicit `<base>..<candidate>` pair, or a branch; otherwise
+the current branch, with `<base>` = `git merge-base origin/main HEAD` and `<candidate>` = `HEAD`.
+An optional tier (`T1`–`T4`) follows. This skill reports; it does not edit, commit, push, approve,
+or merge. It reviews committed revisions only: uncommitted or untracked changes make the target
+unreviewable, so report that and stop.
+
+Always pass `--repo raghavsaravanan/CARVIS` to `gh`. This checkout is a fork with an `upstream`
+remote, and a bare `gh pr …` can resolve to `tejaspalukuri/CARVIS` and report another
+repository's PR (`docs/development-workflow.md`).
 
 ## 1. Collect the change
 
 ```bash
 git fetch origin main
-git status --short --branch
-git log --oneline origin/main..HEAD
-git diff --stat origin/main...HEAD
-git diff --check origin/main...HEAD
-gh pr view <n> --json title,baseRefName,headRefName,isDraft,statusCheckRollup   # when a PR exists
-gh pr checks <n>
+scripts/review-scope.sh --tier <Tn> <base> <candidate>   # must exit 0 (3: update and re-review)
+git diff --no-ext-diff <effective base>..<candidate>      # effective base is printed by review-scope
+gh pr view <n> --repo raghavsaravanan/CARVIS   --json title,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,statusCheckRollup
+gh pr checks <n> --repo raghavsaravanan/CARVIS                    # when a PR exists
 ```
 
-Read the full diff (`git diff origin/main...HEAD`) and every changed file's nearest `AGENTS.md`.
+For a PR, check out its head first and use its `headRefOid` as the candidate; if the local
+checkout differs, the review is of the wrong revision. `review-scope.sh` lists every changed file
+with its type and mode, flags symlinks, binary files, mode changes, archive moves, quality-gate
+and dependency changes and shared git hooks, enforces the path-based minimum tier, and reports
+integration drift. Without a tier argument, use the minimum it prints.
+
+Read the full diff of every listed file, each changed file's nearest `AGENTS.md`, and the
+unchanged callers, contracts and tests the change affects. Report on every listed file, even when
+it has no finding. Form findings from the code before reading commit bodies or the PR body.
 Confirm: base is `main` of `raghavsaravanan/CARVIS`; branch uses an allowed prefix (`feat/`, `fix/`,
 `refactor/`, `docs/`, `chore/`, `test/`); the PR is a draft; nothing targets `upstream`
 (`tejaspalukuri/CARVIS`); the change is one bounded task, with no cleanup mixed into feature work.
@@ -79,11 +92,18 @@ if rollback is empty or vague. A rollback entry names the exact revert or disabl
 schema implications, and what is irreversible. Required status checks must be green and the branch
 up to date with `main` before human-approved squash merge.
 
+Also confirm: the PR states a risk tier no lower than the minimum `review-scope.sh` reports, and
+the evidence shows every requirement of that tier (`docs/development-workflow.md`, "Risk tiers");
+the "Review and workflow record" names the reviewed candidate SHA, and the PR's current
+`headRefOid` equals it. Any later push makes earlier reviews stale until they are renewed.
+
 ## 4. Report
 
-Findings first, most severe first, each with `file:line`, the concrete failure scenario, and a
-suggested fix. Then:
+Findings first, most severe first, each with `file:line`, the concrete failure scenario, a
+suggested fix, and VERIFIED or INFERRED. Then:
 
+- **Reviewed:** effective base and candidate SHAs, tier, and every changed file with "finding" or
+  "no finding".
 - **Verdict:** ready for review / needs changes / blocked (with the reason).
 - **Verified by running:** commands and results.
 - **Not verified:** physical-device, live-provider, production, or unavailable tooling, stated plainly.

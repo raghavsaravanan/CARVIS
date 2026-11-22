@@ -1,7 +1,7 @@
 ---
 name: carvis-regression
 description: Run and extend CARVIS regression checks — Python backend tests, pure Swift checks, SpacetimeDB TypeScript, voice-pipeline preservation, deterministic verified answers and refusals, tenant-isolation and authorization tests — and report mocked versus physical-device and live-provider validation honestly. Use before and after backend, iOS, or contract changes, and whenever asked whether something still works.
-allowed-tools: Read Grep Glob Bash(scripts/verify.sh) Bash(.venv/bin/python -m pytest *) Bash(.venv/bin/python -m compileall *) Bash(python3 -m pytest *) Bash(python3 -m compileall *) Bash(git status *) Bash(git diff *)
+allowed-tools: Read Grep Glob Bash(scripts/verify.sh) Bash(scripts/bootstrap-worktree.sh *) Bash(scripts/tests/review-scope-test.sh) Bash(.venv/bin/python -m pytest *) Bash(.venv/bin/python -m compileall *) Bash(python3 -m pytest *) Bash(python3 -m compileall *) Bash(git status *) Bash(git diff *)
 ---
 
 # CARVIS regression workflow
@@ -21,15 +21,19 @@ LlamaParse, or any paid/live provider, and never read real manuals or customer d
 | `backend/spacetimedb/module/src/index.ts` | TypeScript compile (section 2) |
 
 Python: use `.venv/bin/python` when it exists, otherwise `python3` (`scripts/verify.sh` does the same).
-`.venv/` is gitignored; create it with `python3 -m venv .venv && .venv/bin/python -m pip install --require-hashes -r backend/requirements-dev.txt` (the runtime lockfile `backend/requirements.txt` has no pytest).
+`.venv/` is gitignored. In a fresh checkout or worktree run `scripts/bootstrap-worktree.sh`, which
+creates `.venv` from `backend/requirements-dev.txt` and installs the SpacetimeDB module's
+`node_modules` (the runtime lockfile `backend/requirements.txt` has no pytest);
+`scripts/bootstrap-worktree.sh --check` validates an existing setup without installing.
 Run `-m pytest backend/tests -q` then `-m compileall -q backend` for the full backend baseline.
 
 ## 2. Full baseline and Swift/TypeScript commands
 
 `scripts/verify.sh` is the complete local baseline: backend tests, compileall, four Swift pure
 checks, SpacetimeDB `tsc`, `plutil -lint`, the iOS Simulator build (skipped without full Xcode),
-repository-structure checks, and the documentation-link check. It requires
-`npm ci --prefix backend/spacetimedb/module` first. CI runs the same families as jobs
+repository-structure checks, the review-packet tests, and the documentation-link check (which
+also covers `CLAUDE.md` and the skills). It requires `scripts/bootstrap-worktree.sh` (or at least
+`npm ci --prefix backend/spacetimedb/module`) first. CI runs the same families as jobs
 `Backend and hygiene`, `Swift pure checks`, and `SpacetimeDB typecheck`
 (`.github/workflows/ci.yml`); those are the required status checks.
 
@@ -86,7 +90,26 @@ user principal exists before claiming more. New authorization work needs, at min
 Use fakes for identity, the store, and Qdrant. SpacetimeDB reducers currently have only typechecking;
 say so rather than implying authorization tests ran.
 
-## 6. Report honestly
+## 6. Risk tiers, mutation checks, and read-only runs
+
+The task's risk tier (`docs/development-workflow.md`, "Risk tiers") adds to everything above and
+never removes a check. In short: T2 adds success and failure tests for new behavior; T3 adds
+section 5's isolation and authorization negatives, migration up and down on a scratch store, and
+`scripts/check-runtime-lock.sh` for dependency changes; T4 adds section 3's pipeline preservation
+and section 4's adversarial refusals.
+
+Mutation check: disable the guard (comment it out or force its condition), run the narrowest
+suite, confirm it fails for the guard's reason, restore it, and confirm `git diff` shows no trace.
+T2 does this for each new guard; T3 for every touched authentication, tenant, secret and limit
+check; T4 also for every touched applicability, evidence and refusal condition. Record each
+mutation and its failing test in the PR.
+
+A reviewer whose sandbox forbids writes to the checkout can still run the Python suite without
+writing to it: `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider
+backend/tests -q` (tested in the isolated Codex profile: 446 passed). Label the result
+**mocked/unit**, and say it ran read-only.
+
+## 7. Report honestly
 
 Label every result as exactly one of: **mocked/unit**, **local**, **simulator**, **physical device**,
 **live provider**, **production**. Say what you ran, the counts and failures, and what you could not run

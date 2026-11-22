@@ -5,7 +5,8 @@ touch. `AGENTS.md` is the canonical engineering policy; this file only points to
 
 - Documentation map and precedence: `docs/README.md` (PRD, V1 Product Experience Contract, dated
   audits, decision records).
-- Workflow, branches, and required checks: `docs/development-workflow.md`.
+- Workflow, branches, required checks, and the agent workflow (roles, task contracts, risk tiers,
+  review protocol, worker launch profiles): `docs/development-workflow.md`.
 
 Project skills in `.claude/skills/`: `/carvis-architecture` (design, database/auth selection,
 tenancy, ADRs), `/carvis-regression` (run and extend checks, honest validation reporting),

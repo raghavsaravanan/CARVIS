@@ -15,3 +15,5 @@ change to a protected boundary in [`../../AGENTS.md`](../../AGENTS.md).
   record resolves, and list the tests or checks that prove the decision holds.
 - Keep secrets, customer data, and bondingAI material out of records.
 - Open decisions stay in the contract's register until a record resolves them.
+- Owner working rules for the engineering workflow, which resolve no decision, live in
+  [`operational-decisions.md`](operational-decisions.md) rather than in numbered records or skills.

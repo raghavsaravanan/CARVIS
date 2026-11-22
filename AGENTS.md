@@ -54,4 +54,20 @@ assigned version (definitions in `docs/README.md`). Link to these documents; do 
   stated, and no secret or generated local data is included. Use `scripts/verify.sh` for the full
   repository baseline when warranted.
 
+## Agent workflow
+
+Coordinated agent work follows `docs/development-workflow.md` ("Agent workflow"): roles, task
+contracts, risk tiers, the review protocol, and tested worker launch profiles. For every agent and
+model:
+
+- Dispatch is not authorization. Commit, push, and pull-request creation need the owner's approval,
+  recorded in the task contract or given by invoking `/carvis-continue`.
+- Review only committed candidates, through `scripts/review-scope.sh`. A change to the candidate or
+  material drift in `origin/main` makes earlier reviews stale.
+- Risk tiers only add requirements; only the owner lowers a tier.
+- Workers never dispatch other workers, create branches or worktrees the coordinator owns, answer
+  another agent's permission prompts, or edit outside their assigned worktree.
+- A Git worktree, an agent's plan mode, and written instructions are not security boundaries; only
+  operating-system sandboxes and GitHub protections enforce anything.
+
 `backend/AGENTS.md`, `backend/spacetimedb/AGENTS.md`, and `ios/AGENTS.md` extend this policy.
