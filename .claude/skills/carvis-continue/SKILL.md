@@ -133,7 +133,8 @@ Reviews inspect a committed candidate, never a working tree.
    - Standalone: give a fresh subagent the roadmap row, the tier, the repository policy files, and
      the review-scope output, but not your conclusions, summary or test results. Ask for findings
      on every listed file, with `file:line`, a failure scenario, VERIFIED or INFERRED, and the
-     candidate SHA. For T3 and T4 the Codex cross-model review is also required
+     candidate SHA, each in the finding format of `docs/development-workflow.md`, "Review budget, findings and stopping"
+     (evidence, severity, scope, requirement violated, BLOCKING or NONBLOCKING). For T3 and T4 the Codex cross-model review is also required
      (`docs/development-workflow.md`, "Worker launch profiles", isolated profile); for that one
      review this session acts as its coordinator through Orca. If Orca or Codex is unavailable, do
      not open the PR; report the review as outstanding.
@@ -144,10 +145,12 @@ Reviews inspect a committed candidate, never a working tree.
      the follow-up names, then continue at item 5 (findings) or step 5 (approval).
 4. **`/carvis-pr-review`** on the candidate (`<base>..<candidate>`); in Orca mode the coordinator
    runs it.
-5. **Fix in-scope findings** as new commits, rerun the affected checks and the full baseline, and
+5. **Fix blocking findings** together, one correction per round (correction discipline in
+   `docs/development-workflow.md`, "Review budget, findings and stopping"), as new commits, rerun the affected checks and the full baseline, and
    renew review: a delta review (`review-scope.sh --since <previous candidate>`) for T1 and T2,
-   unless it reports a material update, and a full review for T3 and T4, by every required reviewer. Record out-of-scope findings as open
-   items.
+   unless it reports a material update, and a full review for T3 and T4, by every required reviewer. Record nonblocking and out-of-scope findings as deferred open
+   items. Stop and escalate to the owner on any stopping condition there, including when the
+   tier's review budget is used up.
 
 ## 5. Revalidate, push, draft PR, CI
 
@@ -184,7 +187,8 @@ Report:
 - the PR link and CI status;
 - tests run, with counts and labels (**mocked/unit**, **local**, **simulator**,
   **physical device**, **live provider**, **production**), and what was not run;
-- the tier, the reviewed candidate SHA and each review's verdict;
+- the tier, the reviewed candidate SHA, each review's verdict, and review rounds used of the budget;
+- deferred nonblocking findings;
 - the workflow record from the PR (duration, human interventions, review iterations, CI failures,
   rework, conflicts, agents and models where reported);
 - risks, owner decisions needed, and out-of-scope findings.

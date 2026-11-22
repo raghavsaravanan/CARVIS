@@ -41,6 +41,8 @@ candidate makes its reviews stale. -->
 - Final drift check against `origin/main`:
 - Duration, human interventions, review iterations, CI failures, rework commits, integration conflicts:
 - Agents and models (where reported; token counts are not reliably available):
+- Review rounds used / budget, and time used / budget:
+- Deferred nonblocking findings:
 
 ## Risk review
 

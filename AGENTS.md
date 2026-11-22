@@ -66,6 +66,9 @@ model:
   makes earlier reviews stale, except a clean update from `origin/main` that the script shows
   touches no task file and brings in no T3+ file.
 - Risk tiers only add requirements; only the owner lowers a tier.
+- Autonomous review is budgeted by tier (`docs/development-workflow.md`, "Review budget, findings and stopping").
+  Only blocking findings are corrected within a task. On an exhausted budget or any stopping
+  condition, stop and escalate to the owner. A budget never waives a mandatory gate.
 - Workers never dispatch other workers, create branches or worktrees the coordinator owns, answer
   another agent's permission prompts, or edit outside their assigned worktree.
 - A Git worktree, an agent's plan mode, and written instructions are not security boundaries; only
