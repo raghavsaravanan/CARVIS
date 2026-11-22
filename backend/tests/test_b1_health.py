@@ -250,3 +250,103 @@ def test_close_cancels_inflight_probe():
             await waiter
 
     asyncio.run(asyncio.wait_for(scenario(), 2))
+
+
+# --- Host-name resolution (round-1 review: DNS lookups must not accumulate threads) ----------------
+
+@pytest.fixture
+def stalled_dns(monkeypatch):
+    """socket.getaddrinfo blocks for one host name until released; every call is counted."""
+    import socket as socket_module
+
+    release = threading.Event()
+    calls = []
+    real = socket_module.getaddrinfo
+
+    def fake(host, *args, **kwargs):
+        if host == "db.stalled.invalid":
+            calls.append(host)
+            release.wait(30)
+            return real("127.0.0.1", *args, **kwargs)
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket_module, "getaddrinfo", fake)
+    yield calls, release
+    release.set()
+
+
+def test_stalled_dns_never_accumulates_threads_or_blocks_the_default_executor(stalled_dns):
+    from db.readiness import BoundedResolver
+
+    calls, release = stalled_dns
+    resolver = BoundedResolver()
+    probe = ReadinessProbe(HEAD, postgres_fetch("postgresql://carvis:pw@db.stalled.invalid:5432/carvis", resolver),
+                           0.2, resolver=resolver)
+
+    async def scenario():
+        baseline = threading.active_count()
+        counts, reasons = [], set()
+        for _ in range(6):  # sequential rounds of concurrent checks, each past the deadline
+            results = await asyncio.gather(*(probe.check() for _ in range(10)))
+            reasons |= {r.reason for r in results}
+            counts.append(threading.active_count() - baseline)
+        started = time.monotonic()
+        await asyncio.to_thread(lambda: None)  # the shared executor (voice lookups) is still free
+        return counts, reasons, time.monotonic() - started
+
+    counts, reasons, executor_wait = asyncio.run(scenario())
+    assert reasons == {DATABASE_UNREACHABLE}
+    assert len(calls) == 1, "a new lookup must not start while one is still running"
+    assert resolver.lookups_started == 1, "lookups must not queue behind a stalled one either"
+    assert max(counts) <= 1, f"resolver threads accumulated: {counts}"
+    assert executor_wait < 0.5
+    assert probe.probes_started == 6
+    release.set()
+    resolver.shutdown()
+
+
+def test_lookup_resumes_after_the_stalled_one_finishes(stalled_dns):
+    from db.readiness import BoundedResolver, ResolverBusy
+
+    calls, release = stalled_dns
+    resolver = BoundedResolver()
+
+    async def scenario():
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.1):
+                await resolver.resolve("db.stalled.invalid", "5432")
+        with pytest.raises(ResolverBusy):
+            await resolver.resolve("db.stalled.invalid", "5432")
+        release.set()
+        for _ in range(100):
+            if resolver._pending.done():
+                break
+            await asyncio.sleep(0.01)
+        return await resolver.resolve("db.stalled.invalid", "5432")
+
+    assert asyncio.run(scenario()) == "127.0.0.1"
+    assert len(calls) == 2
+    resolver.shutdown()
+
+
+@pytest.mark.parametrize("conninfo,expected_hostaddr", [
+    ("postgresql://u:p@db.example.test:5433/carvis", "192.0.2.10"),
+    ("postgresql://u:p@192.0.2.20/carvis", "192.0.2.20"),
+    ("postgresql://u:p@db.example.test,192.0.2.30/carvis", "192.0.2.10,192.0.2.30"),
+    ("postgresql://u:p@db.example.test/carvis?hostaddr=192.0.2.40", "192.0.2.40"),
+    ("postgresql://u:p@%2Fvar%2Frun%2Fpostgresql/carvis", None),
+])
+def test_psycopg_receives_a_resolved_hostaddr(conninfo, expected_hostaddr):
+    """psycopg resolves names itself unless hostaddr is set; the probe always sets it for names."""
+    from psycopg.conninfo import conninfo_to_dict
+
+    from db.readiness import resolved_conninfo
+
+    class FakeResolver:
+        async def resolve(self, host, port):
+            assert host == "db.example.test"
+            return "192.0.2.10"
+
+    params = conninfo_to_dict(asyncio.run(resolved_conninfo(conninfo, FakeResolver())))
+    assert params.get("hostaddr") == expected_hostaddr
+    assert params["dbname"] == "carvis"

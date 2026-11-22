@@ -3,12 +3,17 @@
 Ready means: PostgreSQL is reachable and the Alembic version recorded in
 ``carvis_migrations.alembic_version`` is the head this build ships. Anything else is not ready.
 
-Bounds (no worker thread, no pool):
+Bounds:
 
-- The probe is a coroutine on the event loop using psycopg 3's ``AsyncConnection``, so DNS lookup,
-  connection establishment (including TLS) and the query all run as awaitables. One
-  ``asyncio.timeout`` covers the whole probe; when it expires the coroutine is cancelled and the
-  connection closed. Nothing keeps running in the background.
+- Connection establishment (including TLS) and the query run on the event loop through psycopg 3's
+  ``AsyncConnection``. One ``asyncio.timeout`` covers the whole probe; when it expires the coroutine
+  is cancelled and the connection closed.
+- Host names are resolved by :class:`BoundedResolver`, never by psycopg: a blocking
+  ``getaddrinfo`` cannot be cancelled, so it runs on one dedicated thread owned by the probe (never
+  the shared default executor that the voice path's lookups use), and while a lookup is still
+  running no new one starts and the probe answers ``database_unreachable`` at once. The resolved
+  address is passed to libpq as ``hostaddr`` (``host`` is kept for TLS verification), so psycopg
+  does not resolve again. At most one resolver thread exists, whatever the outage length.
 - Each probe opens one fresh connection and closes it, so there is no pool checkout to exhaust.
 - At most one probe runs at a time. Concurrent ``/readyz`` requests share it, so an outage cannot
   multiply connections or tasks, whatever the request rate.
@@ -22,7 +27,11 @@ returned; only the exception type name is logged.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import os
+import socket
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -66,14 +75,88 @@ def expected_head() -> str:
     return check_linear_history(script_directory())
 
 
-def postgres_fetch(conninfo: str) -> Fetch:
+class ResolverBusy(RuntimeError):
+    """A previous host-name lookup is still running; no new one is started."""
+
+
+class BoundedResolver:
+    """Host-name lookups on one dedicated thread, never more than one outstanding.
+
+    ``asyncio.wrap_future`` lets a caller stop waiting, but the lookup itself keeps running until the
+    system resolver returns; :attr:`_pending` tracks that real completion, not the waiter's.
+    """
+
+    def __init__(self) -> None:
+        self._executor: ThreadPoolExecutor | None = None
+        self._pending: Future | None = None
+        self.lookups_started = 0
+
+    async def resolve(self, host: str, port: str) -> str:
+        if self._pending is not None and not self._pending.done():
+            raise ResolverBusy()
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="carvis-readiness-dns")
+        self.lookups_started += 1
+        self._pending = self._executor.submit(socket.getaddrinfo, host, port, proto=socket.IPPROTO_TCP,
+                                              type=socket.SOCK_STREAM)
+        answers = await asyncio.wrap_future(self._pending)
+        return answers[0][4][0]
+
+    def shutdown(self) -> None:
+        if self._executor is not None:
+            # Never wait for a hung lookup at shutdown; the thread ends when the resolver returns.
+            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor = None
+
+
+def _is_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+async def resolved_conninfo(conninfo: str, resolver: BoundedResolver) -> str:
+    """``conninfo`` with ``hostaddr`` filled in by ``resolver`` so libpq/psycopg never resolve names.
+
+    Mirrors libpq: ``host`` (or ``PGHOST``) may list several hosts; socket paths and IP literals need
+    no lookup; one address is used per host name.
+    """
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    params = conninfo_to_dict(conninfo)
+    if params.get("hostaddr"):
+        return conninfo
+    hosts_value = str(params.get("host") or os.getenv("PGHOST") or "")
+    if not hosts_value:
+        return conninfo
+    hosts = hosts_value.split(",")
+    ports = str(params.get("port") or os.getenv("PGPORT") or "5432").split(",")
+    addresses = []
+    for index, host in enumerate(hosts):
+        port = ports[index] if len(ports) == len(hosts) else ports[0]
+        if not host or host.startswith("/") or host[1:2] == ":":
+            addresses.append("")  # Unix socket or default: nothing to resolve
+        elif _is_ip(host):
+            addresses.append(host)
+        else:
+            addresses.append(await resolver.resolve(host, port or "5432"))
+    if not any(addresses):
+        return conninfo
+    return make_conninfo(conninfo, host=hosts_value, hostaddr=",".join(addresses))
+
+
+def postgres_fetch(conninfo: str, resolver: BoundedResolver | None = None) -> Fetch:
     """A fetch that opens one psycopg ``AsyncConnection``, reads the version table and closes it."""
+    resolver = resolver or BoundedResolver()
 
     async def fetch() -> list[str]:
         import psycopg
 
+        target = await resolved_conninfo(conninfo, resolver)
         connection = await psycopg.AsyncConnection.connect(
-            conninfo, connect_timeout=CONNECT_TIMEOUT_SECONDS, prepare_threshold=None, autocommit=False)
+            target, connect_timeout=CONNECT_TIMEOUT_SECONDS, prepare_threshold=None, autocommit=False)
         try:
             async with connection.cursor() as cursor:
                 await cursor.execute(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}")
@@ -96,9 +179,10 @@ class ReadinessProbe:
     """Single-flight readiness check with a hard total deadline."""
 
     def __init__(self, head: str, fetch: Fetch | None, timeout_seconds: float,
-                 unavailable_reason: str | None = None) -> None:
+                 unavailable_reason: str | None = None, resolver: BoundedResolver | None = None) -> None:
         self._head = head
         self._fetch = fetch
+        self._resolver = resolver
         self._timeout = timeout_seconds
         self._unavailable_reason = unavailable_reason
         self._inflight: asyncio.Task[Readiness] | None = None
@@ -113,7 +197,9 @@ class ReadinessProbe:
         from db.engine import libpq_conninfo
 
         assert settings.database_url is not None
-        return cls(head, postgres_fetch(libpq_conninfo(settings.database_url)), settings.readiness_timeout_seconds)
+        resolver = BoundedResolver()
+        return cls(head, postgres_fetch(libpq_conninfo(settings.database_url), resolver),
+                   settings.readiness_timeout_seconds, resolver=resolver)
 
     async def _probe(self) -> Readiness:
         assert self._fetch is not None
@@ -146,6 +232,8 @@ class ReadinessProbe:
         return await asyncio.shield(task)
 
     async def close(self) -> None:
+        if self._resolver is not None:
+            self._resolver.shutdown()
         task, self._inflight = self._inflight, None
         if task is not None and not task.done() and task.get_loop() is asyncio.get_running_loop():
             task.cancel()

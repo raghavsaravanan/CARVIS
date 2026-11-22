@@ -270,9 +270,11 @@ def test_compatible_preexisting_role_is_adopted_and_survives_downgrade(scratch):
     (["CREATE ROLE carvis_owner NOLOGIN", "CREATE ROLE b1_other LOGIN", "GRANT carvis_owner TO b1_other"],
      "members other than"),
     (["CREATE ROLE carvis_app NOLOGIN", "CREATE ROLE b1_other LOGIN BYPASSRLS", "GRANT carvis_app TO b1_other"],
-     "incompatible member"),
+     "carvis_app has members"),
+    (["CREATE ROLE carvis_worker NOLOGIN", "CREATE ROLE b1_other LOGIN", "GRANT carvis_worker TO b1_other"],
+     "carvis_worker has members; no runtime login is approved yet"),
     (["CREATE ROLE carvis_app NOLOGIN", "CREATE ROLE carvis_owner NOLOGIN", "GRANT carvis_app TO carvis_owner"],
-     "member of another role|incompatible member"),
+     "member of another role|has members"),
 ])
 def test_incompatible_preexisting_role_fails_closed_without_modification(scratch, setup, message):
     _sql(scratch.admin, *setup)
@@ -293,6 +295,16 @@ def test_non_superuser_needs_admin_option_on_preexisting_role(scratch):
     _sql(scratch.admin, f"ALTER DATABASE {scratch.database} OWNER TO b1_migrator")
     result = alembic(url, "upgrade", "head")
     assert result.returncode != 0 and "needs ADMIN OPTION on existing role carvis_owner" in result.stderr
+
+
+def test_non_superuser_adopts_runtime_role_it_administers(scratch):
+    """The implicit administrative grant a CREATEROLE login holds on a role it created is permitted."""
+    url = scratch.login("b1_migrator", "CREATEROLE")
+    _sql(scratch.admin, f"ALTER DATABASE {scratch.database} OWNER TO b1_migrator")
+    _sql(url, "CREATE ROLE carvis_worker NOLOGIN")
+    ok(alembic(url, "upgrade", "head"))
+    ok(alembic(url, "downgrade", "base"))
+    assert [row[0] for row in catalog(scratch.db_admin)["roles"]] == ["carvis_worker"]
 
 
 def test_preexisting_owner_grant_by_migrator_fails_closed(scratch):

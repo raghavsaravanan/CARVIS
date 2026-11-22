@@ -7,8 +7,9 @@ the readiness check without elevation. Grants touch only the CARVIS-owned ``carv
 ``carvis_migrations`` schemas and these three roles: nothing in ``public``, on the database, or on any
 issuer- or host-specific role. Login credentials and which login runs migrations belong to B2/B10.
 
-Fail closed, never modify: a pre-existing CARVIS role is validated and adopted only if compatible;
-otherwise the upgrade stops before any change. Downgrade drops only what this revision marked.
+Fail closed, never modify: a pre-existing CARVIS role is validated and adopted only if compatible
+(no elevated attribute, member of no role, no members except the migration login's administrative
+grant on carvis_owner); otherwise the upgrade stops before any change. Downgrade drops only what this revision marked.
 Requires PostgreSQL 16 or later.
 
 Revision ID: 0002_roles
@@ -63,20 +64,22 @@ def _validate_existing(role: str, login: str, superuser: bool) -> None:
     if held:
         raise RoleMigrationError(f"Existing role {role} is a member of another role.")
     members = _rows(
-        "SELECT mr.rolname AS member, gr.rolname AS grantor, mr.rolsuper, mr.rolbypassrls, mr.rolcreaterole "
+        "SELECT mr.rolname AS member, gr.rolname AS grantor "
         "FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid "
         "JOIN pg_roles mr ON mr.oid = m.member JOIN pg_roles gr ON gr.oid = m.grantor WHERE r.rolname = :r",
         r=role)
     for member in members:
+        # The only permitted member of any CARVIS role is the migration login, through a grant it did
+        # not make itself (PostgreSQL 16's implicit CREATEROLE administrative grant). A grant by the
+        # login would be added by upgrade and removed by downgrade, so it must not already exist.
+        if member["member"] == login and member["grantor"] != login:
+            continue
         if role == OWNER_ROLE:
-            # Only the migration login may hold the owner role, and never through a grant it made
-            # itself: upgrade adds that grant and downgrade removes it, so it must not already exist.
-            if member["member"] != login or member["grantor"] == login:
-                raise RoleMigrationError(f"Existing role {role} has members other than the migration login's "
-                                         "administrative grant.")
-        elif (member["member"] in ROLES or member["rolsuper"] or member["rolbypassrls"]
-              or member["rolcreaterole"]):
-            raise RoleMigrationError(f"Existing role {role} has an incompatible member.")
+            raise RoleMigrationError(f"Existing role {role} has members other than the migration login's "
+                                     "administrative grant.")
+        # B1 approves no runtime login yet (B2/B10), so any other member would silently inherit
+        # CARVIS runtime access: fail closed rather than adopt it.
+        raise RoleMigrationError(f"Existing role {role} has members; no runtime login is approved yet.")
     if not superuser and not _scalar("SELECT pg_has_role(current_user, :r, 'USAGE WITH ADMIN OPTION') "
                                      "OR pg_has_role(current_user, :r, 'MEMBER WITH ADMIN OPTION')", r=role):
         raise RoleMigrationError(f"The migration login needs ADMIN OPTION on existing role {role}.")

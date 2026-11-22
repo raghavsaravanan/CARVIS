@@ -146,8 +146,8 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
 - `GET /readyz` answers 200 `{"status": "ready"}` only when PostgreSQL is reachable and the recorded
   Alembic revision is this build's head; otherwise 503 `{"status": "not_ready", "reason": …}` with
   `starting`, `database_unconfigured`, `database_misconfigured`, `database_unreachable` or
-  `migrations_pending`. The probe has a hard 2-second deadline, opens one connection at a time, and
-  concurrent requests share it.
+  `migrations_pending`. The probe has a hard 2-second deadline, opens one connection at a time, resolves host names on one
+  dedicated thread (never more than one lookup outstanding), and concurrent requests share it.
 - `CARVIS_DATABASE_URL` (optional in B1, transitional): the API's PostgreSQL URL. `postgresql://`,
   `postgres://` and `postgresql+psycopg://` are accepted and use the psycopg 3 driver; anything else
   refuses boot outside `local` (in `local` it boots and `/readyz` reports `database_misconfigured`).
