@@ -1,28 +1,57 @@
 ---
 name: carvis-pr-review
 description: Review a CARVIS branch or pull request — git diff, scope, protected boundaries, security and privacy, migration safety, test verification, CI status, PR readiness, and rollback documentation. Use before opening or marking ready a PR, or when asked to review a diff, branch, or PR number. Read-only; never merges, approves, or pushes.
-argument-hint: "[PR number | branch | blank for current branch]"
-allowed-tools: Read Grep Glob Bash(git status *) Bash(git fetch origin main) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git ls-files *) Bash(git grep *) Bash(gh pr view *) Bash(gh pr diff *) Bash(gh pr checks *)
+argument-hint: "[PR number | <base>..<candidate> | branch | blank for current branch] [T1-T4]"
+allowed-tools: Read Grep Glob Bash(git status *) Bash(git fetch origin main) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git ls-files *) Bash(git grep *) Bash(git rev-parse *) Bash(git merge-base *) Bash(git cat-file *) Bash(gh pr view *) Bash(gh pr diff *) Bash(gh pr checks *)
 ---
 
 # CARVIS pull-request review
 
-Target: `$ARGUMENTS` (a PR number or branch), otherwise the current branch against `origin/main`.
-This skill reports; it does not edit, commit, push, approve, or merge.
+Target: `$ARGUMENTS`: a PR number, an explicit `<base>..<candidate>` pair, or a branch; otherwise
+the current branch. Unless a pair is given, `<candidate>` is `HEAD` (for a PR, its `headRefOid`) and
+`<base>` is `git merge-base origin/main <candidate>`, never the PR's `baseRefOid`.
+An optional tier (`T1`–`T4`) follows. This skill reports; it does not edit, commit, push, approve,
+or merge. It reviews committed revisions only: uncommitted or untracked changes make the target
+unreviewable, so report that and stop.
+
+Always pass `--repo raghavsaravanan/CARVIS` to `gh`. This checkout is a fork with an `upstream`
+remote, and a bare `gh pr …` can resolve to `tejaspalukuri/CARVIS` and report another
+repository's PR (`docs/development-workflow.md`).
 
 ## 1. Collect the change
 
 ```bash
 git fetch origin main
-git status --short --branch
-git log --oneline origin/main..HEAD
-git diff --stat origin/main...HEAD
-git diff --check origin/main...HEAD
-gh pr view <n> --json title,baseRefName,headRefName,isDraft,statusCheckRollup   # when a PR exists
-gh pr checks <n>
+# Run main's copy, so the candidate cannot weaken the check that reviews it. Never pipe it into
+# bash (a pipeline reports bash's status, so a missing copy looks like success). Accept only exit 0
+# with the last line "REVIEWABLE: <candidate> ...".
+if git cat-file -e origin/main:scripts/review-scope.sh 2>/dev/null; then
+  rs="$(mktemp "${TMPDIR:-/tmp}/review-scope.XXXXXX")" \
+    && git show origin/main:scripts/review-scope.sh > "${rs}" \
+    && bash "${rs}" --tier <Tn> <base> <candidate>
+  rc=$?; rm -f "${rs}"
+else   # main has no copy yet (the change that adds it): read scripts/review-scope.sh first
+  bash scripts/review-scope.sh --tier <Tn> <base> <candidate>
+  rc=$?
+fi
+# rc is the packet's exit status (not `status`, which is read-only in zsh); the temporary copy is removed afterwards.
+git diff --no-ext-diff <effective base>..<candidate>      # effective base is printed by review-scope
+gh pr view <n> --repo raghavsaravanan/CARVIS   --json title,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,statusCheckRollup
+gh pr checks <n> --repo raghavsaravanan/CARVIS                    # when a PR exists
 ```
 
-Read the full diff (`git diff origin/main...HEAD`) and every changed file's nearest `AGENTS.md`.
+Run this skill only in a worktree whose `HEAD` is the candidate (the implementer's frozen
+worktree, or one the coordinator creates at the PR's `headRefOid`); the skill never checks out,
+switches, or creates branches. For a PR, compare its `headRefOid` with the local `HEAD` and stop if
+they differ: the review would be of the wrong revision. `review-scope.sh` lists every changed file
+with its type and mode, flags symlinks, binary files, mode changes, archive moves, quality-gate
+and dependency changes and shared git hooks, enforces the path-based minimum tier, and reports
+integration drift. Review at the highest of the tier argument, the tier the PR or task contract
+declares, and the minimum it prints.
+
+Read the full diff of every listed file, each changed file's nearest `AGENTS.md`, and the
+unchanged callers, contracts and tests the change affects. Report on every listed file, even when
+it has no finding. Form findings from the code before reading commit bodies or the PR body.
 Confirm: base is `main` of `raghavsaravanan/CARVIS`; branch uses an allowed prefix (`feat/`, `fix/`,
 `refactor/`, `docs/`, `chore/`, `test/`); the PR is a draft; nothing targets `upstream`
 (`tejaspalukuri/CARVIS`); the change is one bounded task, with no cleanup mixed into feature work.
@@ -79,11 +108,20 @@ if rollback is empty or vague. A rollback entry names the exact revert or disabl
 schema implications, and what is irreversible. Required status checks must be green and the branch
 up to date with `main` before human-approved squash merge.
 
+Also confirm: the PR states a risk tier no lower than the minimum `review-scope.sh` reports, and
+the evidence shows every requirement of that tier (`docs/development-workflow.md`, "Risk tiers");
+the "Review and workflow record" names the reviewed candidate SHA, and the PR's current
+`headRefOid` equals it, or differs only by a clean update: `review-scope.sh --since <reviewed SHA>`
+exits 0, listing no task-file changes and no merged-in T3+ file. Any other later change makes earlier reviews stale until
+they are renewed.
+
 ## 4. Report
 
-Findings first, most severe first, each with `file:line`, the concrete failure scenario, and a
-suggested fix. Then:
+Findings first, most severe first, each with `file:line`, the concrete failure scenario, a
+suggested fix, and VERIFIED or INFERRED. Then:
 
+- **Reviewed:** effective base and candidate SHAs, tier, and every changed file with "finding" or
+  "no finding".
 - **Verdict:** ready for review / needs changes / blocked (with the reason).
 - **Verified by running:** commands and results.
 - **Not verified:** physical-device, live-provider, production, or unavailable tooling, stated plainly.

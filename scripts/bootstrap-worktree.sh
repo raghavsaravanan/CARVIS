@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# Prepare a CARVIS checkout (primary or linked worktree) for local checks from the existing
+# lockfiles. Idempotent: a step whose lockfile and interpreter are unchanged and whose installed
+# dependencies still validate is skipped.
+#
+# Usage: scripts/bootstrap-worktree.sh [--check]
+#   --check   validate only; install nothing; exit 1 if anything is missing or invalid.
+#
+# Creates .venv from backend/requirements-dev.txt (hash-pinned, wheels only, so no package build
+# code runs) and backend/spacetimedb/module/node_modules from package-lock.json (install scripts
+# disabled), then reports whether full Xcode is available. The script never reads or sources .env
+# files, provider settings or credentials, starts no service and touches no database. pip and npm
+# still read their own user configuration (for example a registry mirror) and contact the
+# configured package registries. Run it by hand; it is not configured as an Orca setup hook
+# (docs/development-workflow.md, "Worktree lifecycle").
+#
+# Interpreter: CARVIS_BOOTSTRAP_PYTHON, else python3.12 (runtime.txt and CI), else python3. An
+# existing .venv on another Python minor version is an error; it is never deleted.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT}"
+
+CHECK_ONLY=0
+case "${1:-}" in
+  "") ;;
+  --check) CHECK_ONLY=1 ;;
+  *) echo "usage: scripts/bootstrap-worktree.sh [--check]" >&2; exit 2 ;;
+esac
+
+# Never let tooling pick up a local .env or interactive prompts.
+export PYTHON_DOTENV_DISABLED=1 PIP_NO_INPUT=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+unset PYTHONSTARTUP
+
+REQUIREMENTS="backend/requirements-dev.txt"
+MODULE="backend/spacetimedb/module"
+VENV_STAMP=".venv/.carvis-bootstrap"
+NODE_STAMP="${MODULE}/node_modules/.carvis-bootstrap"
+TARGET_PYTHON="3.12"
+problems=0
+LOCK_REPORT="$(mktemp "${TMPDIR:-/tmp}/carvis-bootstrap-locks.XXXXXX")"
+report_lock_mismatch() { [[ ! -s "${LOCK_REPORT}" ]] || sed 's/^/  /' "${LOCK_REPORT}"; }
+
+# One installing bootstrap per checkout at a time (--check takes no lock). The lock is a symlink in
+# this worktree's private git directory whose target is the holder's pid: creating it is atomic,
+# so the lock never exists without an owner, and it can never appear in a diff. A lock left by a
+# killed run is reported, never taken over, because a takeover can race another takeover.
+LOCK="$(git rev-parse --absolute-git-dir)/carvis-bootstrap.lock"
+owns_lock=0
+# The cleanup must never turn a failure into success. Bash 3.2 (macOS) reports status 0 to an EXIT
+# trap after a `set -u` abort, so success is only what reaches the end of the script.
+finished=0
+trap 'status=$?; rm -f "${LOCK_REPORT}"; [[ "${owns_lock}" -eq 0 ]] || rm -f "${LOCK}"; [[ "${finished}" -eq 1 || "${status}" -ne 0 ]] || status=1; exit "${status}"' EXIT
+if [[ "${CHECK_ONLY}" -eq 0 ]]; then
+  if ! ln -s "$$" "${LOCK}" 2>/dev/null; then
+    holder="$(readlink "${LOCK}" 2>/dev/null || true)"
+    if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
+      echo "ERROR: another bootstrap (pid ${holder}) is running in this checkout." >&2
+    else
+      echo "ERROR: stale bootstrap lock from pid ${holder:-unknown}; if no bootstrap is running, remove ${LOCK} and rerun." >&2
+    fi
+    exit 1
+  fi
+  owns_lock=1
+fi
+
+digest() { shasum -a 256 "$@" | awk '{print $1}' | tr '\n' ' '; }
+
+if [[ -n "${CARVIS_BOOTSTRAP_PYTHON:-}" ]]; then
+  PYTHON="${CARVIS_BOOTSTRAP_PYTHON}"
+elif command -v python3.12 >/dev/null 2>&1; then
+  PYTHON="python3.12"
+else
+  PYTHON="python3"
+fi
+
+echo "== Python environment (.venv) =="
+python_version() { "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])'; }
+want_version="$(python_version "${PYTHON}")"
+if [[ "${want_version}" != "${TARGET_PYTHON}" ]]; then
+  echo "ERROR: ${PYTHON} is Python ${want_version}; CI and runtime.txt use ${TARGET_PYTHON}." >&2
+  echo "Install Python ${TARGET_PYTHON} or set CARVIS_BOOTSTRAP_PYTHON." >&2
+  exit 1
+fi
+if [[ -x .venv/bin/python ]]; then
+  venv_version="$(python_version .venv/bin/python)"
+  if [[ "${venv_version}" != "${TARGET_PYTHON}" ]]; then
+    echo "ERROR: existing .venv uses Python ${venv_version}, not ${TARGET_PYTHON}." >&2
+    echo "Move it aside yourself if it is not needed; this script never deletes it." >&2
+    exit 1
+  fi
+fi
+venv_want="${TARGET_PYTHON} $(digest "${REQUIREMENTS}" backend/requirements.txt)"
+# Every locked requirement that applies to this platform is installed at exactly its locked
+# version (pip check alone accepts compatible upgrades).
+locked_versions_installed() {
+  .venv/bin/python -I - "${REQUIREMENTS}" 2>"${LOCK_REPORT}" >/dev/null <<'LOCKCHECK'
+import re
+import sys
+from importlib import metadata
+
+try:
+    from packaging.markers import Marker
+except ImportError:  # pip vendors packaging; every venv has pip
+    from pip._vendor.packaging.markers import Marker
+
+
+def norm(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+want = {}
+for line in open(sys.argv[1], encoding="utf-8"):
+    m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([^\s;\\]+)\s*(?:;\s*([^\\]+?))?\s*\\?$", line.rstrip("\n"))
+    if not m:
+        continue
+    name, version, marker = m.groups()
+    if marker and not Marker(marker).evaluate():
+        continue
+    want[norm(name)] = version
+have = {norm(d.metadata["Name"]): d.version for d in metadata.distributions()}
+bad = [f"{n}: installed {have.get(n, 'missing')}, locked {v}" for n, v in sorted(want.items()) if have.get(n) != v]
+if bad or not want:
+    print("\n".join(bad[:10]) or "no locked requirements parsed", file=sys.stderr)
+    sys.exit(1)
+LOCKCHECK
+}
+venv_valid() {
+  [[ -f "${VENV_STAMP}" && "$(cat "${VENV_STAMP}")" == "${venv_want}" ]] \
+    && .venv/bin/python -m pip check >/dev/null 2>&1 \
+    && .venv/bin/python -c 'import fastapi, pytest' >/dev/null 2>&1 \
+    && locked_versions_installed
+}
+: > "${LOCK_REPORT}"
+if venv_valid; then
+  echo "OK: .venv matches ${REQUIREMENTS} and validates; skipped."
+elif [[ "${CHECK_ONLY}" -eq 1 ]]; then
+  echo "MISSING: .venv absent, out of date with ${REQUIREMENTS}, failing pip check, or not at the locked versions."
+  report_lock_mismatch
+  problems=1
+else
+  reinstall=()
+  if [[ -x .venv/bin/python ]]; then
+    # An existing environment failed validation: pip would call damaged packages "already
+    # satisfied", so reinstall every locked package in place instead of deleting .venv.
+    reinstall=(--force-reinstall)
+  else
+    "${PYTHON}" -m venv .venv
+  fi
+  rm -f "${VENV_STAMP}"
+  .venv/bin/python -m pip install --quiet --require-hashes --only-binary=:all: ${reinstall[@]+"${reinstall[@]}"} \
+    -r "${REQUIREMENTS}"
+  .venv/bin/python -m pip check
+  printf '%s\n' "${venv_want}" > "${VENV_STAMP}"
+  venv_valid || { echo "ERROR: .venv did not validate after install." >&2; exit 1; }
+  echo "OK: .venv installed from ${REQUIREMENTS}."
+fi
+
+echo "== SpacetimeDB module dependencies =="
+if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: node and npm are required; install Node.js 20 or later." >&2
+  exit 1
+fi
+node_want="$(node --version) $(digest "${MODULE}/package-lock.json")"
+# Every package in package-lock.json is installed at exactly its locked version (npm ls alone
+# accepts any version inside the declared ranges).
+node_locked_versions_installed() {
+  node -e 'const fs = require("fs");
+const path = require("path");
+const dir = process.argv[1];
+const lock = JSON.parse(fs.readFileSync(path.join(dir, "package-lock.json"), "utf8"));
+const entries = Object.entries(lock.packages || {}).filter(([p]) => p.startsWith("node_modules/"));
+const bad = [];
+for (const [p, e] of entries) {
+  const manifest = path.join(dir, p, "package.json");
+  if (e.optional && !fs.existsSync(manifest)) continue;
+  let v = "missing";
+  try { v = JSON.parse(fs.readFileSync(manifest, "utf8")).version; } catch (_) {}
+  if (v !== e.version) bad.push(`${p}: installed ${v}, locked ${e.version}`);
+}
+if (bad.length || entries.length === 0) {
+  console.error(bad.slice(0, 10).join("\n") || "no locked packages found");
+  process.exit(1);
+}' "${MODULE}" 2>"${LOCK_REPORT}" >/dev/null
+}
+node_valid() {
+  [[ -f "${NODE_STAMP}" && "$(cat "${NODE_STAMP}")" == "${node_want}" ]] \
+    && npm ls --prefix "${MODULE}" --all >/dev/null 2>&1 \
+    && node_locked_versions_installed \
+    && "${MODULE}/node_modules/.bin/tsc" --version >/dev/null 2>&1
+}
+: > "${LOCK_REPORT}"
+if node_valid; then
+  echo "OK: node_modules matches package-lock.json and validates; skipped."
+elif [[ "${CHECK_ONLY}" -eq 1 ]]; then
+  echo "MISSING: ${MODULE}/node_modules absent, out of date with package-lock.json, invalid, or not at the locked versions."
+  report_lock_mismatch
+  problems=1
+else
+  # Lockfile-exact install. Install scripts are disabled; CI runs plain `npm ci`, and no locked
+  # package currently declares an install script, so the installed trees match.
+  npm ci --prefix "${MODULE}" --ignore-scripts --no-audit --no-fund --loglevel=error
+  printf '%s\n' "${node_want}" > "${NODE_STAMP}"
+  node_valid || { echo "ERROR: node_modules did not validate after install." >&2; exit 1; }
+  echo "OK: node_modules installed from package-lock.json."
+fi
+
+echo "== Xcode =="
+if xcodebuild -version >/dev/null 2>&1; then
+  echo "OK: $(xcodebuild -version | head -n 1); scripts/verify.sh will run the simulator build."
+else
+  echo "NOTE: full Xcode is unavailable; scripts/verify.sh will skip the simulator build."
+fi
+
+if [[ "${problems}" -ne 0 ]]; then
+  echo "Bootstrap incomplete: run scripts/bootstrap-worktree.sh without --check." >&2
+  exit 1
+fi
+finished=1
+echo "Bootstrap complete: run scripts/verify.sh for the repository baseline."

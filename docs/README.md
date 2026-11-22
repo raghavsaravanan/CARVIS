@@ -40,7 +40,8 @@ as a plan.
 | What exactly does the V1 pilot include? | [`product/v1-product-experience-contract.md`](product/v1-product-experience-contract.md) | Approved V1 pilot scope. Decisions D-06 to D-09 are proposed defaults and **D-11 (identity/database vendors) and D-12 (retention) remain open**; do not treat them as resolved |
 | What did the repository look like on 2026-11-15? | [`audits/2026-11-15-p0-readiness-audit.md`](audits/2026-11-15-p0-readiness-audit.md) | Historical snapshot, not current truth |
 | What does the code do now? | The code and its tests | Implementation truth |
-| How do we branch, test, and open PRs? | [`development-workflow.md`](development-workflow.md) | Current workflow |
+| How do we branch, test, review, coordinate agents, and open PRs? | [`development-workflow.md`](development-workflow.md) | Current workflow |
+| Which working rules has the owner accepted for the engineering workflow? | [`decisions/operational-decisions.md`](decisions/operational-decisions.md) | Owner-accepted; resolves no decision |
 | How is the backend built and operated? | [`backend/architecture.md`](backend/architecture.md) | Current backend architecture |
 | What is the proposed V1 production backend design? | [`architecture/README.md`](architecture/README.md) and decision records 0001–0009 in [`decisions/`](decisions/) | Proposed (milestone M1); not implemented until the owner accepts the records |
 
@@ -55,10 +56,10 @@ engineering behavior.
 docs/
   README.md                  this index
   PRD.md                     product requirements (kept at this path; many links depend on it)
-  development-workflow.md    branch, worktree, PR, and CI workflow
+  development-workflow.md    branch, worktree, PR, CI, and agent workflow
   product/                   approved product scope (V1 Product Experience Contract)
   audits/                    dated, immutable audit snapshots: YYYY-MM-DD-<topic>.md
-  decisions/                 architecture decision records (see decisions/README.md)
+  decisions/                 architecture decision records and owner operational decisions
   architecture/              V1 backend architecture (milestone M1): data model, RLS, API, Vapi, Brain, operations
   backend/                   current backend architecture, Qdrant v2 runbook, demo testing
   ios/                       native iOS setup, hands-free, and wake-listener guides
