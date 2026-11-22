@@ -1,6 +1,6 @@
 # 0001. PostgreSQL as the single canonical transactional store
 
-- **Status:** proposed
+- **Status:** accepted (owner, 2026-11-22; roadmap D-1)
 - **Date:** 2026-11-15
 - **Resolves:** contract D-08, D-11 (store half)
 - **Supersedes:** none
