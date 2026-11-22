@@ -75,7 +75,7 @@ quiet git switch docs/t
 ORPHAN="$(git commit-tree "$(git rev-parse 'HEAD^{tree}')" -m orphan)"
 expect base-not-ancestor 1 'not an ancestor of the candidate' bash "${R}" "${ORPHAN}" "${C1}"
 
-# Tier floors: T3 (scripts, backend/main.py), T4 (evidence path), rename source keeps its tier.
+# Tier floors: T3 (scripts, webhook auth), T4 (evidence path), rename source keeps its tier.
 printf 'x2\n' >> scripts/x.sh; git commit -qam script
 C2="$(git rev-parse HEAD)"
 expect tier-below-floor 1 'below the T3' bash "${R}" --tier T1 "${BASE}" "${C2}"
@@ -83,7 +83,7 @@ expect tier-at-floor 0 'REVIEWABLE' bash "${R}" --tier T3 "${BASE}" "${C2}"
 expect gate-flagged 0 'Quality-gate changes.*' bash "${R}" --tier T3 "${BASE}" "${C2}"
 expect gate-names-path 0 '^  scripts/x\.sh$' bash "${R}" --tier T3 "${BASE}" "${C2}"
 # A task commit passed as the base hides earlier task changes (and their tier); it is refused.
-printf 'm2\n' >> backend/main.py; git commit -qam main-py
+printf 'w\n' > backend/webhook_auth.py; git add -A; git commit -qm webhook-auth
 printf 'a3\n' >> docs/a.md; git commit -qam docs-after
 expect base-is-task-commit 1 'is not on origin/main' bash "${R}" --tier T1 HEAD~1 HEAD
 mkdir -p backend/vapi; printf 'v\n' > backend/vapi/new.py; git add -A; git commit -qm t4
@@ -108,6 +108,15 @@ printf 'i\n' > docs/architecture/04-identity-tenancy-rls.md; git add -A; git com
 expect floor-architecture-T3 1 'below the T3' bash "${R}" --tier T1 "${ABASE}" HEAD
 expect floor-architecture-reported 1 'minimum for these paths: T3' bash "${R}" --tier T1 "${ABASE}" HEAD
 git switch -q docs/t
+
+# The answer and refusal path is T4 (B1), isolated on a fresh branch.
+for answer_file in backend/main.py backend/tests/test_main.py docs/architecture/10-threat-model-and-tests.md; do
+  git switch -qc "docs/answer-${answer_file//\//-}" origin/main
+  NBASE="$(git rev-parse HEAD)"
+  mkdir -p "$(dirname "${answer_file}")"; printf 'n\n' >> "${answer_file}"; git add -A; git commit -qm answer-path
+  expect "floor-answer-T4:${answer_file}" 1 'below the T4' bash "${R}" --tier T3 "${NBASE}" HEAD
+  git switch -q docs/t
+done
 
 # Unusual path names cannot be classified and are refused; UTF-8 names are read unquoted.
 printf 'c\n' > "backend/vapi/café.py"; git add -A; git commit -qm utf8
@@ -207,17 +216,18 @@ git switch -q docs/t
 # back to the candidate's copy when main has none, uses main's copy when present, and its result
 # ends with REVIEWABLE. Piping instead would report success for a missing copy.
 run_documented() { # the command in docs/development-workflow.md, with --tier T3 <base> <candidate>
-  local rs status
+  local rs rc TMPDIR="${T}/tmp"
+  mkdir -p "${TMPDIR}"
   if git cat-file -e origin/main:scripts/review-scope.sh 2>/dev/null; then
     rs="$(mktemp "${TMPDIR:-/tmp}/review-scope.XXXXXX")" \
       && git show origin/main:scripts/review-scope.sh > "${rs}" \
       && bash "${rs}" --tier T3 "$1" "$2"
-    status=$?; rm -f "${rs}"
+    rc=$?; rm -f "${rs}"
   else
     bash scripts/review-scope.sh --tier T3 "$1" "$2"
-    status=$?
+    rc=$?
   fi
-  return "${status}"
+  return "${rc}"
 }
 git switch -qc chore/w origin/main
 WBASE="$(git rev-parse HEAD)"
@@ -235,7 +245,39 @@ printf 'w\n' > docs/w.md; git add -A; git commit -qm w-task
 expect documented-main-copy 0 'MAIN-COPY-MARKER' run_documented "$(git rev-parse origin/main)" HEAD
 out="$(run_documented "$(git rev-parse origin/main)" HEAD 2>&1)"
 [[ "$(printf '%s\n' "${out}" | tail -n 1)" == "REVIEWABLE: $(git rev-parse HEAD)"* ]] && { pass=$((pass+1)); echo "PASS documented-main-copy-last-line"; } || { fail=$((fail+1)); echo "FAIL documented-main-copy-last-line"; }
-ls "${TMPDIR:-/tmp}"/review-scope.?????? >/dev/null 2>&1 && { fail=$((fail+1)); echo "FAIL temporary copy left behind"; } || { pass=$((pass+1)); echo "PASS temporary-copy-removed"; }
+ls "${T}/tmp"/review-scope.?????? >/dev/null 2>&1 && { fail=$((fail+1)); echo "FAIL temporary copy left behind"; } || { pass=$((pass+1)); echo "PASS temporary-copy-removed"; }
+# B2: the command exactly as documented (extracted from docs/development-workflow.md) runs in bash
+# and zsh, reports rc, ends with REVIEWABLE and removes its temporary copy. /carvis-pr-review carries
+# the same command.
+DOC="$(cd "$(dirname "${SCRIPT}")/.." && pwd)/docs/development-workflow.md"
+SKILL="$(cd "$(dirname "${SCRIPT}")/.." && pwd)/.claude/skills/carvis-pr-review/SKILL.md"
+extract() { # <file> <indent>: the fenced reviewer command, unindented
+  awk -v ind="$2" 'index($0, "if git cat-file -e origin/main:scripts/review-scope.sh") { on = 1 }
+    on { line = $0; sub("^" ind, "", line); print line } on && /^ *fi$/ { exit }' "$1"
+}
+doc_cmd="$(extract "${DOC}" '   ')"
+skill_cmd="$(extract "${SKILL}" '')"
+[[ -n "${doc_cmd}" && "${doc_cmd}" == "${skill_cmd}" ]] \
+  && { pass=$((pass+1)); echo "PASS documented-command-matches-skill"; } \
+  || { fail=$((fail+1)); echo "FAIL documented command missing or differs from /carvis-pr-review"; }
+run_doc_cmd() { # <shell> <base> <candidate>
+  local f="${T}/doc-cmd.sh"
+  { printf '%s\n' "${doc_cmd}" | sed -e "s|<Tn>|T3|" -e "s|<base>|$2|" -e "s|<candidate>|$3|"
+    printf 'echo "rc=${rc}"\n'; } > "${f}"
+  mkdir -p "${T}/tmp-$1"
+  TMPDIR="${T}/tmp-$1" "$1" "${f}"
+}
+for sh in bash zsh; do
+  if ! command -v "${sh}" >/dev/null 2>&1; then echo "SKIP documented-command-${sh}: ${sh} unavailable"; continue; fi
+  out="$(run_doc_cmd "${sh}" "$(git rev-parse origin/main)" HEAD 2>&1)"
+  if printf '%s\n' "${out}" | grep -q 'MAIN-COPY-MARKER' && printf '%s\n' "${out}" | grep -qx 'rc=0' \
+     && printf '%s\n' "${out}" | grep -q "^REVIEWABLE: $(git rev-parse HEAD)" && ! printf '%s\n' "${out}" | grep -q 'read-only'; then
+    pass=$((pass+1)); echo "PASS documented-command-${sh}"
+  else
+    fail=$((fail+1)); echo "FAIL documented-command-${sh}"; printf '%s\n' "${out}" | tail -n 5 | sed 's/^/    /'
+  fi
+  ls "${T}/tmp-${sh}"/review-scope.?????? >/dev/null 2>&1 && { fail=$((fail+1)); echo "FAIL ${sh} left a temporary copy"; } || { pass=$((pass+1)); echo "PASS documented-command-${sh}-cleanup"; }
+done
 git switch -q docs/t
 
 # A submodule (gitlink) change is refused.

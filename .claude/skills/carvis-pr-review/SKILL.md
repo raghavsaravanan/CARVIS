@@ -29,12 +29,12 @@ if git cat-file -e origin/main:scripts/review-scope.sh 2>/dev/null; then
   rs="$(mktemp "${TMPDIR:-/tmp}/review-scope.XXXXXX")" \
     && git show origin/main:scripts/review-scope.sh > "${rs}" \
     && bash "${rs}" --tier <Tn> <base> <candidate>
-  status=$?; rm -f "${rs}"
+  rc=$?; rm -f "${rs}"
 else   # main has no copy yet (the change that adds it): read scripts/review-scope.sh first
   bash scripts/review-scope.sh --tier <Tn> <base> <candidate>
-  status=$?
+  rc=$?
 fi
-# status is the packet's exit status; the temporary copy is removed afterwards.
+# rc is the packet's exit status (not `status`, which is read-only in zsh); the temporary copy is removed afterwards.
 git diff --no-ext-diff <effective base>..<candidate>      # effective base is printed by review-scope
 gh pr view <n> --repo raghavsaravanan/CARVIS   --json title,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,statusCheckRollup
 gh pr checks <n> --repo raghavsaravanan/CARVIS                    # when a PR exists

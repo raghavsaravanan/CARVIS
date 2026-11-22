@@ -227,14 +227,14 @@ changes are T3.
      rs="$(mktemp "${TMPDIR:-/tmp}/review-scope.XXXXXX")" \
        && git show origin/main:scripts/review-scope.sh > "${rs}" \
        && bash "${rs}" --tier <Tn> <base> <candidate>
-     status=$?; rm -f "${rs}"
+     rc=$?; rm -f "${rs}"
    else   # main has no copy yet (the change that adds it): read scripts/review-scope.sh first
      bash scripts/review-scope.sh --tier <Tn> <base> <candidate>
-     status=$?
+     rc=$?
    fi
    ```
 
-   Use `${status}` as the packet's exit status. Reviewers do not receive the implementer's
+   Use `${rc}` as the packet's exit status. Reviewers do not receive the implementer's
    summary, reasoning, test conclusions, PR body or earlier verdicts; a renewed review receives
    only the list of earlier findings to check.
 3. **Review.** Reviewers read the pinned revisions (`git show <sha>:<path>`, `git diff`), not a

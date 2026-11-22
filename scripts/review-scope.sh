@@ -76,8 +76,9 @@ path_tier() {
     backend/purge_db.py|backend/conversation.py|backend/vapi_assistant.py|backend/vapi/*|\
     backend/schemas/*|backend/tests/test_specs_v2.py|backend/tests/test_ride_height.py|\
     backend/tests/test_conversation.py|backend/tests/test_vapi_assistant.py|\
-    backend/tests/fixtures/*|docs/backend/qdrant-v2-migration.md|docs/architecture/07-brain.md) echo 4 ;;
-    backend/main.py|backend/webhook_auth.py|backend/upload_security.py|backend/request_limits.py|\
+    backend/tests/fixtures/*|docs/backend/qdrant-v2-migration.md|docs/architecture/07-brain.md|\
+    backend/main.py|backend/tests/test_main.py|docs/architecture/10-threat-model-and-tests.md) echo 4 ;;
+    backend/webhook_auth.py|backend/upload_security.py|backend/request_limits.py|\
     backend/deployment_config.py|backend/log_config.py|backend/setup.sh|backend/requirements*|\
     backend/spacetimedb/*|backend/tests/*|requirements.txt|runtime.txt|render.yaml|Procfile|\
     .renderignore|.gitignore|.gitattributes|.github/*|scripts/*|.claude/*|AGENTS.md|*/AGENTS.md|\
