@@ -137,8 +137,39 @@ format. Structured log fields pass an explicit allowlist (`FIELD_POLICY` in `bac
 so request paths log codes, counts, type names, known vocabularies and salted fingerprints of
 caller-supplied IDs, never the mechanic's questions, transcripts, answers, images, model output,
 phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own access and error lines
-(and the httpx and openai libraries' loggers) stay outside that policy until Track B1. Limits are listed in
+(and the httpx and openai libraries' loggers) stay outside that policy; B1 did not change them. Limits are listed in
 [`docs/backend/architecture.md`](docs/backend/architecture.md#api-contracts).
+
+#### PostgreSQL foundation, health and request IDs (M2 B1)
+
+- `GET /healthz` answers 200 `{"status": "ok"}` and consults nothing. `GET /health` is unchanged.
+- `GET /readyz` answers 200 `{"status": "ready"}` only when PostgreSQL is reachable and the recorded
+  Alembic revision is this build's head; otherwise 503 `{"status": "not_ready", "reason": …}` with
+  `starting`, `database_unconfigured`, `database_misconfigured`, `database_unreachable` or
+  `migrations_pending`. The probe has a hard 2-second deadline, opens one connection at a time, and
+  concurrent requests share it.
+- `CARVIS_DATABASE_URL` (optional in B1, transitional): the API's PostgreSQL URL. `postgresql://`,
+  `postgres://` and `postgresql+psycopg://` are accepted and use the psycopg 3 driver; anything else
+  refuses boot outside `local` (in `local` it boots and `/readyz` reports `database_misconfigured`).
+  Unset means `/readyz` reports `database_unconfigured`. The value is never logged.
+- `CARVIS_MIGRATION_DATABASE_URL`: the privileged login that runs migrations (separate from the API's
+  URL; there is no fallback). PostgreSQL 16 or later. From `backend/`:
+
+  ```bash
+  CARVIS_MIGRATION_DATABASE_URL=postgresql://… ../.venv/bin/python -m alembic -c migrations/alembic.ini upgrade head
+  ../.venv/bin/python -m db.history   # fails unless the chain is linear with one head
+  ```
+
+  The login needs `CREATE` on the database and `CREATEROLE` (or superuser). Nothing runs migrations
+  automatically on deploy.
+- Every response carries exactly one `X-Request-ID`: a caller's value if it is a single UUID
+  (normalized to 32 lowercase hex), otherwise a new one.
+- Real-PostgreSQL tests (`backend/tests/test_b1_migrations.py`) need a throwaway PostgreSQL 16+ server's
+  superuser URL in `CARVIS_TEST_POSTGRES_URL`; they create and drop databases and cluster-wide roles,
+  so never point it at a real server. Without it they skip (CI sets `CARVIS_REQUIRE_POSTGRES=1`, which
+  makes them fail instead). For example:
+  `docker run -d --rm -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=scratch postgres:16` and
+  `CARVIS_TEST_POSTGRES_URL=postgresql://postgres:scratch@127.0.0.1:55432/postgres`.
 
 ### iOS
 

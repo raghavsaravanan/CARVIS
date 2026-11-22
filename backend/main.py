@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import json
 import logging
 import os
@@ -35,12 +36,13 @@ from qdrant_v2 import READ_COLLECTION, STAGING_COLLECTION
 from spec_schema import Vehicle, VARIANTS
 from spec_retrieval import LookupResult, SpecificationRefusal, lookup, normalize_request
 from spec_extract import COMPONENTS, component_from_text
-from webhook_auth import (WEBHOOK_SECRET_HEADER, configured_secret, require_webhook_secret_at_boot,
-                          webhook_request_authorized)
-from deployment_config import default_shop_id, require_explicit_configuration_at_boot, spacetimedb_db_name
+from webhook_auth import WEBHOOK_SECRET_HEADER, configured_secret, webhook_request_authorized
+from deployment_config import default_shop_id, spacetimedb_db_name
 from upload_security import (MAX_UPLOAD_BYTES, NOT_A_PDF_DETAIL, OPERATOR_TOKEN_ENV, PDF_MAGIC, TOO_LARGE_DETAIL,
                              OperatorUploadRoute, configured_operator_token)
 from log_config import configure_logging, log_event, register_values
+from settings import load_settings
+from db.readiness import READY, STARTING, ReadinessProbe, expected_head
 from request_limits import DEFAULT_BODY_LIMIT_BYTES, MULTIPART_ENVELOPE_BYTES, BodyLimit, MiB, body_limited_route
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -1096,9 +1098,11 @@ async def lifespan(app: FastAPI):
     logger.setLevel(logging.INFO)
     logger.info("Carvis webhook starting up")
 
-    # Fail fast, before loading models or connecting to Qdrant.
-    environment = require_webhook_secret_at_boot()
-    for name in require_explicit_configuration_at_boot(environment):
+    # Fail fast, before loading models or connecting to Qdrant. load_settings runs the existing
+    # webhook and explicit-configuration guards in their original order, then the database settings.
+    settings = load_settings()
+    environment = settings.environment
+    for name in settings.local_defaults:
         logger.info("%s is not set; using its local default", name)
     if not configured_secret():
         logger.warning("VAPI_WEBHOOK_SECRET is not set; /vapi-tool will reject every request")
@@ -1140,9 +1144,21 @@ async def lifespan(app: FastAPI):
     invalidate_shop_catalog()
     app.state.embedder = embedder
     app.state.qdrant = client
+    # PostgreSQL (M2 B1): built lazily, never connected at boot; no route uses the session factory yet.
+    app.state.settings = settings
+    db_engine = None
+    if settings.database_ready_to_probe:
+        from db.engine import create_app_engine, create_session_factory
+
+        db_engine = create_app_engine(settings.database_url)
+        app.state.db_session_factory = create_session_factory(db_engine)
+    app.state.readiness = ReadinessProbe.from_settings(settings, expected_head())
     try:
         yield
     finally:
+        await app.state.readiness.close()
+        if db_engine is not None:
+            db_engine.dispose()
         global _VISION_CLIENT
         if _VISION_CLIENT is not None:
             await _VISION_CLIENT.close()
@@ -1164,6 +1180,103 @@ app.router.route_class = body_limited_route(BODY_LIMITS, DEFAULT_BODY_LIMIT)
 async def health() -> dict[str, str]:
     """Liveness endpoint for Render / load balancers."""
     return {"status": "ok", "service": "carvis"}
+
+
+# --- Request IDs (M2 B1) -------------------------------------------------------------------------
+REQUEST_ID_HEADER = "x-request-id"
+_REQUEST_ID_HEADER_BYTES = REQUEST_ID_HEADER.encode("latin-1")
+_UUID_HEX = re.compile(r"[0-9a-f]{32}")
+_UUID_HYPHENATED = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_INTERNAL_ERROR_BODY = b"Internal Server Error"  # Starlette ServerErrorMiddleware's own 500 body
+current_request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("carvis_request_id", default=None)
+
+
+def accepted_request_id(values: list[bytes]) -> str | None:
+    """A caller's ``X-Request-ID`` normalized to 32 lowercase hex, or ``None``.
+
+    Accepted only when exactly one header is present and it is a UUID (hyphenated or 32 hex, any
+    case). Duplicates are ambiguous and malformed values are untrusted; both get a fresh ID instead.
+    """
+    if len(values) != 1 or len(values[0]) > 36:
+        return None
+    try:
+        value = values[0].decode("ascii").strip().lower()
+    except UnicodeDecodeError:
+        return None
+    if _UUID_HEX.fullmatch(value):
+        return value
+    if _UUID_HYPHENATED.fullmatch(value):
+        return value.replace("-", "")
+    return None
+
+
+class RequestIdMiddleware:
+    """Pure ASGI: give every HTTP request an ID and put exactly one ``X-Request-ID`` on its response.
+
+    It sits inside Starlette's ``ServerErrorMiddleware`` and outside ``ExceptionMiddleware`` and the
+    routes' body limits, so 404, 413, 422 and handler errors pass through it unchanged apart from the
+    header. For an unhandled exception before the response starts it sends Starlette's own 500
+    (identical bytes, plus the header) and re-raises; ``ServerErrorMiddleware`` then sees that a
+    response started and only re-raises, so there is never a second response. Responses the ASGI
+    server itself generates before the app runs (such as uvicorn's 400 for a malformed
+    ``Content-Length``) cannot carry the header.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        inbound = [value for name, value in scope.get("headers", []) if name.lower() == _REQUEST_ID_HEADER_BYTES]
+        request_id = accepted_request_id(inbound) or uuid.uuid4().hex
+        scope.setdefault("state", {})["request_id"] = request_id
+        header = (_REQUEST_ID_HEADER_BYTES, request_id.encode("ascii"))
+        started = False
+
+        async def send_with_id(message: dict) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+                headers = [(name, value) for name, value in message.get("headers", [])
+                           if name.lower() != _REQUEST_ID_HEADER_BYTES]
+                message = {**message, "headers": [*headers, header]}
+            await send(message)
+
+        token = current_request_id.set(request_id)
+        try:
+            await self.app(scope, receive, send_with_id)
+        except Exception:
+            if not started:
+                await send_with_id({"type": "http.response.start", "status": 500, "headers": [
+                    (b"content-length", str(len(_INTERNAL_ERROR_BODY)).encode("ascii")),
+                    (b"content-type", b"text/plain; charset=utf-8")]})
+                await send_with_id({"type": "http.response.body", "body": _INTERNAL_ERROR_BODY})
+            raise
+        finally:
+            current_request_id.reset(token)
+
+
+app.add_middleware(RequestIdMiddleware)
+
+
+# --- Health and readiness (M2 B1) ----------------------------------------------------------------
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    """Liveness: the process is serving. No dependency is consulted."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readyz(request: Request) -> JSONResponse:
+    """Readiness: PostgreSQL reachable and migrations at this build's head; otherwise 503."""
+    probe = getattr(request.app.state, "readiness", None)
+    result_reason = STARTING if probe is None else (await probe.check()).reason
+    headers = {"cache-control": "no-store"}
+    if result_reason == READY:
+        return JSONResponse({"status": "ready"}, headers=headers)
+    return JSONResponse({"status": "not_ready", "reason": result_reason}, status_code=503, headers=headers)
 
 
 class VisionConfigurationError(RuntimeError):

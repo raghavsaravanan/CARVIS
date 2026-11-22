@@ -9,3 +9,7 @@ httpx>=0.27.0
 uvicorn[standard]>=0.32.0
 python-multipart>=0.0.9
 openai>=1.0.0
+# PostgreSQL foundation (M2 B1, ADR-0001): SQLAlchemy 2, Alembic migrations, psycopg 3 driver.
+sqlalchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.2
