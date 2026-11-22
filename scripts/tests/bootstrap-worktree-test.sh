@@ -41,6 +41,7 @@ meta="$(ls -d .venv/lib/python3.12/site-packages/iniconfig-*.dist-info)/METADATA
 cp "${meta}" "${T}/METADATA.orig"
 sed 's/^Version: .*/Version: 99.0.0/' "${T}/METADATA.orig" > "${meta}"
 expect check-detects-version-drift 1 'not at the locked versions' bash "${B}" --check
+expect check-names-drifted-package 1 'iniconfig: installed 99\.0\.0' bash "${B}" --check
 cp "${T}/METADATA.orig" "${meta}"
 expect version-restored 0 'Bootstrap complete' bash "${B}" --check
 # A Node package at a version other than the locked one (npm ls would accept it) is detected.
@@ -48,6 +49,7 @@ tsc_manifest=backend/spacetimedb/module/node_modules/typescript/package.json
 cp "${tsc_manifest}" "${T}/tsc-package.json.orig"
 sed 's/"version": "[^"]*"/"version": "5.6.99"/' "${T}/tsc-package.json.orig" > "${tsc_manifest}"
 expect check-detects-node-version-drift 1 'not at the locked versions' bash "${B}" --check
+expect check-names-drifted-node-package 1 'node_modules/typescript: installed 5\.6\.99' bash "${B}" --check
 cp "${T}/tsc-package.json.orig" "${tsc_manifest}"
 # Corrupt node_modules.
 rm -rf backend/spacetimedb/module/node_modules/typescript

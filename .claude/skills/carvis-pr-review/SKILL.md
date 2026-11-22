@@ -22,9 +22,15 @@ repository's PR (`docs/development-workflow.md`).
 
 ```bash
 git fetch origin main
-# Run main's copy, so the candidate cannot weaken the check that reviews it. Only when main has no
-# copy yet (the change that introduces it), read the candidate's script first, then run that.
-git show origin/main:scripts/review-scope.sh | bash -s -- --tier <Tn> <base> <candidate>  # must exit 0
+# Run main's copy, so the candidate cannot weaken the check that reviews it. Never pipe it into
+# bash (a pipeline reports bash's status, so a missing copy looks like success). Accept only exit 0
+# with the last line "REVIEWABLE: <candidate> ...".
+if git cat-file -e origin/main:scripts/review-scope.sh 2>/dev/null; then
+  git show origin/main:scripts/review-scope.sh > "${TMPDIR:-/tmp}/review-scope.main.sh" \
+    && bash "${TMPDIR:-/tmp}/review-scope.main.sh" --tier <Tn> <base> <candidate>
+else   # main has no copy yet (the change that adds it): read scripts/review-scope.sh first
+  bash scripts/review-scope.sh --tier <Tn> <base> <candidate>
+fi
 git diff --no-ext-diff <effective base>..<candidate>      # effective base is printed by review-scope
 gh pr view <n> --repo raghavsaravanan/CARVIS   --json title,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,statusCheckRollup
 gh pr checks <n> --repo raghavsaravanan/CARVIS                    # when a PR exists
@@ -102,7 +108,7 @@ Also confirm: the PR states a risk tier no lower than the minimum `review-scope.
 the evidence shows every requirement of that tier (`docs/development-workflow.md`, "Risk tiers");
 the "Review and workflow record" names the reviewed candidate SHA, and the PR's current
 `headRefOid` equals it, or differs only by a clean update: `review-scope.sh --since <reviewed SHA>`
-exits 0 and lists no task-file changes. Any other later change makes earlier reviews stale until
+exits 0, listing no task-file changes and no merged-in T3+ file. Any other later change makes earlier reviews stale until
 they are renewed.
 
 ## 4. Report

@@ -64,7 +64,7 @@ model:
   recorded in the task contract or given by invoking `/carvis-continue`.
 - Review only committed candidates, through `scripts/review-scope.sh`. Any change to the candidate
   makes earlier reviews stale, except a clean update from `origin/main` that the script shows
-  touches no task file.
+  touches no task file and brings in no T3+ file.
 - Risk tiers only add requirements; only the owner lowers a tier.
 - Workers never dispatch other workers, create branches or worktrees the coordinator owns, answer
   another agent's permission prompts, or edit outside their assigned worktree.

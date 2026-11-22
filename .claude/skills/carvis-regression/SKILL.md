@@ -100,7 +100,7 @@ and section 4's adversarial refusals.
 
 Mutation check: disable the guard (comment it out or force its condition), run the narrowest
 suite, confirm it fails for the guard's reason, restore it, and confirm `git diff` shows no trace.
-T2 does this for each new guard; T3 for every touched authentication, tenant, secret and limit
+Every tier does this for each new guard; T3 also for every touched authentication, tenant, secret and limit
 check; T4 also for every touched applicability, evidence and refusal condition. Record each
 mutation and its failing test in the PR.
 

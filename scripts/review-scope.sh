@@ -11,14 +11,15 @@
 #   --tier       the task's tier; refused if lower than the tier the changed paths require
 #   --since      the previously reviewed candidate; prints the delta to re-review, including files
 #                the correction reverted, but not files that only arrived by merging the
-#                integration branch
+#                integration branch. A merge that brought in T3+ files is a material update (exit 3)
 #
 # The reviewed diff runs from the effective base: <base>, or the merge-base with the integration
 # branch when the task branch has been updated from it since (git merge, never rebase).
 # The integration ref is always origin/main; there is deliberately no override. Reviewers run the
 # integration branch's copy of this script when it has one, so a candidate cannot weaken the check
-# that reviews it:
-#   git show origin/main:scripts/review-scope.sh | bash -s -- <same arguments>
+# that reviews it (docs/development-workflow.md, "Review protocol"). Never pipe it into bash: a
+# pipeline reports bash's status, so a missing copy would look like success. Accept a packet only
+# on exit 0 with the last line "REVIEWABLE: <candidate> ...".
 #
 # Exit status:
 #   0  reviewable; any integration drift is not material (it still needs a drift check)
@@ -28,8 +29,8 @@
 #      unresolvable revision
 #   2  usage error
 #   3  reviewable, but the integration branch changed files this task touches, or files whose
-#      minimum tier is T3 or higher (policy, CI, scripts, dependencies): update the branch, rerun
-#      checks, and renew review
+#      minimum tier is T3 or higher (policy, CI, scripts, dependencies), either still unmerged or
+#      merged since the --since candidate: update the branch if needed, rerun checks, renew review
 set -euo pipefail
 
 usage() { echo "usage: scripts/review-scope.sh [--tier T1|T2|T3|T4] [--since <sha>] <base> <candidate>" >&2; exit 2; }
@@ -65,6 +66,7 @@ git rev-parse --verify --quiet "${against}^{commit}" >/dev/null \
 resolve against_sha "${against}"
 head="$(git rev-parse HEAD)"
 blocked=0
+material=0
 block() { echo "NOT REVIEWABLE: $*"; blocked=1; }
 
 # Minimum tier for a path (docs/development-workflow.md, "Risk tiers"). A floor, never a ceiling.
@@ -158,8 +160,8 @@ archive="$(printf '%s\n' "${paths}" | grep -E '^docs/archive/' || true)"
 gates="$(printf '%s\n' "${paths}" | grep -E '^(\.github/|scripts/|\.claude/skills/)' || true)"
 [[ -z "${gates}" ]] || flag "Quality-gate changes (a change that weakens a gate can pass that gate; review against the previous gate)" "${gates}"
 if printf '%s\n' "${paths}" | grep -qx 'scripts/review-scope.sh'; then
-  echo "NOTE: this script changed; the review must use ${against}'s copy if it has one:"
-  echo "  git show ${against}:scripts/review-scope.sh | bash -s -- <same arguments>"
+  echo "NOTE: this script changed; the review must use ${against}'s copy if it has one"
+  echo "  (docs/development-workflow.md, Review protocol; never pipe it into bash)."
 fi
 locks="$(printf '%s\n' "${paths}" | grep -E '^(backend/requirements|requirements\.txt|runtime\.txt|backend/spacetimedb/module/package)' || true)"
 [[ -z "${locks}" ]] || flag "Dependency changes (also run scripts/check-runtime-lock.sh)" "${locks}"
@@ -207,6 +209,15 @@ if [[ -n "${since}" ]]; then
                   n = split(ENVIRON["RS_MERGED"], m, "\n"); for (i = 1; i <= n; i++) M[m[i]] = 1 }
           ($2 in T) || !($2 in M)')"
     printf '%s\n' "${delta:-no task-file changes}"
+    merged_policy=""
+    while IFS= read -r p; do
+      if [[ -n "${p}" && "$(path_tier "${p}")" -ge 3 ]]; then merged_policy="${merged_policy}${p}"$'\n'; fi
+    done <<< "${merged_in}"
+    if [[ -n "${merged_policy}" ]]; then
+      flag "Merged in since ${prev}: T3+ files (policy, CI, scripts, dependencies, security)" "${merged_policy%$'\n'}"
+      echo "MATERIAL UPDATE: the reviews of ${prev} do not carry over; renew review."
+      material=1
+    fi
   else
     block "previous candidate ${prev} is not an ancestor; history changed, so a full review is required"
   fi
@@ -214,7 +225,6 @@ fi
 
 # 5. Drift: integration commits the candidate does not contain, pinned to the SHA printed above.
 echo "== Integration drift =="
-material=0
 drift="$(git rev-list --count "${candidate}..${against_sha}")"
 echo "commits on ${against} not in candidate: ${drift}"
 if [[ "${drift}" -gt 0 ]]; then

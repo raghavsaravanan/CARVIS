@@ -38,6 +38,8 @@ VENV_STAMP=".venv/.carvis-bootstrap"
 NODE_STAMP="${MODULE}/node_modules/.carvis-bootstrap"
 TARGET_PYTHON="3.12"
 problems=0
+LOCK_REPORT="$(mktemp "${TMPDIR:-/tmp}/carvis-bootstrap-locks.XXXXXX")"
+report_lock_mismatch() { [[ ! -s "${LOCK_REPORT}" ]] || sed 's/^/  /' "${LOCK_REPORT}"; }
 
 # One installing bootstrap per checkout at a time (--check takes no lock). The lock is a symlink in
 # this worktree's private git directory whose target is the holder's pid: creating it is atomic,
@@ -48,7 +50,7 @@ owns_lock=0
 # The cleanup must never turn a failure into success. Bash 3.2 (macOS) reports status 0 to an EXIT
 # trap after a `set -u` abort, so success is only what reaches the end of the script.
 finished=0
-trap 'status=$?; [[ "${owns_lock}" -eq 0 ]] || rm -f "${LOCK}"; [[ "${finished}" -eq 1 || "${status}" -ne 0 ]] || status=1; exit "${status}"' EXIT
+trap 'status=$?; rm -f "${LOCK_REPORT}"; [[ "${owns_lock}" -eq 0 ]] || rm -f "${LOCK}"; [[ "${finished}" -eq 1 || "${status}" -ne 0 ]] || status=1; exit "${status}"' EXIT
 if [[ "${CHECK_ONLY}" -eq 0 ]]; then
   if ! ln -s "$$" "${LOCK}" 2>/dev/null; then
     holder="$(readlink "${LOCK}" 2>/dev/null || true)"
@@ -92,7 +94,7 @@ venv_want="${TARGET_PYTHON} $(digest "${REQUIREMENTS}" backend/requirements.txt)
 # Every locked requirement that applies to this platform is installed at exactly its locked
 # version (pip check alone accepts compatible upgrades).
 locked_versions_installed() {
-  .venv/bin/python -I - "${REQUIREMENTS}" >/dev/null 2>&1 <<'LOCKCHECK'
+  .venv/bin/python -I - "${REQUIREMENTS}" 2>"${LOCK_REPORT}" >/dev/null <<'LOCKCHECK'
 import re
 import sys
 from importlib import metadata
@@ -133,6 +135,7 @@ if venv_valid; then
   echo "OK: .venv matches ${REQUIREMENTS} and validates; skipped."
 elif [[ "${CHECK_ONLY}" -eq 1 ]]; then
   echo "MISSING: .venv absent, out of date with ${REQUIREMENTS}, failing pip check, or not at the locked versions."
+  report_lock_mismatch
   problems=1
 else
   reinstall=()
@@ -153,8 +156,8 @@ else
 fi
 
 echo "== SpacetimeDB module dependencies =="
-if ! command -v npm >/dev/null 2>&1; then
-  echo "ERROR: npm is not installed; install Node.js 20 or later." >&2
+if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: node and npm are required; install Node.js 20 or later." >&2
   exit 1
 fi
 node_want="$(node --version) $(digest "${MODULE}/package-lock.json")"
@@ -177,7 +180,7 @@ for (const [p, e] of entries) {
 if (bad.length || entries.length === 0) {
   console.error(bad.slice(0, 10).join("\n") || "no locked packages found");
   process.exit(1);
-}' "${MODULE}" >/dev/null 2>&1
+}' "${MODULE}" 2>"${LOCK_REPORT}" >/dev/null
 }
 node_valid() {
   [[ -f "${NODE_STAMP}" && "$(cat "${NODE_STAMP}")" == "${node_want}" ]] \
@@ -189,6 +192,7 @@ if node_valid; then
   echo "OK: node_modules matches package-lock.json and validates; skipped."
 elif [[ "${CHECK_ONLY}" -eq 1 ]]; then
   echo "MISSING: ${MODULE}/node_modules absent, out of date with package-lock.json, invalid, or not at the locked versions."
+  report_lock_mismatch
   problems=1
 else
   # Lockfile-exact install. Install scripts are disabled; CI runs plain `npm ci`, and no locked

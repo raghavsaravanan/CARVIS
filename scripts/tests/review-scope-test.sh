@@ -166,6 +166,44 @@ printf 'l1\nl2\nl3-main\n' > docs/shared.md; printf 'other\n' > docs/u.md; git a
 expect since-merged-and-reverted 0 'M	docs/shared\.md' bash "${R}" --tier T1 --since "${UPREV}" "${UBASE}" HEAD
 git switch -q docs/t
 
+# A clean-looking update that merged in T3+ files is a material update: reviews do not carry over.
+git switch -qc docs/v origin/main
+VBASE="$(git rev-parse HEAD)"
+printf 'v\n' > docs/v.md; git add -A; git commit -qm v-task
+VREV="$(git rev-parse HEAD)"
+drift AGENTS.md policy-change
+quiet git merge --no-edit origin/main
+expect material-update-after-merge 3 'MATERIAL UPDATE' bash "${R}" --tier T1 --since "${VREV}" "${VBASE}" HEAD
+drift docs/unrelated.md not-policy
+quiet git merge --no-edit origin/main
+VREV2="$(git rev-parse HEAD~1)"
+expect clean-update-keeps-review 0 'no task-file changes' bash "${R}" --tier T1 --since "${VREV2}" "${VBASE}" HEAD
+
+# The documented reviewer command (docs/development-workflow.md, "Review protocol"): it falls
+# back to the candidate's copy when main has none, uses main's copy when present, and its result
+# ends with REVIEWABLE. Piping instead would report success for a missing copy.
+run_documented() {
+  if git cat-file -e origin/main:scripts/review-scope.sh 2>/dev/null; then
+    git show origin/main:scripts/review-scope.sh > "${T}/review-scope.main.sh" \
+      && bash "${T}/review-scope.main.sh" --tier T3 "$1" "$2"
+  else
+    bash scripts/review-scope.sh --tier T3 "$1" "$2"
+  fi
+}
+git switch -qc chore/w origin/main
+WBASE="$(git rev-parse HEAD)"
+cp "${R}" scripts/review-scope.sh; git add -A; git commit -qm add-script
+expect documented-fallback 0 'REVIEWABLE: ' run_documented "${WBASE}" HEAD
+out="$(run_documented "${WBASE}" HEAD 2>&1)"; last="$(printf '%s\n' "${out}" | tail -n 1)"
+[[ "${last}" == "REVIEWABLE: $(git rev-parse HEAD)"* ]] && { pass=$((pass+1)); echo "PASS documented-last-line"; } || { fail=$((fail+1)); echo "FAIL documented-last-line: ${last}"; }
+pipe_out="$(git show origin/main:scripts/review-scope.sh 2>/dev/null | bash -s -- --tier T3 "${WBASE}" HEAD; echo "rc=$?")"
+[[ "${pipe_out}" == "rc=0" ]] && { pass=$((pass+1)); echo "PASS pipe-hazard-demonstrated (empty output, exit 0)"; } || { fail=$((fail+1)); echo "FAIL pipe hazard not reproduced: ${pipe_out}"; }
+(cd "${T}/origin" && mkdir -p scripts && cp "${R}" scripts/review-scope.sh && git add -A && git commit -qm main-gets-script)
+quiet git fetch origin; quiet git merge --no-edit origin/main
+printf 'w\n' > docs/w.md; git add -A; git commit -qm w-task
+expect documented-main-copy 0 'REVIEWABLE: ' run_documented "$(git rev-parse origin/main)" HEAD
+git switch -q docs/t
+
 # A submodule (gitlink) change is refused.
 git update-index --add --cacheinfo "160000,${BASE},vendor/sub"; git commit -qm gitlink
 expect gitlink-refused 1 'submodule changes' bash "${R}" --tier T4 "${BASE}" HEAD

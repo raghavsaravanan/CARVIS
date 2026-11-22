@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Preflight for /carvis-continue. Read-only apart from `git fetch --prune origin` and fetching a
 # merged PR's head commit; never stashes, resets, switches, or deletes anything.
-# Exit 0 = safe to start the next M2 row from origin/main; exit 1 = STOP and report the message.
+# Exit 0 = safe to start the next M2 row from origin/main (with --non-roadmap: safe to start the
+# assigned non-roadmap task); exit 1 = STOP and report the message.
 # Usage: preflight.sh                      standalone: the skill creates the task branch
 #        preflight.sh --assigned <branch>  Orca mode: the coordinator created <branch> and its
 #                                          worktree; this checkout must be on it, and it must be fresh

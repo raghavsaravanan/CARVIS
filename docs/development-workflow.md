@@ -203,7 +203,7 @@ changes are T3.
 | --- | --- | --- | --- | --- |
 | Architecture | None | Conform to accepted contracts; a contract change makes it T3 | Name the decision records the design relies on; a materially affecting decision that is not accepted blocks it (the Track B gate in `/carvis-continue`) | T3, plus the safety invariants listed in the contract; owner sign-off on any change to evidence policy |
 | Regression | Narrowest checks and the full baseline | Plus success and failure tests for new behavior | Plus `/carvis-regression` section 5 isolation and authorization negatives; migrations up and down on a scratch store; `scripts/check-runtime-lock.sh` when dependencies change | Plus `/carvis-regression` sections 3 and 4: pipeline preservation and adversarial refusals |
-| Mutation | Each new guard, if any | Each new guard is disabled and the suite must fail | Plus every touched authentication, tenant, secret and limit check | Plus every touched applicability, evidence and refusal condition |
+| Mutation | Each new guard is disabled and the suite must fail | Each new guard is disabled and the suite must fail | Plus every touched authentication, tenant, secret and limit check | Plus every touched applicability, evidence and refusal condition |
 | Security | `/carvis-pr-review` | `/carvis-pr-review` | Plus threat notes in the PR (spoofing, IDOR, replay, secrets, logging) | Plus a provider and production boundary statement |
 | Fresh-context review | Required | Required | Required | Required |
 | Cross-model review (Codex) | Optional | Optional | Required, isolated profile | Required, isolated profile |
@@ -217,9 +217,20 @@ changes are T3.
    must exit 0. `<base>` is the integration commit the task started from, never a task commit; the
    script refuses a task commit, a missing integration ref, and a declared tier below the path
    floor. Its output, the task contract and the list of policy files form the review packet.
-   Reviewers run the integration branch's copy of the script when it has one (`git show
-   origin/main:scripts/review-scope.sh | bash -s -- …`), so a candidate cannot weaken its own
-   review, and they never run candidate scripts without reading them first. Reviewers do not
+   Reviewers run the integration branch's copy of the script when it has one, so a candidate
+   cannot weaken its own review, and they never run candidate scripts without reading them first.
+   Accept a packet only on exit 0 with the last line `REVIEWABLE: <candidate> …`. Never pipe the
+   script into `bash`: a pipeline reports `bash`'s status, so a missing copy looks like success.
+
+   ```bash
+   if git cat-file -e origin/main:scripts/review-scope.sh 2>/dev/null; then
+     git show origin/main:scripts/review-scope.sh > "${TMPDIR:-/tmp}/review-scope.main.sh" \
+       && bash "${TMPDIR:-/tmp}/review-scope.main.sh" --tier <Tn> <base> <candidate>
+   else   # main has no copy yet (the change that adds it): read scripts/review-scope.sh first
+     bash scripts/review-scope.sh --tier <Tn> <base> <candidate>
+   fi
+   ```
+ Reviewers do not
    receive the implementer's summary, reasoning, test conclusions, PR body or earlier verdicts; a
    renewed review receives only the list of earlier findings to check.
 3. **Review.** Reviewers read the pinned revisions (`git show <sha>:<path>`, `git diff`), not a
@@ -237,8 +248,8 @@ changes are T3.
    `origin/main` (never rebase), rerun the checks and renew review. Exit 0 with drift still needs a
    drift check: read the drifted files for contract, import or fixture effects on this task and
    record the result in the PR. A clean update is a merge of `origin/main` (including GitHub's
-   "Update branch") after which `review-scope.sh --since <reviewed candidate>` exits 0 and lists no
-   task-file changes. It keeps its reviews, but needs that drift check, the full baseline and green
+   "Update branch") after which `review-scope.sh --since <reviewed candidate>` exits 0: it lists no
+   task-file changes, and nothing merged in has a T3+ floor (otherwise exit 3, "MATERIAL UPDATE"). It keeps its reviews, but needs that drift check, the full baseline and green
    CI. Any other change to the candidate, including a conflicted or material update, renews review
    under step 4.
 6. **PR head pinning.** The PR records the reviewed candidate SHA. Before asking the owner to

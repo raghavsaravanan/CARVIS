@@ -152,11 +152,12 @@ Reviews inspect a committed candidate, never a working tree.
 - **Revalidate.** `git fetch origin main` and rerun `scripts/review-scope.sh`. Exit 3 means a
   merge and renewed review (step 4, items 2 and 5) before anything is pushed. Push only a head that
   was reviewed, or one that differs from it only by a clean update (`review-scope.sh --since
-  <reviewed>` lists no task-file changes). With drift but exit 0, check the drifted files for
+  <reviewed>` exits 0: no task-file changes and no merged-in T3+ file). With drift but exit 0, check the drifted files for
   contract, import or fixture effects on this task and record the result. Rerun the open roadmap-PR query and stop if another row's PR is
   now open:
   ```bash
-  gh pr list --repo raghavsaravanan/CARVIS --state open --search "M2 in:title" --json number,title
+  gh pr list --repo raghavsaravanan/CARVIS --state open --search "M2 in:title" --limit 100 \
+    --json number,title --jq '.[] | select(.title | test("\\(M2 [AB][0-9]+"; "i")) | "\(.number) \(.title)"'
   ```
 - Push explicitly to `origin` (never `upstream`), then open the PR:
   ```bash
