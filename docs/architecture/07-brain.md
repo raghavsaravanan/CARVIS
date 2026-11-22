@@ -39,9 +39,12 @@ resolved subject, operation, property and position):
 2. **Projection completeness, both directions.** (a) Every *verified and published* authoritative
    record must have a matching serving point (conditions 1 to 3 below); missing or stale is a
    **blocker** for its scope (`unverified`) and is flagged for reconciliation. (b) The same exact
-   filter is enumerated in the serving collection (at most 256 points, as today); any point that is
-   not a verified and published authoritative record is a **blocker** (`unverified`): it means the
-   projection is ahead of PostgreSQL or PostgreSQL was restored older, and reconciliation runs.
+   filter is enumerated in the serving collection (at most 256 points, as today). A point whose
+   PostgreSQL record is withdrawn with a non-blocking reason (`incorrect_extraction`, `superseded`,
+   `rights`) and has a matching tombstone is removed exactly as in the table below. Any other point
+   that is not a verified and published authoritative record (unknown to PostgreSQL, or ahead of or
+   mismatched with it) is a **blocker** (`unverified`): the projection is ahead of PostgreSQL or
+   PostgreSQL was restored older, and reconciliation runs.
 3. **Control witness, after the snapshot.** The read order is fixed: PostgreSQL snapshot, then the
    serving-collection read, then one batched control-collection read for every authoritative
    evidence ID, compared against the captured `state_version` (condition 4 below) and the snapshot
@@ -52,10 +55,16 @@ resolved subject, operation, property and position):
    the table below. A missing required step or dependency is `incomplete`; an unresolved conflict is
    `conflict`.
 5. **Final witness before release.** Immediately before the compiled answer is released for
-   delivery, the control singleton is read again. If `intent_seq` or `committed_seq` changed since
-   step 3, the evaluation reruns once; a second change refuses (`unverified`). Residual (stated): a
-   withdrawal that starts after the final witness, while speech is already playing, is not recalled
-   from audio; the answer's evidence reference then renders "source withdrawn" in history.
+   delivery, one batched control read re-checks the tombstones of **every** authoritative evidence ID
+   in the scope and the control singleton. Because a withdrawal writes its tombstone before it
+   advances `intent_seq`, reading the tombstones themselves catches every withdrawal whose tombstone
+   exists by then, including one between those two writes. Any new or higher tombstone, or a changed
+   `intent_seq` or `committed_seq`, reruns the evaluation once; a second change refuses
+   (`unverified`). **Residual (requires owner acceptance with D-13):** a withdrawal whose tombstone
+   is written after the final witness (from that read until delivery completes, including before
+   speech starts) is not recalled from the delivered answer; the answer's evidence reference then
+   renders "source withdrawn" in history, and the operator runbook treats a withdrawal of
+   safety-critical evidence as an incident to notify affected recent users.
 6. **Discovery and ranking.** Lexical or dense discovery may only propose a subject or operation
    mapping, which re-enters step 1, or order equivalent citations inside the evaluated set. It never
    adds a record, removes one, or chooses the scope (see "Retrieval layers").
@@ -88,12 +97,12 @@ and the final control-singleton read (no per-record round trips).
 | `verified` and published, but missing or stale in the projection | **blocker** for its scope: `unverified`; flagged for reconciliation |
 | `verified` but not yet published (activation pending) | does not authorize; **blocks** only if it conflicts with the answer or is a required step or dependency of it |
 | `pending` or `rejected` | not evidence: neither authorizes nor blocks (review only) |
-| Serving point in scope that is not a verified and published authoritative record | **blocker**: `unverified`; reconciliation |
+| Serving point in scope that is not a verified and published authoritative record, other than a matching non-blocking withdrawal | **blocker**: `unverified`; reconciliation |
 | Withdrawn in PostgreSQL with reason `incorrect_extraction`, `superseded` or `rights`, and a matching tombstone | removed **before** conflict evaluation |
 | Withdrawn with reason `suspect_conflict`, or `quarantined`, or unknown to PostgreSQL | **blocker**: the scope refuses (`conflict` or `unverified`) |
 | Any condition above fails (digest, status, version mismatch, tombstone with no matching PostgreSQL withdrawal) | **blocker** for the evidence's scope: `unverified` refusal; evidence flagged for reconciliation |
 | Scope larger than 256 records, dependency closure included | `clarification` (narrow the component and operation), as today; never truncated |
-| Control singleton changed between step 3 and the final witness, twice | `unverified` refusal |
+| New or higher tombstone, or changed control singleton, at the final witness, twice | `unverified` refusal |
 | PostgreSQL unreadable, control collection unreadable or missing, projection unreadable | `brain_unavailable` refusal (global fail closed); never a guess |
 
 Python verification stays authoritative; this gate adds a check and never relaxes one. Removal
@@ -385,6 +394,10 @@ Each case runs against real PostgreSQL and a Qdrant test instance, asserts the u
 20. **Ranking boundary:** lexical or dense discovery that surfaces a record outside the
     authoritative set ⇒ never served; a proposed mapping re-enters scope enumeration.
 21. **Reverse direction:** a serving point in scope with no verified and published PostgreSQL record
-    (PostgreSQL restored older) ⇒ `unverified`; reconciliation runs.
+    (PostgreSQL restored older) ⇒ `unverified`; reconciliation runs. A point for a committed
+    `superseded` withdrawal with a matching tombstone is removed and the remaining verified record
+    answers (case 12 unchanged).
 22. **Dependency closure:** a prerequisite specification linked from a procedure is withdrawn with a
     blocking reason ⇒ the procedure refuses.
+23. **Witness gap:** a tombstone written after the step-3 control read but before `intent_seq`
+    advances ⇒ the final witness sees the tombstone and reruns; the evidence is blocked.
