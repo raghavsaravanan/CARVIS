@@ -38,13 +38,15 @@ accepted by the owner on 2026-11-22.
 - The serve-time rule enumerates the full applicable scope, with its dependency closure, from one
   consistent PostgreSQL snapshot read first; checks projection completeness in both directions and
   the control witness in a fixed order, with a final witness before release; and evaluates
-  conflicts, completeness and dependencies over that full set through one state-specific decision
-  table and ordered evaluation stages (`pending` and `rejected` records inert; verified but
-  unpublished records never authorize and block only through a material conflict or a required
-  dependency), failing closed on size, missing or unknown projections and unreadable stores. The
+  conflicts, completeness and dependencies over that full set with state-specific treatment
+  (`pending` and `rejected` records inert; verified but unpublished records never authorize and
+  block only through a material conflict or a required dependency) and exactly one outcome per
+  input, failing closed on size, missing or unknown projections and unreadable stores. The
   gate has no bypass for technical answers
   ([`07-brain.md`](../architecture/07-brain.md), "Serve-time rule"). Approved in principle by the
-  owner on 2026-11-22 (roadmap D-13).
+  owner on 2026-11-22 (roadmap D-13) at requirement level; the detailed evidence protocol stays
+  proposed and gated (`07-brain.md`, "Protocol gate"). The existing prototype and retrieval path
+  keep serving unchanged until B7f.
 - The logical knowledge model, operator-only construction pipeline, outcomes and deterministic
   response compiler are as in [`07-brain.md`](../architecture/07-brain.md).
 - Baselines: `BAAI/bge-small-en-v1.5` embeddings and the LlamaParse adapter, behind internal
