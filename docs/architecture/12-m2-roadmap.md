@@ -59,7 +59,7 @@ owner approval.
 | B7a | Canonical knowledge and evidence schema (source documents and revisions with rights basis, fragments, entities and aliases, applicability, specifications, procedures and steps, review decisions, evidence versions, coverage), versioned internal contracts, additive migration with downgrade | B2, D-8 | Migration up/down on a scratch store; constraints reject activation without rights basis; append-only review decisions enforced; RLS and scope tests; nothing served |
 | B7b | Operator ingestion: source registration before transmission, parser adapter (LlamaParse baseline), technical normalization, typed `pending` extraction, terminology resolution | B7a | Normalization golden tests for every form listed in 07 "Knowledge construction"; no external call without a registered permission; extractions are `pending` only; synthetic fixtures cannot reach a real scope |
 | B7c | Review and publication roles, projection loop, tombstones, control collection, reconciliation, quarantine and restore | B7a (coordinate with the B7b importer) | Acceptance cases 1–12 in 07 "Tests" and the restore tests pass on real PostgreSQL and a Qdrant test instance; reviewer ≠ publisher enforced; reconciliation never raises trust |
-| B7d | Query mapping (subject, operation, property, position, conditions, follow-up), authoritative scope enumeration with dependency closure, discovery adapter that only proposes mappings re-entering the exact path | B7a, B7c trust contract; R3 only if a discovery layer beyond the baseline is adopted | Authoritative-scope cases 13–25; structured exact retrieval works without any discovery layer; scope limit refuses with `clarification` |
+| B7d | Query mapping (subject, operation, property, position, conditions, follow-up), authoritative scope enumeration with dependency closure, discovery adapter that only proposes mappings re-entering the exact path | B7a, B7c trust contract; R3 only if a discovery layer beyond the baseline is adopted | Authoritative-scope cases 13–30; structured exact retrieval works without any discovery layer; scope limit refuses with `clarification` |
 | B7e | Unified evidence gate, conflict and completeness evaluation, deterministic response compiler, outcomes, coverage manifest | B7c, B7d | Existing `test_specs_v2.py`/`test_ride_height.py` unchanged and passing; every outcome produced by a test; spoken and displayed text derive from one versioned answer |
 | B7f | Full real-store lifecycle, regression and adversarial acceptance, integration with B5 and B6, activation behind a reviewed switch | B7e, B5, B6 | Mandatory safety suite (zero unsupported numerical, wrong-vehicle, conflicting or incomplete-as-complete answers; 100% traceability); owner approval before switching serving to the new gate |
 
@@ -102,8 +102,9 @@ an Orca contract recording it) is still required ([`../development-workflow.md`]
 ```text
 Task:            M2 B1 — backend foundation: settings, health/readiness, request IDs, PostgreSQL CI,
                  Alembic baseline and roles
-Tier:            T3 (backend/main.py, backend/requirements*, .github/, backend/tests/; review-scope
-                 reports the floor) — design review required, at most 2 implementation rounds
+Tier:            T4 (scripts/review-scope.sh floors backend/main.py at T4; backend/requirements*,
+                 .github/ and backend/tests/ are T3; confirmed by the owner, 2026-11-22) — design
+                 review by both reviewer classes, at most 2 implementation rounds
 Authorization:   <owner, date: commit / push to origin / draft PR; invocation of /carvis-continue B1>
 Depends on:      ADR-0001 accepted (D-1, 2026-11-22); D-2 not required (owner, 2026-11-22)
 Base:            <origin/main SHA at assignment>
@@ -132,12 +133,14 @@ Acceptance:      /healthz returns 200 without dependencies; /readyz returns 503 
 Verification:    narrowest new tests first; scripts/verify.sh; scripts/check-runtime-lock.sh (new
                  dependencies); migrations up/down on a scratch PostgreSQL; mutation check for each
                  new guard (readiness, request-ID validation, settings fail-closed, single head);
+                 /carvis-regression sections 3 and 4 (pipeline preservation, adversarial
+                 refusals); provider and production boundary statement in the PR;
                  labels: mocked/unit, local; no live provider
 Completion:      committed candidate SHA, review-scope exit 0, checks with labels, handoff record
 Stop if:         a stopping condition (development-workflow, "Review budget, findings and stopping");
                  a vendor or issuer decision is needed; any existing route contract would change;
                  a production or provider action is needed; time budget <owner estimate> exceeded twice
-Budget:          T3 review budget; time budget <owner estimate>
+Budget:          T4 review budget; time budget <owner estimate>
 ```
 
 ## Owner decisions
@@ -160,7 +163,7 @@ the decision records are marked `accepted` or the dependent PR starts:
 | D-10 | Contract defaults D-06, D-07, D-09 | Approve | scope |
 | D-11 | Track A may start after this PR merges; A1 first | Approved | — |
 | D-12 | B7 split into B7a–f | Approved by the owner on 2026-11-22, subject to dependency and acceptance review | B7 planning |
-| D-13 | PostgreSQL-first authoritative evidence scope (07 "Serve-time rule"), including acceptance of the stated delivery-window residual (07 step 5) | Approved in principle on 2026-11-22; final T4 evidence-policy sign-off and residual acceptance on the reviewed candidate | ADR-0010, B7c–e |
+| D-13 | PostgreSQL-first authoritative evidence scope (07 "Serve-time rule"), including acceptance of the stated delivery-window residual (07 step 5) | Approved in principle on 2026-11-22; the evidence decision table, evaluation stages and delivery-window residual (for V1) accepted by the owner on 2026-11-22; final T4 sign-off on the reviewed candidate pending | ADR-0010, B7c–e |
 | D-14 | Spoken-output integrity as a mandatory V1 release gate | Approved by the owner on 2026-11-22 | B5, technical voice release, M5 |
 | D-15 | R3 adoption thresholds and latency target | Accept before R3 scoring | R3, B7d discovery adapter |
 | D-16 | Pilot targets with Tyler (V1 contract §6.5) | Confirm with Tyler | M3 evaluation, V1 field test |

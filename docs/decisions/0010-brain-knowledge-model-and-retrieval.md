@@ -38,8 +38,11 @@ accepted by the owner on 2026-11-22.
 - The serve-time rule enumerates the full applicable scope, with its dependency closure, from one
   consistent PostgreSQL snapshot read first; checks projection completeness in both directions and
   the control witness in a fixed order, with a final witness before release; and evaluates
-  conflicts, completeness and dependencies over that full set, failing closed on size, missing or
-  unknown projections and unreadable stores. The gate has no bypass for technical answers
+  conflicts, completeness and dependencies over that full set through one state-specific decision
+  table and ordered evaluation stages (`pending` and `rejected` records inert; verified but
+  unpublished records never authorize and block only through a material conflict or a required
+  dependency), failing closed on size, missing or unknown projections and unreadable stores. The
+  gate has no bypass for technical answers
   ([`07-brain.md`](../architecture/07-brain.md), "Serve-time rule"). Approved in principle by the
   owner on 2026-11-22 (roadmap D-13).
 - The logical knowledge model, operator-only construction pipeline, outcomes and deterministic

@@ -16,8 +16,9 @@ gains Postgres-backed decisions and an authenticated reviewer identity.
 ## Serve-time rule (authoritative scope, then intersection)
 
 Status: ADR-0006 and ADR-0010 are `proposed` (roadmap D-8 open). The PostgreSQL-first scope below
-was approved in principle by the owner on 2026-11-22 (roadmap D-13); final evidence-policy sign-off
-is pending. It replaces the earlier candidate-first description, in which the Qdrant exact-filter
+was approved in principle by the owner on 2026-11-22 (roadmap D-13). On the same date the owner
+approved the evidence decision table and evaluation stages below and accepted the delivery-window
+residual (step 5) for V1; final D-13 sign-off on the reviewed candidate is pending. It replaces the earlier candidate-first description, in which the Qdrant exact-filter
 `scroll` produced the candidates and only those were checked in PostgreSQL. That description no
 longer applies: a record missing from the projection must never hide a conflict, a withdrawal or a
 missing procedure step.
@@ -58,22 +59,24 @@ resolved subject, operation, property and position):
    `decision_seq` (mismatch table). A withdrawal writes its tombstone before its PostgreSQL commit,
    so one that started before the control read is caught by the snapshot or by the tombstone.
 4. **Evaluation over the authoritative set, not the top results.** Conflict, applicability,
-   procedure-completeness and dependency checks run over every authoritative record not removed by
-   the table below. Applicability is exact: an *undetermined* record among them (an attribute it
-   requires is unknown, never a wildcard) yields `clarification`. A missing required step or
-   dependency is `incomplete`; an unresolved conflict is `conflict`. Integrity blockers from steps 2
-   and 3 and the table refuse before any clarification.
+   procedure-completeness and dependency checks run over the full authoritative set, as the
+   evidence decision table and the evaluation stages below define, never over the top results.
+   Applicability is exact: unknown is never a wildcard. Undetermined applicability yields
+   `clarification` only for an authorizing record or for an unpublished record with blocking
+   potential. Integrity and state blockers refuse before any clarification.
 5. **Final witness before release.** Immediately before the compiled answer is released for
    delivery, one batched control read re-checks the tombstones of **every** authoritative evidence ID
    in the scope and the control singleton. Because a withdrawal writes its tombstone before it
    advances `intent_seq`, reading the tombstones themselves catches every withdrawal whose tombstone
    exists by then, including one between those two writes. Any new or higher tombstone, or a changed
    `intent_seq` or `committed_seq`, reruns the evaluation once; a second change refuses
-   (`unverified`). **Residual (requires owner acceptance with D-13):** a withdrawal whose tombstone
-   is written after the final witness (from that read until delivery completes, including before
-   speech starts) is not recalled from the delivered answer; the answer's evidence reference then
-   renders "source withdrawn" in history, and the operator runbook treats a withdrawal of
-   safety-critical evidence as an incident to notify affected recent users.
+   (`unverified`). **Residual (accepted by the owner for V1 on 2026-11-22, D-13):** a withdrawal
+   whose tombstone is written after the final witness (from that read until delivery completes,
+   including before speech starts) is not recalled from the delivered answer; the answer's evidence
+   reference then renders "source withdrawn" in history, and the operator runbook treats a
+   withdrawal of safety-critical evidence as an incident to notify affected recent users. This
+   never permits reuse of the withdrawn evidence in any later answer, which the gate blocks as
+   usual. Delivery-side recall is a future enhancement.
 6. **Discovery and ranking.** Lexical or dense discovery may only propose a subject or operation
    mapping, which re-enters step 1, or order equivalent citations inside the evaluated set. It never
    adds a record, removes one, or chooses the scope (see "Retrieval layers").
@@ -102,25 +105,82 @@ An evidence record may be spoken only if **all** of the following hold, evaluate
 The reads are one PostgreSQL snapshot query, one serving-collection read, one batched control read
 and the final control-singleton read (no per-record round trips).
 
-| Authoritative record status | Outcome |
-| --- | --- |
-| All four conditions hold | continues to the unchanged `evaluate_candidates` |
-| `verified` and published, but missing or stale in the projection | **blocker** for its scope: `unverified`; flagged for reconciliation |
-| `verified` but not yet published (activation pending) | does not authorize; **blocks** only if it conflicts with the answer or is a required step or dependency of it |
-| `pending` or `rejected` in PostgreSQL | not evidence: excluded before applicability evaluation and from the 256 limit; neither authorizes nor blocks (review only) |
-| Serving point in scope that is not a verified and published authoritative record (including a point for a `pending` or `rejected` record), other than a matching non-blocking withdrawal | **blocker**: `unverified` (projection-integrity anomaly); reconciliation |
-| Remaining record (not removed) whose applicability is undetermined | `clarification`, after any integrity blocker |
-| Withdrawn in PostgreSQL with reason `incorrect_extraction`, `superseded` or `rights`, and a matching tombstone | removed **before** conflict evaluation |
-| Withdrawn with reason `suspect_conflict`, or `quarantined`, or unknown to PostgreSQL | **blocker**: the scope refuses (`conflict` or `unverified`) |
-| Any condition above fails (digest, status, version mismatch, tombstone with no matching PostgreSQL withdrawal) | **blocker** for the evidence's scope: `unverified` refusal; evidence flagged for reconciliation |
-| Authoritative scope larger than 256 records (dependency closure included), or more than 256 applicable serving points | `clarification` (narrow the component and operation), as today; never truncated |
-| New or higher tombstone, or changed control singleton, at the final witness, twice | `unverified` refusal |
-| PostgreSQL unreadable, control collection unreadable or missing, projection unreadable | `brain_unavailable` refusal (global fail closed); never a guess |
+### Evidence decision table
 
-Python verification stays authoritative; this gate adds a check and never relaxes one. Removal
-happens before the unchanged conflict, applicability and procedure-completeness logic, so removing
-one step makes a procedure `incomplete`, and removing one of two conflicting records still refuses
-unless the withdrawal reason is non-blocking.
+This table and the evaluation stages after it are the single authoritative statement of serve-time
+evidence decisions; steps 1 to 6 above say when each input is read.
+
+Record state, publication status, applicability and projection integrity are separate checks.
+Applicability against the confirmed snapshot has three values: **applicable** (every attribute the
+record requires is known and matches), **undetermined** (an attribute it requires is unknown; never a
+wildcard) and **inapplicable** (a known attribute excludes it). Step 1 never enumerates an
+inapplicable record, so in any state it neither authorizes, blocks nor interferes with an unrelated
+answer. The applicable and undetermined records form the *potentially applicable scope*, which is
+the scope the table covers. Only applicable records take part positively in conflict and dependency
+evaluation; an undetermined one that could affect the answer yields `clarification` instead.
+
+An *authorizing* record is `verified`, published, and passes all four conditions above. A
+`verified` but unpublished record (activation pending) never authorizes. It has **blocking
+potential** only if (a) it would fail the conflict checks against an authorizing record were it
+applicable (*material conflict*), or (b) it is a required step, prerequisite specification or
+linked warning in an authorizing record's dependency closure that no authorizing record supplies
+(*required dependency*).
+
+| # | Record class (potentially applicable scope) | Counts toward 256 | Can authorize | Can block | Applicability evaluated | Stage: outcome |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `pending` or `rejected` in PostgreSQL | no | no | no | never (excluded in step 1, before applicability) | S1: inert, review only |
+| 2 | Serving point that is not a verified and published authoritative record (unknown to PostgreSQL, ahead of or mismatched with it, or for a `pending` or `rejected` record), other than the serving point of a row-7 record | serving count (step 2b) | no | yes | no | S3: `unverified`, projection-integrity anomaly; reconciliation |
+| 3 | `verified` and published, but missing or stale in the projection (condition 1, 2 or 3 fails) | yes | no | yes | no | S3: `unverified`; flagged for reconciliation |
+| 4 | Blocking tombstone (`state_version` ≥ PostgreSQL's) on a record that is not a row-7 withdrawal; a tombstone with no matching PostgreSQL withdrawal; or a PostgreSQL withdrawal with a non-blocking reason whose matching tombstone is missing | yes | no | yes | no | S3: `unverified`; reconciliation |
+| 5 | `quarantined` | yes | no | yes | no: blocks whether applicable or undetermined | S3: `unverified` |
+| 6 | Withdrawn with reason `suspect_conflict` | yes | no | yes | no: blocks whether applicable or undetermined | S4: `conflict` |
+| 7 | Withdrawn with reason `incorrect_extraction`, `superseded` or `rights`, committed in PostgreSQL, with a matching tombstone | yes | no | no | no (removed before applicability, conflict and completeness evaluation) | S5: removed with its serving point; a removed required step still makes the procedure `incomplete` (S10) |
+| 8 | `verified`, unpublished, no blocking potential | yes | no | no | no: undetermined applicability never yields `clarification` | not evaluated; does not interfere |
+| 9 | `verified`, unpublished, blocking potential, applicable | yes | no | yes | yes | S9: `conflict` (material conflict) or S10: `incomplete` (required dependency) |
+| 10 | `verified`, unpublished, blocking potential, undetermined | yes | no | yes | yes | S8: `clarification`; once the attribute is confirmed, the record is inapplicable (no interference) or row 9 |
+| 11 | Authorizing, applicable | yes | yes | yes | yes | S9 to S11 |
+| 12 | Authorizing, undetermined | yes | only once applicable | yes | yes | S8: `clarification` |
+
+### Evaluation stages
+
+The stages run in this order. A *terminal* stage that applies ends evaluation with its refusal. The
+*transforming* stages (S1, S5, S6) only exclude, remove or classify records and never end evaluation
+by themselves. Global availability and quarantine always come first.
+
+- **S0, terminal:** PostgreSQL, the control collection or the projection unreadable, the control
+  point missing, or a global-quarantine row of the mismatch table ⇒ `brain_unavailable` (global fail
+  closed; never a guess).
+- **S1, transforming:** exclude `pending` and `rejected` records (row 1) during enumeration.
+- **S2, terminal:** more than 256 authoritative records after S1 (dependency closure included), or
+  more than 256 applicable serving points ⇒ `clarification` ("narrow the component and operation"),
+  as today; never truncated. Overflow is checked before the detailed integrity checks, which cannot
+  run over a truncated set; it refuses, so nothing is served, and scheduled reconciliation still
+  runs. S0 still takes precedence.
+- **S3, terminal:** any row 2 to 5 ⇒ `unverified`; reconciliation.
+- **S4, terminal:** any row 6 ⇒ `conflict`.
+- **S5, transforming:** remove row-7 records and their serving points.
+- **S6, transforming:** classify the remaining records as authorizing (rows 11, 12) or unpublished
+  (rows 8 to 10), and determine each unpublished record's blocking potential.
+- **S7, terminal:** no authorizing record remains ⇒ the no-match refusal (`unsupported`; see
+  "Outcomes"). Unpublished records alone never authorize.
+- **S8, terminal:** any row 10 or row 12 ⇒ `clarification`.
+- **S9, terminal:** an unresolved conflict among applicable authorizing records, or between one and
+  a row-9 material conflict ⇒ `conflict`.
+- **S10, terminal:** a missing required step or dependency, including one supplied only by a row-9
+  record or removed in S5 ⇒ `incomplete`. A procedure is never delivered partially.
+- **S11:** compile the answer from the applicable authorizing records.
+- **S12, terminal on a second change:** the final witness (step 5). A new or higher tombstone, or a
+  changed control singleton, reruns evaluation once from S0; a second change ⇒ `unverified`.
+
+Python verification stays authoritative; this gate adds checks and never relaxes one. The existing
+`evaluate_candidates` safety checks (schema and evidence validation, variant clarification, revision
+and value conflict, procedure grouping and ordered completeness) remain mandatory, and S7 to S10
+keep their relative order. The current implementation does not implement this architecture: it sees
+only projection candidates and has no notion of publication, unpublished blocking potential or the
+dependency closure. B7e extends it, or the gate around it, to these stages without relaxing any
+existing check. Removal happens before conflict, applicability and procedure-completeness
+evaluation, so removing one step makes a procedure `incomplete`, and removing one of two conflicting
+records still refuses unless the withdrawal reason is non-blocking.
 
 ## Activation (two-phase, idempotent)
 
@@ -311,7 +371,11 @@ evidence. Adopting layer 2, layer 3 or any rank fusion requires the bounded R3 c
 ## Outcomes and response compiler
 
 Outcomes: `verified`, `clarification`, `unsupported`, `incomplete`, `conflict`, `unverified`,
-`brain_unavailable`. A partial answer is allowed only for separable parts of a multipart question,
+`brain_unavailable`. `unsupported` is the canonical name for the no-match refusal (S7), which the
+legacy path reports today as code `unavailable` (`SpecificationRefusal` default). The legacy code
+and its API behavior stay unchanged until B7f's reviewed switch; B7e defines the versioned mapping
+from `unavailable` to `unsupported`. Where a test below expects `unavailable` (conflict handling),
+it means this no-match refusal. A partial answer is allowed only for separable parts of a multipart question,
 each independently verified and labeled as covering only that part. A procedure is never delivered
 partially: a missing required step or dependency makes it `incomplete`, which refuses (CAR-043).
 Ambiguity is never resolved by guessing. A vehicle switch invalidates derived facts and pending
@@ -393,8 +457,9 @@ Each case runs against real PostgreSQL and a Qdrant test instance, asserts the u
     reconciliation.
 14. **Conflict outside the ranked results:** a conflicting verified record ranked below any top-k
     cut-off still blocks (`conflict`); ranking cannot remove it.
-15. **Missing step projection:** a required procedure step is verified in PostgreSQL but absent
-    from the projection ⇒ no complete procedure is spoken (`unverified` or `incomplete`).
+15. **Missing step projection:** a required procedure step is verified and published in PostgreSQL
+    but absent from the projection ⇒ `unverified` (row 3); no complete procedure is spoken. An
+    unpublished step is case 28.
 16. **Scope limit:** 257 applicable records, dependency closure included ⇒ `clarification`; no
     truncated answer.
 17. **Withdrawal race:** a withdrawal's tombstone is written after the PostgreSQL snapshot but
@@ -402,11 +467,10 @@ Each case runs against real PostgreSQL and a Qdrant test instance, asserts the u
     and the final witness ⇒ rerun, and a second change ⇒ `unverified`.
 18. **Pending is inert in PostgreSQL:** a `pending` or `rejected` record neither authorizes an answer
     nor blocks a verified one, is not evaluated for applicability and does not count toward the
-    scope limit; a verified but unpublished record blocks only when it conflicts or is a required
-    step. A serving point for a `pending` or `rejected` record is a projection-integrity anomaly:
-    `unverified` and reconciliation.
-19. **Unknown applicability:** a record requiring an attribute the snapshot lacks ⇒
-    `clarification`, never a wildcard match.
+    scope limit. A serving point for a `pending` or `rejected` record is a projection-integrity
+    anomaly: `unverified` and reconciliation. Verified but unpublished records are cases 26 to 28.
+19. **Unknown applicability:** a verified and published record requiring an attribute the snapshot
+    lacks ⇒ `clarification`, never a wildcard match.
 20. **Ranking boundary:** lexical or dense discovery that surfaces a record outside the
     authoritative set ⇒ never served; a proposed mapping re-enters scope enumeration.
 21. **Reverse direction:** a serving point in scope with no verified and published PostgreSQL record
@@ -423,3 +487,22 @@ Each case runs against real PostgreSQL and a Qdrant test instance, asserts the u
     `rejected` record that require an attribute the snapshot lacks ⇒ the verified answer is
     delivered: no `clarification`, no scope-limit refusal. A `superseded` withdrawal with a matching
     tombstone and an undetermined attribute is removed and does not trigger `clarification`.
+26. **Non-interfering unpublished evidence:** with authorizing answer A applicable, a verified but
+    unpublished record in scope that requires an attribute the snapshot lacks, has no material
+    conflict with A and is not a required dependency of it ⇒ A is delivered: no `clarification`, no
+    `conflict`. With no authorizing record at all, unpublished records alone ⇒ `unsupported` (S7).
+27. **Conflicting unpublished evidence:** with authorizing answer A applicable, a verified but
+    unpublished record B whose value conflicts with A and whose applicability is undetermined ⇒
+    `clarification`. After the attribute is confirmed: B inapplicable ⇒ A is delivered; B
+    applicable ⇒ `conflict`. An unpublished conflicting record that is applicable from the start ⇒
+    `conflict`.
+28. **Required unpublished dependency:** a published procedure whose required step, prerequisite
+    specification or linked warning is supplied only by a verified but unpublished record ⇒
+    `incomplete` if that record is applicable, `clarification` if its applicability is
+    undetermined; never a partial procedure.
+29. **Blocking states within the potentially applicable scope:** a `suspect_conflict` withdrawal or
+    a `quarantined` record whose applicability is undetermined ⇒ `conflict` or `unverified`
+    respectively, not `clarification`. The same records made inapplicable by a known attribute are
+    never enumerated, and an unrelated verified answer is delivered.
+30. **Missing withdrawal tombstone:** a committed `superseded` withdrawal in PostgreSQL with no
+    matching tombstone ⇒ `unverified` (row 4); reconciliation runs.

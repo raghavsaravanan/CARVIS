@@ -25,9 +25,9 @@ means today's legacy path behaves this way with existing tests, not that the V1 
 | CAR-050–052 history | P10, P11 | conversations, turns | list and detail | cursor and scope tests | B6 | Not started |
 | CAR-053/054 feedback | P13 | feedback | `/feedback` | tenant and idempotency tests | B6 | Not started |
 | CAR-041 spoken output preserves approved facts, units, qualifications, refusals | P07, P08 | answers, evidence_references | webhook tool, controlled delivery path or blocked technical voice | staging real-speech checks (D-9, live call needs approval), physical-device checks | B5, B7e, M5 | Not started (release gate D-14) |
-| CAR-043 selected complete reviewed procedures | P08 | procedures, steps | webhook tool | 07 cases 15, 22; incomplete refusal tests | B7a–e | Prototype (procedure completeness in legacy path) |
+| CAR-043 selected complete reviewed procedures | P08 | procedures, steps | webhook tool | 07 cases 15, 22, 28; incomplete refusal tests | B7a–e | Prototype (procedure completeness in legacy path) |
 | CAR-042 known-issue, TSB and recall discovery (conditional V1 enhancement) | P08 | manufacturer communications | webhook tool | rights-cleared or labeled synthetic cases (R3) | B7a–e if included (D-18) | Not started; conditional |
-| Brain lifecycle (rights, review, projection, withdrawal, restore) | none | evidence_*, review decisions, control collection | internal CLI/API | 07 cases 1–20 | B7a–c, B7f | Not started |
+| Brain lifecycle (rights, review, projection, withdrawal, restore) | none | evidence_*, review decisions, control collection | internal CLI/API | 07 cases 1–30 | B7a–c, B7f | Not started |
 | CAR-060/061 vision, glasses preserved | none | none | `/v1/vision/query` | existing vision tests | B9 | Prototype (preserved) |
 
 Security blockers from the historical audit map to: sessions and tokens (B2, B4, B5), unauthenticated
