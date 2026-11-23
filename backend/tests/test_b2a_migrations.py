@@ -387,3 +387,15 @@ def test_range_type_constructors_owned_by_the_bootstrap_superuser_stop_the_migra
         assert full_catalog(scratch.db_admin) == before
     finally:
         _sql(scratch.db_admin, "DROP TYPE carvis.b2a_r")
+
+
+def test_domain_over_an_array_loses_public_usage(scratch, migrator):
+    """Round-3 review N1: a domain over an array has category A but is not an array type."""
+    ok(run_alembic(migrator, "upgrade", B1_HEAD))
+    _sql(scratch.db_admin, "SET ROLE carvis_owner", "CREATE DOMAIN carvis.b2a_ints AS int[]", "RESET ROLE")
+    try:
+        ok(run_alembic(migrator, "upgrade", HEAD))
+        assert _sql(scratch.db_admin, "SELECT has_type_privilege('public', 'carvis.b2a_ints'::regtype, 'USAGE')",
+                    fetch=True) == [(False,)]
+    finally:
+        _sql(scratch.db_admin, "DROP DOMAIN carvis.b2a_ints")

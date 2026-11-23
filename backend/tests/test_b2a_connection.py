@@ -375,3 +375,73 @@ def test_readiness_reports_mismatched_hostaddr_as_misconfigured():
     url = "postgresql://u:p@/carvis?host=a.test,b.test&hostaddr=127.0.0.1&port=1,2"
     probe = ReadinessProbe("head", postgres_fetch(url, Resolver(), 1.0), 1.0)
     assert asyncio.run(probe.check()).reason == DATABASE_MISCONFIGURED
+
+
+# --- Round-3 review: every interpreted libpq parameter honors its environment variable --------------
+
+class _NoLookups:
+    lookups: list = []
+
+    async def resolve(self, host, port):  # pragma: no cover - failing path
+        raise AssertionError("an explicit PGHOSTADDR needs no lookup")
+
+
+def test_pghostaddr_environment_is_used_without_lookup(monkeypatch):
+    monkeypatch.setenv("PGHOSTADDR", "127.0.0.1")
+    conninfo = "host=unresolvable.invalid port=5432 dbname=carvis"
+    assert asyncio.run(connection_attempts(conninfo, _NoLookups())) == [conninfo]
+
+
+def test_pgloadbalancehosts_environment_shuffles_hosts(monkeypatch):
+    import random
+
+    order: list[str] = []
+
+    class Resolver:
+        async def resolve(self, host, port):
+            order.append(host)
+            return ["192.0.2.10"]
+
+    monkeypatch.setenv("PGLOADBALANCEHOSTS", "random")
+    monkeypatch.setattr(random, "shuffle", lambda items: items.reverse())
+    asyncio.run(connection_attempts("host=a.test,b.test,c.test port=5432", Resolver()))
+    assert order == ["c.test", "b.test", "a.test"]
+
+
+def test_pghostaddr_readiness_and_engine_on_real_postgres(pg_url, monkeypatch):
+    """libpq connects to PGHOSTADDR and keeps the (unresolvable) host name; CARVIS must do the same."""
+    from sqlalchemy import text
+    from sqlalchemy.engine import make_url
+
+    from db.engine import create_async_app_engine
+    from db.readiness import READY, BoundedResolver
+
+    admin = make_url(pg_url)
+    monkeypatch.setenv("PGHOSTADDR", admin.host)
+    url = admin.set(host="unresolvable.invalid", query={**admin.query, "sslmode": "disable"})
+    conninfo = url.set(drivername="postgresql").render_as_string(hide_password=False)
+
+    class Resolver(BoundedResolver):
+        async def resolve(self, host, port):  # pragma: no cover - failing path
+            raise AssertionError("no lookup")
+
+    # Readiness reaches the server through PGHOSTADDR (the version table may not exist: pending is fine,
+    # unreachable or misconfigured is not).
+    probe = ReadinessProbe("head", postgres_fetch(conninfo, Resolver(), 2.0, enforce_login=False), 2.0)
+    assert asyncio.run(probe.check()).reason in (READY, "migrations_pending")
+
+    _, database_url = normalize_database_url(url.render_as_string(hide_password=False))
+    engine, resolver = create_async_app_engine(database_url)
+
+    async def scenario():
+        try:
+            async with engine.connect() as connection:
+                return (await connection.execute(text("SELECT 1"))).scalar()
+        finally:
+            await engine.dispose()
+
+    try:
+        assert asyncio.run(scenario()) == 1
+    finally:
+        resolver.shutdown()
+    assert resolver.lookups_started == 0

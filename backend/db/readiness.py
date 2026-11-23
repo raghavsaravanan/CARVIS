@@ -36,7 +36,8 @@ Role switch and runtime-login self-check (M2 B2a; doc 04 "Roles"):
   ``session_user`` with the same query as ``python -m db.runtime_login check``: a superuser,
   ``BYPASSRLS``, object-owning or otherwise unsafe login is ``database_misconfigured``.
 - Connection settings that break the explicit-connection rules (:mod:`db.conninfo`: service files,
-  host/port count) are ``database_misconfigured`` instead of being tried with a guessed port.
+  host, ``hostaddr`` and port counts) are ``database_misconfigured`` instead of being tried with a
+  guessed port. Every libpq parameter the probe interprets also honors its environment variable.
 
 Outcomes are fixed codes. Exception messages, which can name hosts or users, are never logged or
 returned; only the exception type name is logged.
@@ -53,7 +54,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable
 
-from db.conninfo import ConnectionConfigError, host_port_entries, reject_service_files
+from db.conninfo import ConnectionConfigError, host_port_entries, libpq_setting, reject_service_files
 from db.roles import APP_ROLE, METADATA_SCHEMA, VERSION_TABLE
 from log_config import log_event, register_values
 from settings import Settings
@@ -180,11 +181,13 @@ async def host_attempts(conninfo: str, resolver: BoundedResolver) -> AsyncIterat
     # B2a (N2/N3): never guess a port or let libpq read a service file the resolver cannot see.
     reject_service_files(params)
     entries = host_port_entries(params)
-    hosts_value = str(params.get("host") or os.getenv("PGHOST") or "")
-    if params.get("hostaddr") or not hosts_value:
+    hosts_value = libpq_setting(params, "host")
+    # Explicit addresses (parameter or PGHOSTADDR) need no lookup: libpq connects to them itself and
+    # keeps the host names for TLS, so the connection string is passed through unchanged.
+    if libpq_setting(params, "hostaddr") or not hosts_value:
         yield [conninfo], 0
         return
-    shuffle = str(params.get("load_balance_hosts") or "") == "random"
+    shuffle = libpq_setting(params, "load_balance_hosts") == "random"
     if shuffle:
         random.shuffle(entries)
     yielded = False

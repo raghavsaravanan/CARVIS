@@ -16,7 +16,8 @@ No setting value is ever logged or placed in an exception: errors name the setti
 URL is held in :class:`DatabaseUrl`, whose ``repr`` and ``str`` are redacted.
 
 M2 B2a adds two connection rules (:mod:`db.conninfo`): libpq service files are refused, and the
-effective host and port counts (URL, else ``PGHOST``/``PGPORT``) must follow libpq's rule. A URL that
+effective host, ``hostaddr`` and port counts (URL, else ``PGHOST``/``PGHOSTADDR``/``PGPORT``) must
+follow libpq's rule. A URL that
 breaks either rule is ``invalid``. It also adds the optional, transitional issuer settings
 (``CARVIS_AUTH_ISSUER``, ``CARVIS_AUTH_AUDIENCE``, ``CARVIS_AUTH_JWKS_URL``; ADR-0002): all unset means
 auth is unconfigured; a partial set, or a JWKS URL that is not ``https://``, refuses boot outside

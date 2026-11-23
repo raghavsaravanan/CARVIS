@@ -25,8 +25,9 @@ Upgrade, in this revision's single transaction (any failure rolls everything bac
 4. The same default revoke for ``carvis_provisioner``, run as that role through a temporary
    ``WITH INHERIT FALSE, SET TRUE`` grant to a non-superuser login, revoked before the step ends.
 5. Everything on the ``carvis`` and ``carvis_migrations`` schemas and their objects (tables,
-   sequences, routines, and every type that accepts privileges: enums, domains, composites, ranges,
-   multiranges and tables' row types; array types take their element type's) is revoked from
+   sequences, routines, and every type that accepts privileges: enums, domains (including domains
+   over arrays), composites, ranges, multiranges and tables' row types; true array types take their
+   element type's) is revoked from
    ``PUBLIC`` and from the issuer roles that exist, each revoke issued as the object owner.
 6. Post-conditions, checked before commit: no ``PUBLIC`` or issuer-role entry remains in any ACL on
    those schemas, their relations, columns, routines and types (a routine or type with a NULL ACL
@@ -205,12 +206,15 @@ def _with_temporary_set(role: str, superuser: bool) -> Iterator[None]:
         _exec(f"REVOKE {role} FROM CURRENT_USER GRANTED BY CURRENT_USER")
 
 
-# Types that accept privileges: everything except array types (PostgreSQL derives an array type's
-# privileges from its element type and refuses GRANT/REVOKE on it).
-PRIVILEGED_TYPES = """
+# Types that accept privileges: everything except true array types, which PostgreSQL identifies by an
+# element type and the array subscript handler (it derives their privileges from the element type and
+# refuses GRANT/REVOKE on them). A domain over an array is not an array type and is included.
+NOT_ARRAY = ("NOT (t.typelem <> 0 AND t.typsubscript = "
+             "'pg_catalog.array_subscript_handler'::pg_catalog.regproc)")
+PRIVILEGED_TYPES = f"""
     SELECT pg_catalog.format('%I.%I', n.nspname, t.typname) AS name
     FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-    WHERE n.nspname = :schema AND t.typcategory <> 'A' ORDER BY 1"""
+    WHERE n.nspname = :schema AND {NOT_ARRAY} ORDER BY 1"""
 
 
 def _revoke_types(schema: str, grantee: str) -> None:
@@ -238,7 +242,7 @@ def _leftover_grants() -> int:
     A routine or (non-array) type with a NULL ACL counts too: NULL means the defaults, which include
     PUBLIC EXECUTE or USAGE.
     """
-    return _scalar("""
+    return _scalar(f"""
         WITH grantees AS (SELECT 0::oid AS oid UNION ALL
                           SELECT oid FROM pg_catalog.pg_roles WHERE rolname = ANY(:issuers)),
              spaces AS (SELECT oid, nspacl FROM pg_catalog.pg_namespace WHERE nspname IN (:schema, :meta))
@@ -257,7 +261,7 @@ def _leftover_grants() -> int:
         + (SELECT count(*) FROM pg_catalog.pg_type t, pg_catalog.aclexplode(t.typacl) a
            WHERE t.typnamespace IN (SELECT oid FROM spaces) AND a.grantee IN (SELECT oid FROM grantees))
         + (SELECT count(*) FROM pg_catalog.pg_type t
-           WHERE t.typnamespace IN (SELECT oid FROM spaces) AND t.typcategory <> 'A' AND t.typacl IS NULL)""",
+           WHERE t.typnamespace IN (SELECT oid FROM spaces) AND {NOT_ARRAY} AND t.typacl IS NULL)""",
                    issuers=list(ISSUER_ROLES), schema=SCHEMA, meta=METADATA_SCHEMA)
 
 

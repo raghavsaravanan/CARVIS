@@ -20,6 +20,11 @@ from __future__ import annotations
 import os
 from typing import Mapping
 
+# libpq reads each of these connection parameters from its environment variable when the parameter
+# is absent. Every CARVIS code path that interprets one of them must do the same (B2a round 3).
+LIBPQ_ENVIRONMENT = {"host": "PGHOST", "hostaddr": "PGHOSTADDR", "port": "PGPORT",
+                     "load_balance_hosts": "PGLOADBALANCEHOSTS"}
+
 SERVICE_PARAMETERS = ("service", "servicefile")
 SERVICE_VARIABLES = ("PGSERVICE", "PGSERVICEFILE")
 DEFAULT_PORT = "5432"
@@ -27,6 +32,12 @@ DEFAULT_PORT = "5432"
 
 class ConnectionConfigError(ValueError):
     """The connection settings are not explicit enough for CARVIS. Names the rule, never values."""
+
+
+def libpq_setting(params: Mapping[str, object], name: str, environ: Mapping[str, str] | None = None) -> str:
+    """The effective value of a libpq parameter: the parameter, else its environment variable."""
+    environ = os.environ if environ is None else environ
+    return str(params.get(name) or environ.get(LIBPQ_ENVIRONMENT[name]) or "")
 
 
 def reject_service_files(params: Mapping[str, object], environ: Mapping[str, str] | None = None) -> None:
@@ -42,10 +53,9 @@ def host_port_entries(params: Mapping[str, object], environ: Mapping[str, str] |
 
     An empty host means libpq's default (a Unix socket); an empty port means the default port.
     """
-    environ = os.environ if environ is None else environ
-    hosts_value = str(params.get("host") or environ.get("PGHOST") or "")
-    addresses_value = str(params.get("hostaddr") or environ.get("PGHOSTADDR") or "")
-    ports_value = str(params.get("port") or environ.get("PGPORT") or "")
+    hosts_value = libpq_setting(params, "host", environ)
+    addresses_value = libpq_setting(params, "hostaddr", environ)
+    ports_value = libpq_setting(params, "port", environ)
     hosts = hosts_value.split(",")
     if addresses_value:
         addresses = addresses_value.split(",")
