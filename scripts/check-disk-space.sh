@@ -9,6 +9,9 @@
 # Exit 0: at least N GiB are free. Exit 1: less than N GiB are free (stop and ask the owner to free
 # space). Exit 2: usage error, or free space could not be read.
 #
+# N is a decimal whole number of at most 6 digits (leading zeros are decimal, never octal), so the
+# comparison can neither misparse nor overflow; anything else is a usage error.
+#
 # Read-only by design: it never deletes, prunes or cleans anything. Freeing space is the owner's
 # decision.
 set -euo pipefail
@@ -36,12 +39,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "${min}" =~ ^[0-9]+$ ]] || { echo "check-disk-space: the minimum must be a whole number of GiB" >&2; exit 2; }
+[[ "${min}" =~ ^[0-9]{1,6}$ ]] || { echo "check-disk-space: the minimum must be a whole number of GiB (at most 6 digits)" >&2; exit 2; }
+min=$((10#${min}))  # decimal, whatever leading zeros it has
 [[ -e "${path}" ]] || { echo "check-disk-space: path does not exist" >&2; exit 2; }
 
 # POSIX output (-P) in 1024-byte blocks (-k): the fourth field of the second line is "Available".
-available_kb="$(df -Pk "${path}" 2>/dev/null | awk 'NR == 2 { print $4 }')"
-[[ "${available_kb}" =~ ^[0-9]+$ ]] || { echo "check-disk-space: could not read free space" >&2; exit 2; }
+# A failing df, or output without a plain number there, means free space is unknown: exit 2, never
+# 1 (which reports a measured shortage) and never 0.
+if ! df_output="$(df -Pk "${path}" 2>/dev/null)"; then
+  echo "check-disk-space: could not read free space (df failed)" >&2
+  exit 2
+fi
+available_kb="$(awk 'NR == 2 { print $4 }' <<<"${df_output}")"
+[[ "${available_kb}" =~ ^[0-9]{1,18}$ ]] || { echo "check-disk-space: could not read free space" >&2; exit 2; }
+available_kb=$((10#${available_kb}))
 
 available_gib=$((available_kb / 1024 / 1024))
 if (( available_kb < min * 1024 * 1024 )); then

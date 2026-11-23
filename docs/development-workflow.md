@@ -343,8 +343,9 @@ Autonomous iteration is bounded; the budget never waives a mandatory review or a
   without seeing the other's verdict. A finding is **BLOCKING** when its evidence shows any of:
   1. *A reachable correctness defect*: a wrong result, crash, hang, data loss or misclassified
      outcome on a path reachable in the change as it will ship, under a supported configuration. A
-     configuration is supported when the specification matrix marks it handled, or when the
-     governing specification defines it and the change claims to accept it.
+     configuration is supported when the specification matrix marks it handled, when the governing
+     specification defines it and the change claims to accept it, or when the change accepts it
+     without refusing it, whatever the matrix says.
   2. *A security invariant violation*: a security, privacy, tenancy, evidence-integrity or
      automotive-safety guarantee broken. This includes authority taken from caller input, a
      privilege beyond the approved role model, exposure of secrets or personal data, and a missing
@@ -361,7 +362,11 @@ Autonomous iteration is bounded; the budget never waives a mandatory review or a
   A finding is **NONBLOCKING** when it is a design preference, refactoring or style point; hardening
   beyond the approved requirements; a defect that needs a privileged out-of-band change already
   refused by an existing gate (it fails closed); a test-only effect; a configuration the matrix
-  marks refused or out of scope; or documentation imprecision with no security or contract effect.
+  marks refused or out of scope *and that the code refuses or leaves untouched as the matrix
+  describes*; or documentation imprecision with no security or contract effect. The matrix is
+  written by the implementer, so it never shields behavior: code that departs from its
+  disposition is judged under kinds 1 to 4, and any reviewer may challenge a disposition itself,
+  at the design review or later, as a finding under this rubric.
   A finding any required reviewer classifies BLOCKING with the required evidence is treated as
   blocking. When reviewers classify the same issue differently, record both classifications; if
   they disagree on what the rule requires rather than on evidence, that is an unresolved
