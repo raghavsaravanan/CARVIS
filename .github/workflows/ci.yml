@@ -19,6 +19,24 @@ jobs:
     name: Backend and hygiene
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # Throwaway PostgreSQL for migration and readiness tests (M2 B1). No provider, no credentials:
+    # the password exists only inside this job.
+    services:
+      postgres:
+        image: postgres:16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
+        env:
+          POSTGRES_PASSWORD: ci-scratch-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      CARVIS_TEST_POSTGRES_URL: postgresql://postgres:ci-scratch-only@127.0.0.1:5432/postgres
+      # Real-PostgreSQL tests fail instead of skipping when the server is missing.
+      CARVIS_REQUIRE_POSTGRES: "1"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -42,6 +60,34 @@ jobs:
 
       - name: Compile backend
         run: python -m compileall -q backend
+
+      - name: Alembic history is linear (single head)
+        working-directory: backend
+        run: python -m db.history
+
+      - name: Migrations up, down and up as a non-superuser CREATEROLE login
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          admin="${CARVIS_TEST_POSTGRES_URL}"
+          psql "${admin}" -v ON_ERROR_STOP=1 -qc "CREATE ROLE ci_migrator LOGIN CREATEROLE PASSWORD 'ci-scratch-only'"
+          psql "${admin}" -v ON_ERROR_STOP=1 -qc "CREATE DATABASE carvis_ci OWNER ci_migrator"
+          export CARVIS_MIGRATION_DATABASE_URL="postgresql://ci_migrator:ci-scratch-only@127.0.0.1:5432/carvis_ci"
+          db="postgresql://postgres:ci-scratch-only@127.0.0.1:5432/carvis_ci"
+          # pg_dump 16.10+ writes a random \restrict key per dump; drop those lines before comparing.
+          dump() { pg_dump --schema-only "${db}" | grep -v -E '^\\(un)?restrict '; }
+          python -m alembic -c migrations/alembic.ini upgrade head
+          dump > /tmp/schema-first.sql
+          psql "${admin}" -At -c "SELECT rolname, rolcanlogin, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'carvis%' ORDER BY 1" > /tmp/roles-first.txt
+          python -m alembic -c migrations/alembic.ini downgrade base
+          test -z "$(psql "${admin}" -At -c "SELECT rolname FROM pg_roles WHERE rolname LIKE 'carvis%'")"
+          python -m alembic -c migrations/alembic.ini upgrade head
+          dump > /tmp/schema-second.sql
+          psql "${admin}" -At -c "SELECT rolname, rolcanlogin, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'carvis%' ORDER BY 1" > /tmp/roles-second.txt
+          diff -u /tmp/schema-first.sql /tmp/schema-second.sql
+          diff -u /tmp/roles-first.txt /tmp/roles-second.txt
+          test "$(python -m alembic -c migrations/alembic.ini heads | wc -l)" -eq 1
 
       - name: Check tracked secret and local-data paths
         shell: bash
