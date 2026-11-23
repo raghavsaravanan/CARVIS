@@ -210,12 +210,57 @@ changes are T3.
 | Cross-model review (Codex) | Optional | Optional | Required, isolated profile | Required, isolated profile |
 | Renewed review after a correction | Delta | Delta | Full | Full |
 | Design review before implementation | Not required | Not required | Required, both reviewer classes | Required, both reviewer classes |
+| Specification coverage matrix | Not required | Not required | Required when the package implements or depends on an external standard or provider behavior ("Churn controls") | As T3 |
+| Adversarial pre-review | Recommended | Recommended | Required before the first independent review ("Churn controls") | Required, as T3 |
 | Autonomous review budget | 1 round | 2 rounds | 2 implementation rounds | 2 implementation rounds |
+
+### Churn controls (T3 and T4)
+
+These controls move discoveries earlier, so independent review confirms work instead of finding its
+gaps. They add to the review protocol below; none replaces an independent review, a mutation check,
+CI or an owner decision.
+
+**Specification coverage matrix.** A T3 or T4 package that implements or depends on an external
+standard or provider behavior (for example libpq connection parameters and environment variables,
+PostgreSQL object kinds and privilege rules, JWT and OIDC claims, an HTTP API's error states)
+enumerates that behavior in its design note before implementation. Work from the official
+specification for the version in use and cite it. Cover parameters and their environment-variable or
+default fallbacks, combinations and counts, object or claim kinds, error and unsupported states, and
+known provider quirks. One row per case:
+
+| Case (cited) | Disposition | Verification |
+| --- | --- | --- |
+| A behavior, input combination or edge condition from the specification | Handled, explicitly refused (with the refusal behavior), or out of scope (with the reason and owning package) | The test or check that proves it, with its label; `[?]` when provider behavior cannot be verified yet, with the gate that will verify it |
+
+Design reviewers examine the matrix: missing cases, wrong dispositions and missing verification are
+design findings. Implementation reviewers receive the reviewed design note, including the matrix,
+as part of the packet (it is a design artifact, not the implementer's conclusions) and report code
+that disagrees with it.
+
+**Adversarial pre-review.** After committing the first candidate and before the packet goes to any
+independent reviewer, the implementer reviews that candidate adversarially:
+
+- the full diff against the specification matrix;
+- the security invariants of the task contract and the decision records it names;
+- the severity rubric below;
+- for every rule the change implements, the other paths that implement or depend on the same rule.
+
+Defects found are fixed as new commits before the first independent review. The pre-review is
+recorded in the workflow record (what was checked, what was fixed). It is not an independent review,
+never counts as an approval or a round, and its conclusions are not given to reviewers.
+
+**Package size.** Aim for cohesive packages of roughly 600–900 changed lines where practical. This
+is guidance, not an enforced maximum: when a roadmap row looks larger, propose a split to the owner
+before implementation. Never split a security invariant across packages to meet the size target:
+a role model, a privilege boundary or an authentication rule and its enforcement land together.
 
 ### Review protocol
 
 1. **Candidate.** Implement, run the narrow checks, and commit. Corrections are new commits, never
-   amends, so each delta stays reviewable.
+   amends, so each delta stays reviewable. Before substantial local testing (the full baseline,
+   real-database suites, mutation runs) run the disk-space preflight ("Local run hygiene"). For T3
+   and T4, complete the adversarial pre-review ("Churn controls") before step 2 sends the packet to
+   any reviewer.
 2. **Packet.** `git fetch origin main`, then `scripts/review-scope.sh --tier <Tn> <base> <candidate>`
    must exit 0. `<base>` is the integration commit the task started from, never a task commit; the
    script refuses a task commit, a missing integration ref, and a declared tier below the path
@@ -238,14 +283,18 @@ changes are T3.
    ```
 
    Use `${rc}` as the packet's exit status. Reviewers do not receive the implementer's
-   summary, reasoning, test conclusions, PR body or earlier verdicts; a renewed review receives
-   only the list of earlier findings to check.
+   summary, reasoning, test conclusions, pre-review, PR body or earlier verdicts; a renewed review
+   receives only the list of earlier findings to check. The one addition for T3 and T4 is the
+   reviewed design note with its specification matrix ("Churn controls"), a design artifact that
+   every reviewer class receives alike.
 3. **Review.** Reviewers read the pinned revisions (`git show <sha>:<path>`, `git diff`), not a
    working tree that may change, and also read the callers, contracts and scoped policies that the
    change affects. They report on every listed file, with `file:line`, a failure scenario,
-   VERIFIED or INFERRED, and the candidate SHA they reviewed. CI is the independent test
-   evidence; a reviewer that can run checks read-only (see the isolated Codex profile) may add its
-   own.
+   VERIFIED or INFERRED, and the candidate SHA they reviewed. Every reviewer classifies findings
+   with the severity rubric ("Review budget, findings and stopping"), and for T3 and T4 checks the
+   implementation against the reviewed specification matrix when the package has one. CI is the
+   independent test evidence; a reviewer that can run checks read-only (see the isolated Codex
+   profile) may add its own.
 4. **Correction.** A fix makes a new candidate: rerun the affected checks and the full baseline,
    then renew review. A delta review uses `review-scope.sh --since <previous candidate>`, which
    lists every file the correction touched, including files reverted to the base (if it reports
@@ -282,19 +331,59 @@ Autonomous iteration is bounded; the budget never waives a mandatory review or a
   implementation; it is outside the implementation budget, but the time budget and stopping
   conditions apply to it, and needing a second design round is a stop.
 - **Renewal.** The tier's renewal requirement is unchanged: delta for T1 and T2, always full for T3
-  and T4. Targeted verification of a correction may supplement a required renewal, never replace
-  it.
+  and T4. Focused verification of a correction (rerunning the affected tests, a reviewer's targeted
+  check of the corrected paths) may precede a required renewal but never replaces it. A full renewal
+  covers the whole effective-base-to-candidate diff, and a new blocking finding in code the
+  correction did not touch is as eligible as any other finding of that round.
 - **Findings.** Every finding states reproducible evidence (a command and its output, or
-  `path:line` with a failure scenario), severity, affected scope, the requirement violated, and
-  BLOCKING or NONBLOCKING. A finding is blocking only if it shows a concrete violation of
-  correctness, security, privacy, tenancy, evidence integrity, automotive safety, or an approved
-  requirement; weakening or bypassing a mandatory gate or tier, or making a mandatory step
-  unusable, violates an approved requirement. Nonblocking findings are recorded in the PR as
-  deferred and not implemented within the task.
+  `path:line` with a failure scenario), severity (critical, high, medium or low), affected scope,
+  the requirement violated, and BLOCKING or NONBLOCKING under the severity rubric below.
+  Nonblocking findings are recorded in the PR as deferred and not implemented within the task.
+- **Severity rubric.** Claude and Codex reviewers apply the same rubric, each independently and
+  without seeing the other's verdict. A finding is **BLOCKING** when its evidence shows any of:
+  1. *A reachable correctness defect*: a wrong result, crash, hang, data loss or misclassified
+     outcome on a path reachable in the change as it will ship, under a supported configuration. A
+     configuration is supported when the specification matrix marks it handled, when the governing
+     specification defines it and the change claims to accept it, or when the change accepts it
+     without refusing it, whatever the matrix says.
+  2. *A security invariant violation*: a security, privacy, tenancy, evidence-integrity or
+     automotive-safety guarantee broken. This includes authority taken from caller input, a
+     privilege beyond the approved role model, exposure of secrets or personal data, and a missing
+     fail-closed path.
+  3. *A security-critical latent defect*: a defect of kind 1 or 2 in code that is not wired yet but
+     that an approved downstream package (a roadmap row or task contract) will activate without
+     further change to that code.
+  4. *An approved-requirement violation*: an accepted decision record, an owner decision, or a task
+     contract's acceptance criterion is broken, or a mandatory gate or tier is weakened, bypassed or
+     made unusable.
+  5. *A contradicted security or contract claim*: documentation or a docstring that states a
+     security- or contract-relevant behavior the code does not have.
+
+  A finding is **NONBLOCKING** when it is a design preference, refactoring or style point; hardening
+  beyond the approved requirements; a defect that needs a privileged out-of-band change already
+  refused by an existing gate (it fails closed); a test-only effect; a configuration the matrix
+  marks refused or out of scope *and that the code refuses or leaves untouched as the matrix
+  describes*; or documentation imprecision with no security or contract effect. The matrix is
+  written by the implementer, so it never shields behavior: code that departs from its
+  disposition is judged under kinds 1 to 4, and any reviewer may challenge a disposition itself,
+  at the design review or later, as a finding under this rubric.
+  A finding any required reviewer classifies BLOCKING with the required evidence is treated as
+  blocking. When reviewers classify the same issue differently, record both classifications; if
+  they disagree on what the rule requires rather than on evidence, that is an unresolved
+  disagreement and the stop rule below applies.
 - **Correction discipline.** Collect all blocking findings of a round before changing anything, then
   make one correction that addresses only those findings, with a regression test (and the tier's
   mutation check) for each corrected executable defect; documentation defects need no invented
   executable test. No unrelated refactoring; reviews stay pinned to the exact candidate SHA.
+- **Class-level corrections.** Before fixing a blocking defect, name the rule it violates and find
+  every other code path, configuration source or object kind that implements or depends on that
+  rule: callers and siblings of the faulty code, other readers of the same setting, other object
+  kinds governed by the same privilege rule. Fix the class, not only the reported instance. The
+  regression tests cover the class (each affected path, or one test parametrized over them), and
+  the mutation check disables the fix in each path. The correction commit and the workflow record
+  carry a class analysis: the rule, the paths examined, the paths changed and the regression
+  evidence. A path in the class that lies outside the task's scope is reported as an out-of-scope
+  finding; if fixing the defect requires it, that is a scope expansion and a stop.
 - **Stopping conditions.** Stop autonomous iteration when:
   - all mandatory gates pass and no blocking finding remains: the task completes;
   - the review budget is exhausted, including when the last permitted round leaves a blocker;
@@ -313,7 +402,9 @@ Autonomous iteration is bounded; the budget never waives a mandatory review or a
 
 The draft PR is the authoritative record of a task. Its "Review and workflow record" section holds
 the base and reviewed candidate SHAs, every review (reviewer, model where Orca reports it, SHA,
-verdict, findings fixed and open), the final drift check, and the metrics: duration, human
+verdict, findings fixed and open), for T3 and T4 the specification matrix's location, the
+adversarial pre-review and each correction's class analysis, the final drift check, where the
+continuation checkpoint keeps its logs, and the metrics: duration, human
 interventions, review iterations, CI failures, rework commits after the first review, integration
 conflicts, and agents and models. Token counts are not reliably available; do not estimate them.
 Before a PR exists, the worker's `worker_done` body carries the same fields; afterwards it carries
@@ -387,7 +478,8 @@ dependencies change. GitHub CI runs these checks without provider credentials or
 - repository hygiene and secret-path checks;
 - the review-packet tests (`scripts/tests/review-scope-test.sh`);
 - pure Swift tests;
-- SpacetimeDB TypeScript type checking.
+- SpacetimeDB TypeScript type checking;
+- the workflow-script tests (`scripts/tests/check-disk-space-test.sh`).
 
 Changes to the workflow scripts also need their manual, network-using tests:
 `scripts/tests/bootstrap-worktree-test.sh` (package registries) and
@@ -396,6 +488,30 @@ Changes to the workflow scripts also need their manual, network-using tests:
 Full Xcode builds, signing, TestFlight, physical iPhone audio, Meta hardware, and live-provider
 checks remain explicit local/release validations. Never describe mocks or simulator results as
 physical-device or live-provider evidence.
+
+### Local run hygiene
+
+Long local runs (the full baseline, real-database suites, mutation runs, Docker containers) can
+fail in ways that corrupt work in progress, so they follow these rules:
+
+- **Disk-space preflight.** Run `scripts/check-disk-space.sh` before substantial local testing;
+  `scripts/verify.sh` runs it first. It is read-only. It exits 1 below the minimum (10 GiB by
+  default; `--min-gib N` or `CARVIS_MIN_FREE_GIB` changes it) and 2 on a usage error. Below the
+  minimum, stop and ask the owner to free space. Never prune Docker images, volumes, caches or any
+  other data automatically: deleting anything outside the task's own temporary files is the owner's
+  decision.
+- **Persistent logs.** Logs, reviewer reports, packets and mutation results go to the task's
+  continuation checkpoint outside the repository, not to a temporary or session scratch directory
+  that a restart or cleanup can remove. Record that location in the workflow record.
+- **Mutation backup and restore.** Before mutating a file, copy it to the checkpoint and record its
+  hash. After each mutation, restore the original and verify the restored file's hash against the
+  recorded one before the next mutation; a mismatch stops the run. At the end, compare `git status`
+  and `git diff` with their state before the run.
+- **Recovery after an interrupted run.** If a run stops partway (crash, full disk, lost session),
+  do not stash, reset, check out or re-run anything first. Compare every mutated file against its
+  backup and hash, restore from the backup any file that differs, confirm `git diff` matches the
+  pre-run state, and record the incident in the workflow record. Restart stopped services, such as
+  a scratch database container, only after the worktree is verified.
 
 ## AI completion checklist
 
@@ -406,6 +522,10 @@ physical-device or live-provider evidence.
 - [ ] Do not trust caller-supplied identity, tenant, shop, vehicle, or session authority.
 - [ ] Keep credentials, local databases, manuals, captures, transcripts, and customer data out of Git.
 - [ ] Run relevant success, refusal, isolation, cancellation, and recovery tests.
+- [ ] Check free disk space before long local runs; keep logs and mutation backups in the checkpoint.
+- [ ] T3/T4: write the specification coverage matrix where it applies, and complete the adversarial
+  pre-review before the first independent review.
+- [ ] Classify findings with the severity rubric; correct blocking defects at the class level.
 - [ ] State the risk tier; run every requirement of that tier on top of the baseline.
 - [ ] Commit the candidate, then review it with `scripts/review-scope.sh` exiting 0.
 - [ ] Inspect the complete diff and list all unavailable validation.

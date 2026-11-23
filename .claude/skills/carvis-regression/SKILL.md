@@ -102,7 +102,23 @@ Mutation check: disable the guard (comment it out or force its condition), run t
 suite, confirm it fails for the guard's reason, restore it, and confirm `git diff` shows no trace.
 Every tier does this for each new guard; T3 also for every touched authentication, tenant, secret and limit
 check; T4 also for every touched applicability, evidence and refusal condition. Record each
-mutation and its failing test in the PR.
+mutation and its failing test in the PR. For a class-level correction, disable the fix in each
+path of the class.
+
+Run mutation checks safely (`docs/development-workflow.md`, "Local run hygiene"):
+
+1. Run `scripts/check-disk-space.sh` first and stop on exit 1. Never prune data or Docker volumes to
+   make room; ask the owner.
+2. Record `git status` and `git diff` before the run.
+3. Before each mutation, copy the file to the task's continuation checkpoint and record its hash.
+4. After each mutation, restore the original and verify its hash before the next one; a mismatch
+   stops the run.
+5. Write results to the checkpoint, not a temporary directory.
+6. At the end, compare `git status` and `git diff` with step 2.
+
+If a run is interrupted, do not stash, reset, check out or re-run anything first. Compare each
+mutated file with its backup, restore any that differ, confirm the worktree matches step 2, and
+record the incident.
 
 A reviewer whose sandbox forbids writes to the checkout can still run the Python suite without
 writing to it: `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider

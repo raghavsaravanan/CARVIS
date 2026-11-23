@@ -109,8 +109,13 @@ schema implications, and what is irreversible. Required status checks must be gr
 up to date with `main` before human-approved squash merge.
 
 Also confirm: the PR states a risk tier no lower than the minimum `review-scope.sh` reports, and
-the evidence shows every requirement of that tier (`docs/development-workflow.md`, "Risk tiers");
-the "Review and workflow record" names the reviewed candidate SHA, and the PR's current
+the evidence shows every requirement of that tier (`docs/development-workflow.md`, "Risk tiers").
+For T3 and T4 that includes:
+- the specification matrix, where one applies;
+- the adversarial pre-review record;
+- a class analysis for each correction.
+
+Confirm also that the "Review and workflow record" names the reviewed candidate SHA, and that the PR's current
 `headRefOid` equals it, or differs only by a clean update: `review-scope.sh --since <reviewed SHA>`
 exits 0, listing no task-file changes and no merged-in T3+ file. Any other later change makes earlier reviews stale until
 they are renewed.
@@ -120,7 +125,7 @@ they are renewed.
 Findings first, most severe first, each with `file:line`, the concrete failure scenario, a
 suggested fix, VERIFIED or INFERRED, and the finding format of `docs/development-workflow.md`,
 "Review budget, findings and stopping": reproducible evidence, severity, affected scope, the requirement violated,
-and BLOCKING or NONBLOCKING. Nonblocking findings alone never make the verdict "needs
+and BLOCKING or NONBLOCKING, classified with that section's severity rubric. Nonblocking findings alone never make the verdict "needs
 changes". Then:
 
 - **Reviewed:** effective base and candidate SHAs, tier, and every changed file with "finding" or

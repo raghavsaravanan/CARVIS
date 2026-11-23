@@ -9,6 +9,11 @@ if [[ -x .venv/bin/python ]]; then
   PYTHON=".venv/bin/python"
 fi
 
+# Long local runs can corrupt work in progress when the disk fills (docs/development-workflow.md,
+# "Local run hygiene"). Read-only; CARVIS_MIN_FREE_GIB changes the minimum.
+echo "== Disk space =="
+bash scripts/check-disk-space.sh
+
 echo "== Backend tests =="
 "$PYTHON" -m pytest backend/tests -q
 
@@ -97,6 +102,9 @@ esac
 
 echo "== Review packet tests =="
 bash scripts/tests/review-scope-test.sh
+
+echo "== Workflow script tests =="
+bash scripts/tests/check-disk-space-test.sh
 
 echo "== Documentation links =="
 "$PYTHON" - <<'PY'
