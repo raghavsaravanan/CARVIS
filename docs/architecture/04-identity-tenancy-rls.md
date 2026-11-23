@@ -37,7 +37,7 @@ JWKS path, claims), which B2 tests only against a fake JWKS.
 | `carvis_app` | API runtime | Not superuser, not owner, no `BYPASSRLS` |
 | `carvis_worker` | Tenant-scoped jobs | Same policies as `carvis_app` |
 | `carvis_bootstrap` | Bootstrap transaction (B2a) | `NOLOGIN`; `USAGE` on `carvis` and `EXECUTE` on `carvis.ensure_principal` only; no table privileges |
-| `carvis_provisioner` | Owner of `ensure_principal` (B2a) | `NOLOGIN`; owns no tables; no role is a member of it; only the column grants and policies in "Provisioning" |
+| `carvis_provisioner` | Owner of `ensure_principal` (B2a) | `NOLOGIN`; owns no tables; no role is a member of it; `USAGE` on `carvis` plus only the column grants and policies in "Provisioning" (`CREATE` on `carvis` only inside the migration that creates or re-owns its function, revoked in the same migration) |
 | deployment login | Runtime connection | `LOGIN`, created at provisioning with a credential outside the repository; member of `carvis_app` and `carvis_bootstrap` **`WITH INHERIT FALSE, SET TRUE`** and of nothing else; not superuser, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS`; owns nothing, no role settings or ACL entries. Granted by an owner-run command at provisioning, never on deploy |
 | `carvis_maintenance` | Cross-tenant jobs (retention purge, reconciliation) | Granted only needed tables; named policies; **not** `BYPASSRLS` |
 | `carvis_resolver` | Owner of `resolve_call` | `NOLOGIN`; column-level read on one view |
@@ -120,12 +120,16 @@ Database-level bounds, which hold even if the function body is wrong:
 
 - `carvis_provisioner` grants: `SELECT (id, status, auth_issuer, auth_subject)` and
   `INSERT (auth_issuer, auth_subject, email)` on `users`; `SELECT (id, kind, personal_owner_user_id)`
-  and `INSERT` on `workspaces`; `INSERT` on `memberships`. No `UPDATE`, `DELETE` or `TRUNCATE`, so it
-  cannot change or remove an existing row.
+  and `INSERT` on `workspaces`; `SELECT (workspace_id, user_id, role)` and `INSERT` on `memberships`;
+  `USAGE` on schema `carvis`. No `UPDATE`, `DELETE` or `TRUNCATE`, so it cannot change or remove an
+  existing row. The `SELECT` grants exist because `ON CONFLICT` with a conflict target requires
+  `SELECT` on the target columns and applies the `SELECT` policies to the proposed row, for
+  `DO NOTHING` as well.
 - Policies `TO carvis_provisioner` (RLS is forced, so they bind the definer too): `users` rows only
   where `auth_issuer = app.bootstrap_issuer AND auth_subject = app.bootstrap_subject`; `workspaces`
   rows only where `kind = 'personal' AND personal_owner_user_id = app.bootstrap_user_id`;
-  `memberships` insert only `WITH CHECK (user_id = app.bootstrap_user_id AND role = 'owner' AND
+  `memberships` rows readable only where `user_id = app.bootstrap_user_id`, and insert only
+  `WITH CHECK (user_id = app.bootstrap_user_id AND role = 'owner' AND
   workspace_id = (SELECT id FROM carvis.workspaces WHERE kind = 'personal' AND
   personal_owner_user_id = app.bootstrap_user_id))`. Provisioning therefore cannot read another
   user's row, attach to a shop workspace, or create an owner membership in another user's workspace.
