@@ -8,8 +8,8 @@ the readiness check without elevation. Grants touch only the CARVIS-owned ``carv
 issuer- or host-specific role. Login credentials and which login runs migrations belong to B2/B10.
 
 Fail closed, never modify: a pre-existing CARVIS role is validated and adopted only if compatible
-(NOLOGIN, no elevated attribute, member of no role, no members except the migration login's administrative
-grant on carvis_owner); otherwise the upgrade stops before any change. Downgrade drops only what this revision marked.
+(NOLOGIN, no elevated attribute, no migration marker, member of no role, no members except the migration login's
+administrative grant on carvis_owner); otherwise the upgrade stops before any change. Downgrade drops only what this revision marked.
 Requires PostgreSQL 16 or later.
 
 Revision ID: 0002_roles
@@ -52,8 +52,12 @@ def _login() -> tuple[str, bool, bool]:
 
 
 def _validate_existing(role: str, login: str, superuser: bool) -> None:
-    attributes = _rows(f"SELECT rolcanlogin, {', '.join(ELEVATED_ATTRIBUTES)} FROM pg_roles WHERE rolname = :r",
-                       r=role)[0]
+    attributes = _rows(f"SELECT rolcanlogin, {', '.join(ELEVATED_ATTRIBUTES)}, "
+                       "shobj_description(oid, 'pg_authid') AS comment FROM pg_roles WHERE rolname = :r", r=role)[0]
+    if attributes["comment"] == MARKER:
+        # Downgrade drops every CARVIS role carrying the marker, so adopting one this upgrade did not
+        # create (another database in the cluster, or a hand-made role) would let downgrade delete it.
+        raise RoleMigrationError(f"Existing role {role} carries this revision's marker; refusing to adopt it.")
     elevated = [name for name in ELEVATED_ATTRIBUTES if attributes[name]]
     if elevated:
         raise RoleMigrationError(f"Existing role {role} has incompatible attributes: {', '.join(elevated)}.")

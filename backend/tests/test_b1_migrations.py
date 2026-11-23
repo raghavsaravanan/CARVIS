@@ -453,3 +453,62 @@ def test_all_addresses_unreachable_is_bounded(scratch, fake_dns):
     reason, elapsed, pending = _timed_readiness(_named_url(scratch.admin, scratch.database))
     assert reason == DATABASE_UNREACHABLE
     assert elapsed < 2.5 and pending == 0
+
+
+# --- Multi-host readiness against real PostgreSQL (round-3 review F1) ------------------------------
+
+@pytest.fixture
+def stalled_later_dns(monkeypatch):
+    """``db.stalled.invalid`` blocks in getaddrinfo until teardown; other names resolve normally."""
+    import socket as socket_module
+    import threading
+
+    release, calls = threading.Event(), []
+    real = socket_module.getaddrinfo
+
+    def fake(host, *args, **kwargs):
+        if host == "db.stalled.invalid":
+            calls.append(host)
+            release.wait(30)
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket_module, "getaddrinfo", fake)
+    yield calls
+    release.set()
+
+
+def test_stalled_later_host_dns_does_not_hide_a_reachable_first_host(scratch, stalled_later_dns):
+    from sqlalchemy.engine import make_url
+
+    ok(alembic(scratch.db_admin, "upgrade", "head"))
+    admin = make_url(scratch.admin)
+    url = (f"postgresql://{admin.username}:{admin.password}@localhost:{admin.port},db.stalled.invalid:{admin.port}"
+           f"/{scratch.database}?sslmode=disable")
+    reason, elapsed, pending = _timed_readiness(url)
+    assert reason == READY, reason
+    assert elapsed < 2.5 and pending == 0
+    assert stalled_later_dns == [], "the later host must not be resolved once the first one answered"
+
+
+# --- Pre-existing role carrying the migration marker (round-3 review F2) ---------------------------
+
+@pytest.mark.parametrize("role", ["carvis_owner", "carvis_app", "carvis_worker"])
+@pytest.mark.parametrize("migrator", ["superuser", "createrole"])
+def test_preexisting_role_with_the_migration_marker_is_refused_without_modification(scratch, role, migrator):
+    """Downgrade drops marked roles, so a marked role this upgrade did not create must never be adopted."""
+    if migrator == "superuser":
+        url, creator = scratch.db_admin, scratch.db_admin
+    else:
+        url = creator = scratch.login("b1_migrator", "CREATEROLE")
+        _sql(scratch.admin, f"ALTER DATABASE {scratch.database} OWNER TO b1_migrator")
+    # Created by the migrator itself, so the CREATEROLE case also has a membership (PG16's implicit grant).
+    _sql(creator, f"CREATE ROLE {role} NOLOGIN", f"COMMENT ON ROLE {role} IS '{MARKER}'")
+    before = catalog(scratch.db_admin)
+    assert migrator == "superuser" or before["members"], "the CREATEROLE case must carry a membership"
+    result = alembic(url, "upgrade", "head")
+    assert result.returncode != 0
+    assert f"Existing role {role} carries this revision's marker" in result.stderr, result.stderr[-1500:]
+    after = catalog(scratch.db_admin)
+    assert after["roles"] == before["roles"], "roles and their comments are unchanged"
+    assert after["members"] == before["members"], "memberships are unchanged"
+    assert "carvis" not in [row[0] for row in after["schemas"]]

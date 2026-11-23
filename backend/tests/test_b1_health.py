@@ -499,3 +499,95 @@ def test_repeated_failing_probes_leave_no_background_work(scripted_connect):
     pending, extra_threads = asyncio.run(scenario())
     assert not pending and extra_threads <= 0
     assert probe.probes_started == 5
+
+
+# --- Multi-host ordering (round-3 review F1: a later host's DNS must not hide an earlier host) -----
+
+class _OrderedResolver(_FakeResolver):
+    """Appends ``resolve:<host>`` to the shared order list; names in ``stall`` never answer."""
+
+    def __init__(self, table, order, stall=(), busy=()):
+        super().__init__(table)
+        self.order, self.stall, self.busy = order, set(stall), set(busy)
+
+    async def resolve(self, host, port):
+        from db.readiness import ResolverBusy
+
+        self.order.append(f"resolve:{host}")
+        if host in self.busy:
+            raise ResolverBusy()
+        if host in self.stall:
+            await asyncio.sleep(3600)
+        return await super().resolve(host, port)
+
+
+def _multi_host_probe(url, resolver, budget=2.0):
+    return ReadinessProbe(HEAD, postgres_fetch(url, resolver, budget), budget)
+
+
+def test_stalled_later_host_dns_does_not_hide_a_reachable_first_host(scripted_connect):
+    behaviour, order = scripted_connect
+    behaviour.update({"192.0.2.1": "ok"})
+    resolver = _OrderedResolver({"a.test": ["192.0.2.1"]}, order, stall={"b.test"})
+    probe = _multi_host_probe("postgresql://u:p@a.test,b.test/carvis", resolver, budget=0.5)
+    assert asyncio.run(probe.check()).reason == READY
+    assert order == ["resolve:a.test", "192.0.2.1"], "a later host must not be resolved before an earlier one is tried"
+
+
+def test_stalled_later_host_never_reaches_the_real_resolver_thread(scripted_connect, stalled_dns):
+    """Same case through BoundedResolver and the real getaddrinfo: the stalled name is never looked up."""
+    from db.readiness import BoundedResolver
+
+    behaviour, tried = scripted_connect
+    behaviour.update({"127.0.0.1": "ok", "::1": "ok"})
+    calls, release = stalled_dns
+    resolver = BoundedResolver()
+    probe = _multi_host_probe("postgresql://u:p@localhost,db.stalled.invalid/carvis", resolver, budget=0.5)
+    try:
+        assert asyncio.run(probe.check()).reason == READY
+        assert calls == [] and resolver.lookups_started == 1
+        assert len(tried) == 1
+    finally:
+        release.set()
+        resolver.shutdown()
+
+
+def test_next_host_is_resolved_only_after_every_address_of_the_previous_one_fails(scripted_connect):
+    behaviour, order = scripted_connect
+    behaviour.update({"2001:db8::1": "refuse", "192.0.2.1": "refuse", "192.0.2.2": "ok"})
+    resolver = _OrderedResolver({"a.test": ["2001:db8::1", "192.0.2.1"], "b.test": ["192.0.2.2"]}, order)
+    assert asyncio.run(_multi_host_probe("postgresql://u:p@a.test,b.test/carvis", resolver).check()).reason == READY
+    assert order == ["resolve:a.test", "2001:db8::1", "192.0.2.1", "resolve:b.test", "192.0.2.2"]
+
+
+def test_stalled_connection_to_first_host_leaves_time_for_a_later_host(scripted_connect):
+    """A stalled connection attempt (not a stalled lookup): later, still unresolved hosts count in the share."""
+    behaviour, order = scripted_connect
+    behaviour.update({"192.0.2.1": "hang", "192.0.2.2": "ok"})
+    resolver = _OrderedResolver({"a.test": ["192.0.2.1"], "b.test": ["192.0.2.2"]}, order)
+    started = time.monotonic()
+    assert asyncio.run(_multi_host_probe("postgresql://u:p@a.test,b.test/carvis", resolver).check()).reason == READY
+    assert order == ["resolve:a.test", "192.0.2.1", "resolve:b.test", "192.0.2.2"]
+    assert time.monotonic() - started < 2.0
+
+
+def test_random_load_balancing_shuffles_hosts_before_resolving_them(scripted_connect, monkeypatch):
+    import random
+
+    monkeypatch.setattr(random, "shuffle", lambda items: items.reverse())
+    behaviour, order = scripted_connect
+    behaviour.update({"192.0.2.2": "ok"})
+    resolver = _OrderedResolver({"a.test": ["192.0.2.1"], "b.test": ["192.0.2.2"]}, order, stall={"a.test"})
+    probe = _multi_host_probe("postgresql://u:p@a.test,b.test/carvis?load_balance_hosts=random", resolver, 0.5)
+    assert asyncio.run(probe.check()).reason == READY
+    assert order == ["resolve:b.test", "192.0.2.2"]
+
+
+def test_busy_resolver_skips_that_host_and_tries_the_next(scripted_connect):
+    """A lookup still hung from an earlier probe makes that host unresolvable, as libpq skips such hosts."""
+    behaviour, order = scripted_connect
+    behaviour.update({"192.0.2.1": "refuse", "192.0.2.3": "ok"})
+    resolver = _OrderedResolver({"a.test": ["192.0.2.1"]}, order, busy={"b.test"})
+    probe = _multi_host_probe("postgresql://u:p@a.test,b.test,192.0.2.3/carvis", resolver)
+    assert asyncio.run(probe.check()).reason == READY
+    assert order == ["resolve:a.test", "192.0.2.1", "resolve:b.test", "192.0.2.3"]

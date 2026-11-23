@@ -147,8 +147,10 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
   Alembic revision is this build's head; otherwise 503 `{"status": "not_ready", "reason": …}` with
   `starting`, `database_unconfigured`, `database_misconfigured`, `database_unreachable` or
   `migrations_pending`. The probe has a hard 2-second deadline, opens one connection at a time, resolves host names on one
-  dedicated thread (never more than one lookup outstanding), tries every resolved address within
-  that deadline, and concurrent requests share it.
+  dedicated thread (never more than one lookup outstanding), tries hosts in order and every address
+  of each, resolving a host only after the earlier ones have failed, all within that deadline, and
+  concurrent requests share it. A first host name whose lookup stalls makes the probe report
+  `database_unreachable` even if a later host is healthy (accepted B1 limit).
 - `CARVIS_DATABASE_URL` (optional in B1, transitional): the API's PostgreSQL URL. `postgresql://`,
   `postgres://` and `postgresql+psycopg://` are accepted and use the psycopg 3 driver; anything else
   refuses boot outside `local` (in `local` it boots and `/readyz` reports `database_misconfigured`).
