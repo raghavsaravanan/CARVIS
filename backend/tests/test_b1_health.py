@@ -90,8 +90,10 @@ class _SqlError(Exception):
         self.sqlstate = sqlstate
 
 
+# B2a: 42501 (the login may not SET ROLE carvis_app) is a deployment misconfiguration (doc 04 "Roles").
 @pytest.mark.parametrize("sqlstate,reason", [("42P01", MIGRATIONS_PENDING), ("3F000", MIGRATIONS_PENDING),
-                                             ("42501", DATABASE_UNREACHABLE), (None, DATABASE_UNREACHABLE)])
+                                             ("42501", DATABASE_MISCONFIGURED), ("22023", DATABASE_UNREACHABLE),
+                                             (None, DATABASE_UNREACHABLE)])
 def test_failures_map_to_fixed_codes_without_detail(client, monkeypatch, caplog, sqlstate, reason):
     async def fetch():
         raise _SqlError(sqlstate)
@@ -217,7 +219,7 @@ def test_real_driver_against_a_peer_that_never_answers():
         assert status == "configured"
         from db.engine import libpq_conninfo
 
-        probe = ReadinessProbe(HEAD, postgres_fetch(libpq_conninfo(url)), 0.5)
+        probe = ReadinessProbe(HEAD, postgres_fetch(libpq_conninfo(url), enforce_login=False), 0.5)
 
         async def scenario():
             started = time.monotonic()
@@ -280,7 +282,7 @@ def test_stalled_dns_never_accumulates_threads_or_blocks_the_default_executor(st
 
     calls, release = stalled_dns
     resolver = BoundedResolver()
-    probe = ReadinessProbe(HEAD, postgres_fetch("postgresql://carvis:pw@db.stalled.invalid:5432/carvis", resolver),
+    probe = ReadinessProbe(HEAD, postgres_fetch("postgresql://carvis:pw@db.stalled.invalid:5432/carvis", resolver, enforce_login=False),
                            0.2, resolver=resolver)
 
     async def scenario():
@@ -441,7 +443,7 @@ def _probe_with(table, budget=2.0):
         def shutdown(self):
             pass
 
-    fetch = postgres_fetch("postgresql://u:p@db.example.test/carvis", Resolver(table), budget)
+    fetch = postgres_fetch("postgresql://u:p@db.example.test/carvis", Resolver(table), budget, enforce_login=False)
     return ReadinessProbe(HEAD, fetch, budget)
 
 
@@ -522,7 +524,7 @@ class _OrderedResolver(_FakeResolver):
 
 
 def _multi_host_probe(url, resolver, budget=2.0):
-    return ReadinessProbe(HEAD, postgres_fetch(url, resolver, budget), budget)
+    return ReadinessProbe(HEAD, postgres_fetch(url, resolver, budget, enforce_login=False), budget)
 
 
 def test_stalled_later_host_dns_does_not_hide_a_reachable_first_host(scripted_connect):

@@ -20,20 +20,25 @@ import pytest
 from alembic.script import ScriptDirectory
 
 from db.history import HistoryError, check_linear_history, script_directory
-from db.readiness import DATABASE_UNREACHABLE, MIGRATIONS_PENDING, READY, ReadinessProbe, postgres_fetch
-from db.roles import MARKER, ROLES
+from db.readiness import (DATABASE_MISCONFIGURED, DATABASE_UNREACHABLE, MIGRATIONS_PENDING, READY, ReadinessProbe,
+                          postgres_fetch)
+from db.roles import B2A_ROLES, MARKER, ROLES
 
 BACKEND = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND / "migrations" / "alembic.ini"
 ADMIN_URL = (os.getenv("CARVIS_TEST_POSTGRES_URL") or "").strip()
 REQUIRED = os.getenv("CARVIS_REQUIRE_POSTGRES") == "1"
 PASSWORD = "b1-scratch-Pw-7731"
+# These tests cover the B1 revisions; they migrate to the B1 head explicitly so later revisions
+# (tested in test_b2a_*.py) do not change what they assert.
+B1_HEAD = "0002_roles"
+SHIPPED_HEAD = "0003_runtime_roles"
 
 
 # --- History (no database) ----------------------------------------------------------------------
 
 def test_shipped_chain_is_linear_with_expected_head():
-    assert check_linear_history(script_directory()) == "0002_roles"
+    assert check_linear_history(script_directory()) == SHIPPED_HEAD
 
 
 def _write_tree(tmp_path: Path, revisions: dict[str, object]) -> ScriptDirectory:
@@ -69,7 +74,7 @@ def test_two_bases_are_rejected(tmp_path):
 
 def test_history_cli_exit_status():
     ok = subprocess.run([sys.executable, "-m", "db.history"], cwd=BACKEND, capture_output=True, text=True)
-    assert ok.returncode == 0 and "0002_roles" in ok.stdout
+    assert ok.returncode == 0 and SHIPPED_HEAD in ok.stdout
 
 
 # --- Real PostgreSQL ----------------------------------------------------------------------------
@@ -120,7 +125,8 @@ TEST_LOGINS = ("b1_migrator", "b1_plain", "b1_runtime", "b1_other", "b1_noowner"
 
 
 def _drop_cluster_objects(admin: str) -> None:
-    for role in (*TEST_LOGINS, *ROLES):
+    # CARVIS roles first: dropping them removes memberships that test logins granted (B2a runtime login).
+    for role in (*B2A_ROLES, *ROLES, *TEST_LOGINS):
         exists = _sql(admin, f"SELECT 1 FROM pg_roles WHERE rolname = '{role}'", fetch=True)
         if exists:
             _sql(admin, f"DROP ROLE {role}")
@@ -210,7 +216,7 @@ def _assert_roles_created(url: str) -> None:
 
 def _round_trip(scratch, url: str) -> None:
     before = catalog(scratch.db_admin)
-    ok(alembic(url, "upgrade", "head"))
+    ok(alembic(url, "upgrade", B1_HEAD))
     _assert_roles_created(scratch.db_admin)
     first = catalog(scratch.db_admin)
     ok(alembic(url, "downgrade", "base"))
@@ -218,7 +224,7 @@ def _round_trip(scratch, url: str) -> None:
     assert not after_down["roles"], "downgrade must drop the roles this revision created"
     assert [row[0] for row in after_down["schemas"]] == ["carvis_migrations", "public"]
     assert _public(after_down) == _public(before), "public schema ACL must never change"
-    ok(alembic(url, "upgrade", "head"))
+    ok(alembic(url, "upgrade", B1_HEAD))
     assert catalog(scratch.db_admin) == first, "upgrade → downgrade → upgrade must give an identical catalog"
     assert _public(first) == _public(before)
 
@@ -239,7 +245,7 @@ def test_round_trip_as_non_superuser_createrole_database_owner(scratch):
 def test_login_without_createrole_fails_before_any_change(scratch):
     url = scratch.login("b1_plain")
     _sql(scratch.admin, f"ALTER DATABASE {scratch.database} OWNER TO b1_plain")
-    result = alembic(url, "upgrade", "head")
+    result = alembic(url, "upgrade", B1_HEAD)
     assert result.returncode != 0 and "needs CREATEROLE" in result.stderr
     snapshot = catalog(scratch.db_admin)
     assert not snapshot["roles"] and "carvis" not in [row[0] for row in snapshot["schemas"]]
@@ -247,14 +253,14 @@ def test_login_without_createrole_fails_before_any_change(scratch):
 
 def test_login_without_database_create_fails_with_named_privilege(scratch):
     url = scratch.login("b1_noowner", "CREATEROLE")
-    result = alembic(url, "upgrade", "head")
+    result = alembic(url, "upgrade", B1_HEAD)
     assert result.returncode != 0 and "CREATE on the database" in result.stderr
     assert not catalog(scratch.db_admin)["roles"]
 
 
 def test_compatible_preexisting_role_is_adopted_and_survives_downgrade(scratch):
     _sql(scratch.admin, "CREATE ROLE carvis_app NOLOGIN")
-    ok(alembic(scratch.db_admin, "upgrade", "head"))
+    ok(alembic(scratch.db_admin, "upgrade", B1_HEAD))
     app = [row for row in catalog(scratch.db_admin)["roles"] if row[0] == "carvis_app"][0]
     assert app[6] is False and app[8] is None, "adopted role is not modified or marked"
     ok(alembic(scratch.db_admin, "downgrade", "base"))
@@ -281,7 +287,7 @@ def test_compatible_preexisting_role_is_adopted_and_survives_downgrade(scratch):
 def test_incompatible_preexisting_role_fails_closed_without_modification(scratch, setup, message):
     _sql(scratch.admin, *setup)
     before = catalog(scratch.db_admin)
-    result = alembic(scratch.db_admin, "upgrade", "head")
+    result = alembic(scratch.db_admin, "upgrade", B1_HEAD)
     assert result.returncode != 0
     import re
 
@@ -295,7 +301,7 @@ def test_non_superuser_needs_admin_option_on_preexisting_role(scratch):
     _sql(scratch.admin, "CREATE ROLE carvis_owner NOLOGIN")
     url = scratch.login("b1_migrator", "CREATEROLE")
     _sql(scratch.admin, f"ALTER DATABASE {scratch.database} OWNER TO b1_migrator")
-    result = alembic(url, "upgrade", "head")
+    result = alembic(url, "upgrade", B1_HEAD)
     assert result.returncode != 0 and "needs ADMIN OPTION on existing role carvis_owner" in result.stderr
 
 
@@ -304,7 +310,7 @@ def test_non_superuser_adopts_runtime_role_it_administers(scratch):
     url = scratch.login("b1_migrator", "CREATEROLE")
     _sql(scratch.admin, f"ALTER DATABASE {scratch.database} OWNER TO b1_migrator")
     _sql(url, "CREATE ROLE carvis_worker NOLOGIN")
-    ok(alembic(url, "upgrade", "head"))
+    ok(alembic(url, "upgrade", B1_HEAD))
     ok(alembic(url, "downgrade", "base"))
     assert [row[0] for row in catalog(scratch.db_admin)["roles"]] == ["carvis_worker"]
 
@@ -313,13 +319,13 @@ def test_preexisting_owner_grant_by_migrator_fails_closed(scratch):
     url = scratch.login("b1_migrator", "CREATEROLE")
     _sql(scratch.admin, f"ALTER DATABASE {scratch.database} OWNER TO b1_migrator")
     _sql(url, "CREATE ROLE carvis_owner NOLOGIN", "GRANT carvis_owner TO b1_migrator WITH INHERIT FALSE, SET TRUE")
-    result = alembic(url, "upgrade", "head")
+    result = alembic(url, "upgrade", B1_HEAD)
     assert result.returncode != 0 and "members other than" in result.stderr
 
 
 def test_preexisting_carvis_schema_is_refused(scratch):
     _sql(scratch.db_admin, "CREATE SCHEMA carvis")
-    result = alembic(scratch.db_admin, "upgrade", "head")
+    result = alembic(scratch.db_admin, "upgrade", B1_HEAD)
     assert result.returncode != 0 and "already exists; refusing to adopt it" in result.stderr
     assert not catalog(scratch.db_admin)["roles"]
 
@@ -328,21 +334,21 @@ def test_metadata_schema_owned_by_someone_else_is_refused(scratch):
     url = scratch.login("b1_migrator", "CREATEROLE")
     _sql(scratch.admin, f"ALTER DATABASE {scratch.database} OWNER TO b1_migrator")
     _sql(scratch.db_admin, "CREATE SCHEMA carvis_migrations")
-    result = alembic(url, "upgrade", "head")
+    result = alembic(url, "upgrade", B1_HEAD)
     assert result.returncode != 0 and "not owned by the migration login" in result.stderr
 
 
 def test_missing_migration_url_fails_without_fallback(scratch, monkeypatch):
     env = {k: v for k, v in os.environ.items() if not k.startswith("CARVIS_")}
     env.update(CARVIS_DATABASE_URL=scratch.db_admin, PYTHON_DOTENV_DISABLED="1")
-    result = subprocess.run([sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), "upgrade", "head"],
+    result = subprocess.run([sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), "upgrade", B1_HEAD],
                             cwd=BACKEND, env=env, capture_output=True, text=True, timeout=60)
     assert result.returncode != 0 and "CARVIS_MIGRATION_DATABASE_URL" in result.stderr
     assert "carvis_migrations" not in [row[0] for row in catalog(scratch.db_admin)["schemas"]]
 
 
 def _readiness(url: str) -> str:
-    probe = ReadinessProbe("0002_roles", postgres_fetch(url), 3.0)
+    probe = ReadinessProbe("0002_roles", postgres_fetch(url, enforce_login=False), 3.0)
     return asyncio.run(probe.check()).reason
 
 
@@ -351,8 +357,9 @@ def test_readiness_as_runtime_member_without_elevation(scratch):
     assert _readiness(runtime) == MIGRATIONS_PENDING  # nothing migrated yet
     ok(alembic(scratch.db_admin, "upgrade", "0001_baseline"))
     assert _readiness(scratch.db_admin) == MIGRATIONS_PENDING  # behind head
-    ok(alembic(scratch.db_admin, "upgrade", "head"))
-    assert _readiness(runtime) == DATABASE_UNREACHABLE  # not a member of carvis_app: permission denied
+    ok(alembic(scratch.db_admin, "upgrade", B1_HEAD))
+    # Not a member of carvis_app: B2a's role switch reports a deployment misconfiguration.
+    assert _readiness(runtime) == DATABASE_MISCONFIGURED
     _sql(scratch.admin, "GRANT carvis_app TO b1_runtime")
     assert _readiness(runtime) == READY
     ok(alembic(scratch.db_admin, "downgrade", "0001_baseline"))
@@ -414,7 +421,7 @@ def _timed_readiness(url: str) -> tuple[str, float, int]:
     from db.readiness import BoundedResolver
 
     resolver = BoundedResolver()
-    probe = ReadinessProbe("0002_roles", postgres_fetch(url, resolver, 2.0), 2.0, resolver=resolver)
+    probe = ReadinessProbe("0002_roles", postgres_fetch(url, resolver, 2.0, enforce_login=False), 2.0, resolver=resolver)
 
     async def scenario():
         started = time.monotonic()
@@ -435,7 +442,7 @@ def test_unreachable_first_address_falls_back_within_one_deadline(scratch, fake_
 
     host = make_url(scratch.admin).host
     fake_dns[:] = [first, host]
-    ok(alembic(scratch.db_admin, "upgrade", "head"))
+    ok(alembic(scratch.db_admin, "upgrade", B1_HEAD))
     reason, elapsed, pending = _timed_readiness(_named_url(scratch.admin, scratch.database))
     assert reason == READY, reason
     assert elapsed < 2.5 and pending == 0
@@ -480,7 +487,7 @@ def stalled_later_dns(monkeypatch):
 def test_stalled_later_host_dns_does_not_hide_a_reachable_first_host(scratch, stalled_later_dns):
     from sqlalchemy.engine import make_url
 
-    ok(alembic(scratch.db_admin, "upgrade", "head"))
+    ok(alembic(scratch.db_admin, "upgrade", B1_HEAD))
     admin = make_url(scratch.admin)
     url = (f"postgresql://{admin.username}:{admin.password}@localhost:{admin.port},db.stalled.invalid:{admin.port}"
            f"/{scratch.database}?sslmode=disable")
@@ -505,7 +512,7 @@ def test_preexisting_role_with_the_migration_marker_is_refused_without_modificat
     _sql(creator, f"CREATE ROLE {role} NOLOGIN", f"COMMENT ON ROLE {role} IS '{MARKER}'")
     before = catalog(scratch.db_admin)
     assert migrator == "superuser" or before["members"], "the CREATEROLE case must carry a membership"
-    result = alembic(url, "upgrade", "head")
+    result = alembic(url, "upgrade", B1_HEAD)
     assert result.returncode != 0
     assert f"Existing role {role} carries this revision's marker" in result.stderr, result.stderr[-1500:]
     after = catalog(scratch.db_admin)

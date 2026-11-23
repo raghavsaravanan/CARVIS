@@ -174,6 +174,49 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
   `docker run -d --rm -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=scratch postgres:16` and
   `CARVIS_TEST_POSTGRES_URL=postgresql://postgres:scratch@127.0.0.1:55432/postgres`.
 
+#### Runtime roles, runtime login and JWT verification (M2 B2a)
+
+- Migration `0003_runtime_roles` adds `carvis_bootstrap` and `carvis_provisioner` (`NOLOGIN`), revokes
+  `EXECUTE` on new functions from `PUBLIC` for `carvis_owner` and `carvis_provisioner` (global default
+  privileges), and revokes everything on the CARVIS schemas from `PUBLIC` and, where they exist, from
+  `anon`, `authenticated` and `service_role`. It first rechecks the B1 roles and refuses to continue
+  (changing nothing) if any has gained an attribute, membership, setting, owned object or privilege
+  that 0002 did not give it. A non-superuser `CREATEROLE` migration login keeps PostgreSQL 16's
+  automatic ADMIN-only membership in the roles it creates; that is migration-administrator authority,
+  never a runtime privilege (doc 04, "Function ownership and migration membership").
+- The deployment's runtime login holds no privileges of its own: it is a member of `carvis_app` and
+  `carvis_bootstrap` with `INHERIT FALSE, SET TRUE` and of nothing else. The owner grants this once per
+  database, at provisioning, with the migration login (never on deploy):
+
+  ```bash
+  CARVIS_MIGRATION_DATABASE_URL=postgresql://… ../.venv/bin/python -m db.runtime_login grant <login>
+  CARVIS_MIGRATION_DATABASE_URL=postgresql://… ../.venv/bin/python -m db.runtime_login check <login>
+  ```
+
+  Both refuse an unsafe login (superuser, `BYPASSRLS`, `CREATEROLE`, `CREATEDB`, replication, owning
+  any object or the database, holding any ACL or default ACL, role settings, other memberships or
+  members) and name the failed conditions only. The login's credential is created by the deployment
+  and never enters the repository.
+- `/readyz` now reads the version table as `carvis_app` (`SET LOCAL ROLE`). Outside `local` it also
+  runs the same runtime-login check on the connected login, so a superuser, `BYPASSRLS` or otherwise
+  unsafe login, or one that may not switch to `carvis_app`, reports `database_misconfigured`. Runtime
+  roles that do not exist yet report `migrations_pending`. The response shape and reason set are
+  unchanged.
+- `CARVIS_DATABASE_URL` must describe the connection explicitly: libpq service files (`service`,
+  `servicefile`, `PGSERVICE`, `PGSERVICEFILE`) are refused, and the effective host and port counts
+  (from the URL, else `PGHOST`/`PGPORT`) must follow libpq's rule (one port, or one per host). A URL
+  that breaks either rule is invalid: boot refused outside `local`, `database_misconfigured` in
+  `local`.
+- Issuer settings for JWT verification (ADR-0002), optional and transitional: `CARVIS_AUTH_ISSUER`,
+  `CARVIS_AUTH_AUDIENCE`, `CARVIS_AUTH_JWKS_URL`. All unset means authentication is unconfigured; a
+  partial set, or a JWKS URL that is not `https://`, refuses boot outside `local`. The verifier
+  (`backend/auth/`) accepts only ES256/RS256 tokens of at most 1 hour with 30 s leeway and the
+  Supabase `authenticated` role; it is **not wired to any route** in B2a (that is B2c). Supabase
+  compatibility (issuer URL, audience, JWKS path, claims) is untested; tests use a fake JWKS.
+- The request-path async engine (`db.engine.create_async_app_engine`) bounds each new connection,
+  name resolution included, by one 2-second deadline, and resolves names on its own small thread pool
+  shared by concurrent pool fills. Nothing uses it yet (B2b).
+
 ### iOS
 
 Open [`ios/Carvis/Carvis.xcodeproj`](ios/Carvis/Carvis.xcodeproj) in Xcode, configure signing and

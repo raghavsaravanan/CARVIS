@@ -26,6 +26,25 @@ METADATA_SCHEMA = "carvis_migrations"
 VERSION_TABLE = "alembic_version"
 MARKER = "carvis:managed-by-migration:0002"
 
+# M2 B2a (revision 0003_runtime_roles). ``ROLES`` above stays the B1 set, because 0002 uses it.
+BOOTSTRAP_ROLE = "carvis_bootstrap"
+PROVISIONER_ROLE = "carvis_provisioner"
+B2A_ROLES = (BOOTSTRAP_ROLE, PROVISIONER_ROLE)
+MARKER_0003 = "carvis:managed-by-migration:0003"
+# Issuer and host roles that may exist on a hosted PostgreSQL (Supabase); they must hold nothing on
+# CARVIS objects (ADR-0002). Revoked only where they exist.
+ISSUER_ROLES = ("anon", "authenticated", "service_role")
+
+
+@contextmanager
+def as_role(connection: Connection, role: str) -> Iterator[None]:
+    """Like :func:`as_owner`, for any CARVIS role the login may ``SET ROLE`` to."""
+    connection.execute(text(f"SET LOCAL ROLE {role}"))
+    try:
+        yield
+    finally:
+        connection.execute(text("RESET ROLE"))
+
 
 @contextmanager
 def as_owner(connection: Connection) -> Iterator[None]:
