@@ -27,17 +27,23 @@ Not in Track A: authenticating `/vision-query` or `/conversation/sessions`, remo
 | PR | Scope | Depends on |
 | --- | --- | --- |
 | B1 | `Settings`, `/healthz`, `/readyz`, request IDs, PostgreSQL in CI, Alembic baseline with upgrade/downgrade/linear-history jobs, provider-neutral role-creation migration; vendor-independent (no provider provisioning, no issuer- or host-specific roles, grants or connection assumptions; those move to B2) | D-1 (accepted 2026-11-22) |
-| B2 | Users, workspaces, memberships; JWT dependency (fake JWKS in tests); RLS scaffolding and `after_begin` context; full RLS test harness; **API contract freeze** | B1; D-2 |
-| B3 | Garage: vehicles, snapshots with immutability triggers, VIN validation, `/v1/vehicles*` | B2 |
-| B4 | Durable conversations, calls, turns, `webhook_events`; PostgreSQL-backed `ConversationStore` behind the existing interface; restart-durability tests | B2 |
+| B2a | Connection and role hardening, token verifier: B1 deferred N2 (host/port arity) and N3 (service files); request-path engine; `carvis_bootstrap`/`carvis_provisioner` roles, default-function-privilege revokes, issuer-role revokes and adopted-role preflight; owner-run runtime-login check/grant command; readiness role switch and login self-check; JWT verifier with fake JWKS tests, not wired to routes. T3, 90 min | B1; D-2 (ADR-0002), ADR-0003 |
+| B2b | Users, workspaces, memberships with forced RLS; `ensure_principal` provisioning; two-phase `after_begin` context; full RLS test harness ([04](04-identity-tenancy-rls.md) "Validation"). T3, 150 min | B2a |
+| B2c | `/v1` auth dependency, `GET /v1/me`, `GET /v1/workspaces`, `/v1`-scoped error envelope, OpenAPI snapshot; **API contract freeze** (frozen/provisional, iOS agreement required, ADR-0004). T4, 120 min | B2b; ADR-0004 |
+| B3 | Garage: vehicles, snapshots with immutability triggers, VIN validation, `/v1/vehicles*` | B2c |
+| B4 | Durable conversations, calls, turns, `webhook_events`; PostgreSQL-backed `ConversationStore` behind the existing interface; restart-durability tests | B2c |
 | B5 | Vapi ingress v2 ([06](06-vapi-ingress.md)): credential, bind proof, `resolve_call`, dedupe, `call_not_ready`; flagged removal of payload-trusting bind and sessionless path | B4; gates G-V1…G-V6 (D-9) |
 | B6 | Evidence references, history, feedback endpoints | B4 |
-| B7a–f | Brain in PostgreSQL ([07](07-brain.md)), split below | B2, D-8 |
-| B8 | Account deletion/export and retention jobs | B2–B6, D-4 |
+| B7a–f | Brain in PostgreSQL ([07](07-brain.md)), split below | B2c, D-8 |
+| B8 | Account deletion/export and retention jobs | B2c–B6, D-4 |
 | B9 | Authenticate `/vision-query`, `/upload`→internal, `/conversation/sessions`; SpacetimeDB retirement ([08](08-migration-and-spacetimedb.md)) | B5, iOS ready, D-3, D-6 |
 | B10 | Staging and production pipeline, nightly dump, restore drill, alerts, runbooks | B1 |
 
-Parallel: M3 corpus work after the B7 contract; iOS M4 consumes the contracts frozen at B2.
+Parallel: M3 corpus work after the B7 contract; iOS M4 consumes the contracts frozen at B2c.
+
+B2 is split into serial rows B2a, B2b and B2c (owner, 2026-11-22), each its own draft PR titled
+`(M2 B2a)` and so on, each starting only after the previous one merges. All three rely on ADR-0002,
+ADR-0003 and ADR-0004 and start only after the owner accepts those records. No row provisions Supabase, configures a provider or creates credentials.
 
 ## B7 Brain packages (approved split, subject to review)
 
@@ -152,7 +158,7 @@ the decision records are marked `accepted` or the dependent PR starts:
 | ID | Decision | Recommendation | Blocks |
 | --- | --- | --- | --- |
 | D-1 | PostgreSQL as the single store | **Accepted** by the owner on 2026-11-22 (ADR-0001) | B1 (cleared) |
-| D-2 | Issuer and host: Supabase (Pro for production); confirm Apple Developer account and custom SMTP | Supabase | ADR-0002, B2 (not B1: owner, 2026-11-22) |
+| D-2 | Issuer and host: Supabase Auth and Supabase PostgreSQL for V1; FastAPI the only application API | **Accepted** by the owner on 2026-11-23 (ADR-0002); Apple Developer account, custom SMTP, paid plan and other provisioning choices remain deferred to provisioning | ADR-0002, B2a–B2c (cleared; not B1: owner, 2026-11-22) |
 | D-3 | Break legacy unauthenticated routes on a date agreed with the iOS worktree | Approve after B2 contract | B9 |
 | D-4 | Retention: transcript text 90 days then metadata, no raw audio, audit 1 year, deletion grace 30 days | Approve | ADR-0009, B8 |
 | D-5 | Backups: provider daily plus nightly external dump; PITR add-on yes or no | No PITR for pilot | ADR-0008 |
