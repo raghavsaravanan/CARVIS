@@ -109,6 +109,9 @@ jobs:
       - name: Review packet tests
         run: bash scripts/tests/review-scope-test.sh
 
+      - name: Workflow script tests
+        run: bash scripts/tests/check-disk-space-test.sh
+
       - name: Check repository structure and whitespace
         shell: bash
         run: |

@@ -106,12 +106,26 @@ git merge --ff-only origin/main
 Then, in both modes, run `scripts/bootstrap-worktree.sh` and record `git rev-parse HEAD` as the
 base.
 
+Before any code (`docs/development-workflow.md`, "Churn controls" and "Local run hygiene"):
+
+- **Size.** If the row looks larger than roughly 600–900 changed lines, propose a split to the owner
+  before implementing. This is guidance, not a maximum; never split a security invariant across
+  packages.
+- **Design (T3 and T4).** Write the design note in the task's continuation checkpoint, outside the
+  repository. If the row implements or depends on an external standard or provider behavior,
+  include the specification coverage matrix. Then run the design review: one round by both reviewer
+  classes, consolidated into one design correction; a second design round is a stop.
+- **Checkpoint.** Keep logs, packets, reviewer reports and mutation backups in that checkpoint, never
+  only in a temporary or session scratch directory.
+
 - Implement only the selected row. No cleanup, no adjacent rows, and no fixes for out-of-scope
   findings; report those instead.
 - Preserve protected contracts, status codes, and response shapes unless the row changes them.
   Update `README.md` and `docs/` wherever behavior or configuration changes.
-- Test and validate with `/carvis-regression`. Each new guard must be caught by a test: disable
-  it temporarily, confirm the suite fails, restore it, and confirm `git diff` shows no trace.
+- Test and validate with `/carvis-regression`. Run `scripts/check-disk-space.sh` before substantial
+  local testing and stop on exit 1 (never prune data or Docker volumes; ask the owner). Each new
+  guard must be caught by a test: disable it temporarily, confirm the suite fails, restore it, and
+  confirm `git diff` shows no trace, using the backup-and-verify procedure in `/carvis-regression`.
   T3 and T4 extend this to every touched check of their kind. Finish with the full baseline that
   skill describes.
 
@@ -121,7 +135,15 @@ Reviews inspect a committed candidate, never a working tree.
 
 1. **Commit the candidate** locally; do not push yet. Commit message:
    `<type>(<area>): <summary> (M2 <row>)`. The body covers what changed, why, and the test count.
-   Later corrections are new commits, never amends.
+   Later corrections are new commits, never amends. For T3 and T4, then run the adversarial
+   pre-review (`docs/development-workflow.md`, "Churn controls"):
+   - review the committed diff against the specification matrix, the security invariants and the
+     severity rubric;
+   - for each rule the change implements, check its other paths;
+   - fix what you find as new commits before item 2;
+   - record what you checked and fixed in the checkpoint.
+
+   The pre-review is not a review and is never shown to reviewers.
 2. **Review packet.** `git fetch origin main`, then
    `scripts/review-scope.sh --tier <Tn> <base> <candidate>`, run as the integration branch's copy
    when it has one (`docs/development-workflow.md`, "Review protocol"), must exit 0 with the
@@ -134,7 +156,10 @@ Reviews inspect a committed candidate, never a working tree.
      the review-scope output, but not your conclusions, summary or test results. Ask for findings
      on every listed file, with `file:line`, a failure scenario, VERIFIED or INFERRED, and the
      candidate SHA, each in the finding format of `docs/development-workflow.md`, "Review budget, findings and stopping"
-     (evidence, severity, scope, requirement violated, BLOCKING or NONBLOCKING). For T3 and T4 the Codex cross-model review is also required
+     (evidence, severity, scope, requirement violated, BLOCKING or NONBLOCKING), classified with
+     that section's severity rubric. For T3 and T4 the brief also includes the reviewed design note
+     (with its specification matrix, if any). A renewal brief adds only the list of earlier
+     findings to check. Every reviewer class gets the same brief. For T3 and T4 the Codex cross-model review is also required
      (`docs/development-workflow.md`, "Worker launch profiles", isolated profile); for that one
      review this session acts as its coordinator through Orca. If Orca or Codex is unavailable, do
      not open the PR; report the review as outstanding.
@@ -145,10 +170,17 @@ Reviews inspect a committed candidate, never a working tree.
      the follow-up names, then continue at item 5 (findings) or step 5 (approval).
 4. **`/carvis-pr-review`** on the candidate (`<base>..<candidate>`); in Orca mode the coordinator
    runs it.
-5. **Fix blocking findings** together, one correction per round (correction discipline in
-   `docs/development-workflow.md`, "Review budget, findings and stopping"), as new commits, rerun the affected checks and the full baseline, and
-   renew review: a delta review (`review-scope.sh --since <previous candidate>`) for T1 and T2,
-   unless it reports a material update, and a full review for T3 and T4, by every required reviewer. Record nonblocking and out-of-scope findings as deferred open
+5. **Fix blocking findings** together, one correction per round (correction discipline and
+   class-level corrections in `docs/development-workflow.md`, "Review budget, findings and stopping"),
+   as new commits.
+   - Fix each defect's class, not only the reported instance.
+   - Record the class analysis in the commit body and the workflow record: the rule, the paths
+     examined and changed, and the regression evidence.
+   - Rerun the affected checks and the full baseline.
+   - Renew review: a delta review (`review-scope.sh --since <previous candidate>`) for T1 and T2,
+     unless it reports a material update, and a full review for T3 and T4, by every required
+     reviewer. Focused verification of the correction may precede a full renewal but never
+     replaces it, and a new blocking finding in unchanged code counts like any other. Record nonblocking and out-of-scope findings as deferred open
    items. Stop and escalate to the owner on any stopping condition there, including when the
    tier's review budget is used up.
 
