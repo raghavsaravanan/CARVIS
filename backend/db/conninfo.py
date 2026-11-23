@@ -5,10 +5,12 @@ CARVIS connections must be fully described by the configured URL plus libpq's ho
 - **Service files are refused (N3).** A ``service``/``servicefile`` parameter or a ``PGSERVICE`` /
   ``PGSERVICEFILE`` variable would let libpq read hosts, ports and options from a file that the
   bounded resolver never sees, so libpq would resolve names itself, outside the probe's deadline.
-- **Host and port counts follow libpq's rule (N2).** The effective hosts come from the ``host``
-  parameter, else ``PGHOST``; the effective ports from ``port``, else ``PGPORT``. libpq accepts one
-  port for every host or exactly one port per host and rejects anything else; CARVIS rejects the same
-  configurations instead of silently using the first port.
+- **Host, address and port counts follow libpq's rule (N2).** The effective hosts come from the
+  ``host`` parameter, else ``PGHOST``; addresses from ``hostaddr``, else ``PGHOSTADDR``; ports from
+  ``port``, else ``PGPORT``. When both hosts and addresses are given their counts must match, and the
+  number of connection targets is that count (or the address count alone); libpq accepts one port for
+  every target or exactly one port per target and rejects anything else. CARVIS rejects the same
+  configurations instead of silently using the first port, and accepts every combination libpq does.
 
 Errors name the rule only, never a value.
 """
@@ -42,8 +44,15 @@ def host_port_entries(params: Mapping[str, object], environ: Mapping[str, str] |
     """
     environ = os.environ if environ is None else environ
     hosts_value = str(params.get("host") or environ.get("PGHOST") or "")
+    addresses_value = str(params.get("hostaddr") or environ.get("PGHOSTADDR") or "")
     ports_value = str(params.get("port") or environ.get("PGPORT") or "")
     hosts = hosts_value.split(",")
+    if addresses_value:
+        addresses = addresses_value.split(",")
+        if hosts_value and len(addresses) != len(hosts):
+            raise ConnectionConfigError("The number of host addresses must match the number of hosts.")
+        if not hosts_value:
+            hosts = [""] * len(addresses)  # one target per address; libpq needs no host name then
     ports = ports_value.split(",")
     if len(ports) != 1 and len(ports) != len(hosts):
         raise ConnectionConfigError("The number of ports must be one or match the number of hosts.")

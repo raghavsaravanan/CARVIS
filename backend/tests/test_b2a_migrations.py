@@ -325,3 +325,65 @@ def test_preflight_refuses_b1_role_objects_in_another_database(scratch, migrator
     assert result.returncode != 0 and "owns or holds privileges" in result.stderr, result.stderr[-1500:]
     assert full_catalog(scratch.db_admin) == before
     _sql(_url(scratch.admin, database=other), "DROP TABLE b2a_x")
+
+
+# --- Round-2 review: type and domain privileges -----------------------------------------------------
+
+def test_type_privileges_are_revoked_from_public_and_issuer_roles(scratch, migrator):
+    ok(run_alembic(migrator, "upgrade", B1_HEAD))
+    _sql(scratch.admin, "CREATE ROLE anon NOLOGIN")
+    try:
+        _sql(scratch.db_admin, "SET ROLE carvis_owner",
+             "CREATE TYPE carvis.b2a_e AS ENUM ('a')", "CREATE DOMAIN carvis.b2a_d AS int",
+             "CREATE TYPE carvis.b2a_c AS (x int)", "CREATE TABLE carvis.b2a_t (a int)",
+             "GRANT USAGE ON TYPE carvis.b2a_e TO anon", "GRANT USAGE ON DOMAIN carvis.b2a_d TO anon",
+             "RESET ROLE")
+        ok(run_alembic(migrator, "upgrade", HEAD))
+        names = ("b2a_e", "b2a_d", "b2a_c", "b2a_t")
+        for role in ("public", "anon"):
+            held = _sql(scratch.db_admin, "SELECT t.typname FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace "
+                                          f"WHERE n.nspname = 'carvis' AND t.typname = ANY(ARRAY{list(names)}) "
+                                          f"AND has_type_privilege('{role}', t.oid, 'USAGE')", fetch=True)
+            assert held == [], (role, held)
+        version_type = _sql(scratch.db_admin, "SELECT has_type_privilege('public', "
+                                              "'carvis_migrations.alembic_version'::regtype, 'USAGE')", fetch=True)
+        assert version_type == [(False,)]
+        _sql(scratch.db_admin, "DROP TABLE carvis.b2a_t", "DROP TYPE carvis.b2a_c",
+             "DROP DOMAIN carvis.b2a_d", "DROP TYPE carvis.b2a_e")
+    finally:
+        _sql(scratch.admin, "DROP ROLE IF EXISTS anon")
+
+
+@pytest.mark.parametrize("grant", ["GRANT USAGE ON TYPE carvis.b2a_foreign TO anon", "SELECT 1"])
+def test_type_privilege_that_cannot_be_revoked_stops_the_migration(scratch, migrator, grant):
+    """Post-condition: a type in carvis not owned by carvis_owner keeps its grant after the owner's
+    REVOKE (an explicit issuer grant, or the NULL ACL's default PUBLIC USAGE), so the migration must
+    refuse rather than report success."""
+    ok(run_alembic(migrator, "upgrade", B1_HEAD))
+    _sql(scratch.admin, "CREATE ROLE anon NOLOGIN", "CREATE ROLE b1_other NOLOGIN")
+    try:
+        _sql(scratch.db_admin, "GRANT USAGE, CREATE ON SCHEMA carvis TO b1_other", "SET ROLE b1_other",
+             "CREATE TYPE carvis.b2a_foreign AS ENUM ('x')", grant,
+             "RESET ROLE", "REVOKE USAGE, CREATE ON SCHEMA carvis FROM b1_other")
+        before = full_catalog(scratch.db_admin)
+        result = run_alembic(migrator, "upgrade", HEAD)
+        assert result.returncode != 0 and "still holds a privilege" in result.stderr, result.stderr[-1500:]
+        assert full_catalog(scratch.db_admin) == before
+    finally:
+        _sql(scratch.db_admin, "DROP TYPE IF EXISTS carvis.b2a_foreign")
+        _sql(scratch.admin, "DROP ROLE IF EXISTS anon")
+
+
+def test_range_type_constructors_owned_by_the_bootstrap_superuser_stop_the_migration(scratch, migrator):
+    """PostgreSQL makes a range type's constructor functions owned by the bootstrap superuser with
+    PUBLIC EXECUTE, which carvis_owner cannot revoke: the post-condition must refuse (fail closed).
+    CARVIS schemas therefore must not define range types (doc 04, "Function privileges")."""
+    ok(run_alembic(migrator, "upgrade", B1_HEAD))
+    _sql(scratch.db_admin, "SET ROLE carvis_owner", "CREATE TYPE carvis.b2a_r AS RANGE (subtype = int)", "RESET ROLE")
+    try:
+        before = full_catalog(scratch.db_admin)
+        result = run_alembic(migrator, "upgrade", HEAD)
+        assert result.returncode != 0 and "still holds a privilege" in result.stderr, result.stderr[-1500:]
+        assert full_catalog(scratch.db_admin) == before
+    finally:
+        _sql(scratch.db_admin, "DROP TYPE carvis.b2a_r")

@@ -25,10 +25,12 @@ Upgrade, in this revision's single transaction (any failure rolls everything bac
 4. The same default revoke for ``carvis_provisioner``, run as that role through a temporary
    ``WITH INHERIT FALSE, SET TRUE`` grant to a non-superuser login, revoked before the step ends.
 5. Everything on the ``carvis`` and ``carvis_migrations`` schemas and their objects (tables,
-   sequences, routines) is revoked from ``PUBLIC`` and from the issuer roles that exist, each revoke
-   issued as the object owner.
+   sequences, routines, and every type that accepts privileges: enums, domains, composites, ranges,
+   multiranges and tables' row types; array types take their element type's) is revoked from
+   ``PUBLIC`` and from the issuer roles that exist, each revoke issued as the object owner.
 6. Post-conditions, checked before commit: no ``PUBLIC`` or issuer-role entry remains in any ACL on
-   those schemas, their relations, columns and routines; the new roles have no member except the
+   those schemas, their relations, columns, routines and types (a routine or type with a NULL ACL
+   counts, since NULL means defaults that include PUBLIC); the new roles have no member except the
    migration login's ADMIN-only grant (so no issuer role either) and no ``CREATE`` on ``carvis``.
 
 Downgrade restores the two default-privilege rows (removing their ``pg_default_acl`` entries),
@@ -203,6 +205,19 @@ def _with_temporary_set(role: str, superuser: bool) -> Iterator[None]:
         _exec(f"REVOKE {role} FROM CURRENT_USER GRANTED BY CURRENT_USER")
 
 
+# Types that accept privileges: everything except array types (PostgreSQL derives an array type's
+# privileges from its element type and refuses GRANT/REVOKE on it).
+PRIVILEGED_TYPES = """
+    SELECT pg_catalog.format('%I.%I', n.nspname, t.typname) AS name
+    FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+    WHERE n.nspname = :schema AND t.typcategory <> 'A' ORDER BY 1"""
+
+
+def _revoke_types(schema: str, grantee: str) -> None:
+    for row in _rows(PRIVILEGED_TYPES, schema=schema):
+        _exec(f"REVOKE ALL ON TYPE {row['name']} FROM {grantee}")
+
+
 def _revoke_everything(grantee: str) -> None:
     """Revoke as each object's owner: ``carvis`` objects belong to carvis_owner (a REVOKE by anyone
     else silently removes nothing), ``carvis_migrations`` objects to the migration login."""
@@ -210,15 +225,18 @@ def _revoke_everything(grantee: str) -> None:
         _exec(f"REVOKE ALL ON SCHEMA {SCHEMA} FROM {grantee}")
         for kind in ("TABLES", "SEQUENCES", "ROUTINES"):
             _exec(f"REVOKE ALL ON ALL {kind} IN SCHEMA {SCHEMA} FROM {grantee}")
+        _revoke_types(SCHEMA, grantee)
     _exec(f"REVOKE ALL ON SCHEMA {METADATA_SCHEMA} FROM {grantee}")
     for kind in ("TABLES", "SEQUENCES", "ROUTINES"):
         _exec(f"REVOKE ALL ON ALL {kind} IN SCHEMA {METADATA_SCHEMA} FROM {grantee}")
+    _revoke_types(METADATA_SCHEMA, grantee)
 
 
 def _leftover_grants() -> int:
     """ACL entries for PUBLIC (grantee 0) or an issuer role on CARVIS schemas and their objects.
 
-    A routine with a NULL ACL counts too: NULL means the defaults, which include PUBLIC EXECUTE.
+    A routine or (non-array) type with a NULL ACL counts too: NULL means the defaults, which include
+    PUBLIC EXECUTE or USAGE.
     """
     return _scalar("""
         WITH grantees AS (SELECT 0::oid AS oid UNION ALL
@@ -235,7 +253,11 @@ def _leftover_grants() -> int:
         + (SELECT count(*) FROM pg_catalog.pg_proc p, pg_catalog.aclexplode(p.proacl) a
            WHERE p.pronamespace IN (SELECT oid FROM spaces) AND a.grantee IN (SELECT oid FROM grantees))
         + (SELECT count(*) FROM pg_catalog.pg_proc p
-           WHERE p.pronamespace IN (SELECT oid FROM spaces) AND p.proacl IS NULL)""",
+           WHERE p.pronamespace IN (SELECT oid FROM spaces) AND p.proacl IS NULL)
+        + (SELECT count(*) FROM pg_catalog.pg_type t, pg_catalog.aclexplode(t.typacl) a
+           WHERE t.typnamespace IN (SELECT oid FROM spaces) AND a.grantee IN (SELECT oid FROM grantees))
+        + (SELECT count(*) FROM pg_catalog.pg_type t
+           WHERE t.typnamespace IN (SELECT oid FROM spaces) AND t.typcategory <> 'A' AND t.typacl IS NULL)""",
                    issuers=list(ISSUER_ROLES), schema=SCHEMA, meta=METADATA_SCHEMA)
 
 

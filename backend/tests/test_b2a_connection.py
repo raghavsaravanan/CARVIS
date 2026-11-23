@@ -335,3 +335,43 @@ def test_cancelled_waiter_does_not_cancel_a_queued_shared_lookup(slow_dns):
     finally:
         gate.set()
         resolver.shutdown()
+
+
+# --- Round-2 review: hostaddr takes part in libpq's count rule --------------------------------------
+
+@pytest.mark.parametrize("params,environ,expected", [
+    ({"hostaddr": "127.0.0.1,127.0.0.2", "port": "5432,5433"}, {}, [("", "5432"), ("", "5433")]),
+    ({"host": "a,b", "hostaddr": "127.0.0.1,127.0.0.2", "port": "5432,5433"}, {}, [("a", "5432"), ("b", "5433")]),
+    ({"hostaddr": "127.0.0.1,127.0.0.2", "port": "5432"}, {}, [("", "5432"), ("", "5432")]),
+    ({}, {"PGHOSTADDR": "127.0.0.1,127.0.0.2", "PGPORT": "1,2"}, [("", "1"), ("", "2")]),
+])
+def test_valid_hostaddr_lists_are_accepted(params, environ, expected):
+    assert host_port_entries(params, environ) == expected
+
+
+@pytest.mark.parametrize("params,environ", [
+    ({"host": "a,b", "hostaddr": "127.0.0.1", "port": "1,2"}, {}),
+    ({"host": "a", "hostaddr": "127.0.0.1,127.0.0.2"}, {}),
+    ({}, {"PGHOST": "a,b", "PGHOSTADDR": "127.0.0.1"}),
+    ({"hostaddr": "127.0.0.1,127.0.0.2", "port": "1,2,3"}, {}),
+])
+def test_mismatched_hostaddr_lists_are_refused(params, environ):
+    with pytest.raises(ConnectionConfigError):
+        host_port_entries(params, environ)
+
+
+def test_settings_accept_hostaddr_only_and_refuse_mismatch():
+    assert normalize_database_url("postgresql://u:p@/carvis?hostaddr=127.0.0.1,127.0.0.2&port=5432,5433",
+                                  environ={})[0] == "configured"
+    assert normalize_database_url("postgresql://u:p@/carvis?host=a,b&hostaddr=127.0.0.1&port=1,2",
+                                  environ={})[0] == "invalid"
+
+
+def test_readiness_reports_mismatched_hostaddr_as_misconfigured():
+    class Resolver:
+        async def resolve(self, host, port):  # pragma: no cover
+            raise AssertionError("no lookup")
+
+    url = "postgresql://u:p@/carvis?host=a.test,b.test&hostaddr=127.0.0.1&port=1,2"
+    probe = ReadinessProbe("head", postgres_fetch(url, Resolver(), 1.0), 1.0)
+    assert asyncio.run(probe.check()).reason == DATABASE_MISCONFIGURED

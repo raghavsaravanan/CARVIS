@@ -178,8 +178,11 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
 
 - Migration `0003_runtime_roles` adds `carvis_bootstrap` and `carvis_provisioner` (`NOLOGIN`), revokes
   `EXECUTE` on new functions from `PUBLIC` for `carvis_owner` and `carvis_provisioner` (global default
-  privileges), and revokes everything on the CARVIS schemas from `PUBLIC` and, where they exist, from
-  `anon`, `authenticated` and `service_role`. It first rechecks the B1 roles and refuses to continue
+  privileges), and revokes everything on the CARVIS schemas and their objects (tables, sequences,
+  routines and types) from `PUBLIC` and, where they exist, from `anon`, `authenticated` and
+  `service_role`. CARVIS schemas must not define range types: PostgreSQL makes their constructor
+  functions owned by the bootstrap superuser with `PUBLIC` `EXECUTE`, which the migration cannot
+  revoke, so it refuses to proceed. It first rechecks the B1 roles and refuses to continue
   (changing nothing) if any has gained an attribute, membership, setting, owned object or privilege
   that 0002 did not give it. A non-superuser `CREATEROLE` migration login keeps PostgreSQL 16's
   automatic ADMIN-only membership in the roles it creates; that is migration-administrator authority,
@@ -203,8 +206,9 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
   roles that do not exist yet report `migrations_pending`. The response shape and reason set are
   unchanged.
 - `CARVIS_DATABASE_URL` must describe the connection explicitly: libpq service files (`service`,
-  `servicefile`, `PGSERVICE`, `PGSERVICEFILE`) are refused, and the effective host and port counts
-  (from the URL, else `PGHOST`/`PGPORT`) must follow libpq's rule (one port, or one per host). A URL
+  `servicefile`, `PGSERVICE`, `PGSERVICEFILE`) are refused, and the effective host, `hostaddr` and port
+  counts (from the URL, else `PGHOST`/`PGHOSTADDR`/`PGPORT`) must follow libpq's rule: hosts and
+  addresses match when both are given, and there is one port or one per target. A URL
   that breaks either rule is invalid: boot refused outside `local`, `database_misconfigured` in
   `local`.
 - Issuer settings for JWT verification (ADR-0002), optional and transitional: `CARVIS_AUTH_ISSUER`,
