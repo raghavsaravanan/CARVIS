@@ -27,6 +27,18 @@ Bounds:
 - Server-side ``statement_timeout`` and ``lock_timeout`` are set with ``SET LOCAL`` (transaction
   scoped, so safe through any pooler), and prepared statements are disabled.
 
+Role switch and runtime-login self-check (M2 B2a; doc 04 "Roles"):
+
+- The runtime login holds no privileges of its own, so the probe runs ``SET LOCAL ROLE carvis_app``
+  before reading the version table. A missing role means nothing is migrated yet
+  (``migrations_pending``); a login that may not switch is ``database_misconfigured``.
+- With ``enforce_login`` (every environment except local), the probe first validates
+  ``session_user`` with the same query as ``python -m db.runtime_login check``: a superuser,
+  ``BYPASSRLS``, object-owning or otherwise unsafe login is ``database_misconfigured``.
+- Connection settings that break the explicit-connection rules (:mod:`db.conninfo`: service files,
+  host, ``hostaddr`` and port counts) are ``database_misconfigured`` instead of being tried with a
+  guessed port. Every libpq parameter the probe interprets also honors its environment variable.
+
 Outcomes are fixed codes. Exception messages, which can name hosts or users, are never logged or
 returned; only the exception type name is logged.
 """
@@ -42,7 +54,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable
 
-from db.roles import METADATA_SCHEMA, VERSION_TABLE
+from db.conninfo import ConnectionConfigError, host_port_entries, libpq_setting, reject_service_files
+from db.roles import APP_ROLE, METADATA_SCHEMA, VERSION_TABLE
 from log_config import log_event, register_values
 from settings import Settings
 
@@ -63,6 +76,10 @@ QUERY_RESERVE_SECONDS = 0.25
 VERSION_QUERY = f"SELECT version_num FROM {METADATA_SCHEMA}.{VERSION_TABLE}"
 # Missing schema or table: nothing has been migrated yet.
 _NOT_MIGRATED_SQLSTATES = frozenset({"3F000", "42P01"})
+# SET ROLE to a role that does not exist (checked at that step only: 22023 is a generic code).
+_ROLE_MISSING_SQLSTATE = "22023"
+# The login may not SET ROLE carvis_app: a deployment (not a migration) problem.
+_MISCONFIGURED_SQLSTATES = frozenset({"42501"})
 
 logger = logging.getLogger("carvis.readiness")
 register_values("component", ["readiness"])
@@ -133,6 +150,14 @@ class NoAddress(RuntimeError):
     """No configured host resolved to an address."""
 
 
+class UnsafeLogin(RuntimeError):
+    """The connected login fails the runtime-login check. Carries condition names only."""
+
+
+class RuntimeRoleMissing(RuntimeError):
+    """``carvis_app`` does not exist yet: the runtime roles are not migrated."""
+
+
 async def host_attempts(conninfo: str, resolver: BoundedResolver) -> AsyncIterator[tuple[list[str], int]]:
     """Each host's single-address connection strings, in the order libpq would try them, resolved lazily.
 
@@ -153,15 +178,16 @@ async def host_attempts(conninfo: str, resolver: BoundedResolver) -> AsyncIterat
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     params = conninfo_to_dict(conninfo)
-    hosts_value = str(params.get("host") or os.getenv("PGHOST") or "")
-    if params.get("hostaddr") or not hosts_value:
+    # B2a (N2/N3): never guess a port or let libpq read a service file the resolver cannot see.
+    reject_service_files(params)
+    entries = host_port_entries(params)
+    hosts_value = libpq_setting(params, "host")
+    # Explicit addresses (parameter or PGHOSTADDR) need no lookup: libpq connects to them itself and
+    # keeps the host names for TLS, so the connection string is passed through unchanged.
+    if libpq_setting(params, "hostaddr") or not hosts_value:
         yield [conninfo], 0
         return
-    hosts = hosts_value.split(",")
-    ports = str(params.get("port") or os.getenv("PGPORT") or "5432").split(",")
-    entries = [(host, (ports[index] if len(ports) == len(hosts) else ports[0]) or "5432")
-               for index, host in enumerate(hosts)]
-    shuffle = str(params.get("load_balance_hosts") or "") == "random"
+    shuffle = libpq_setting(params, "load_balance_hosts") == "random"
     if shuffle:
         random.shuffle(entries)
     yielded = False
@@ -198,54 +224,94 @@ async def connection_attempts(conninfo: str, resolver: BoundedResolver) -> list[
     return [attempt async for attempts, _ in host_attempts(conninfo, resolver) for attempt in attempts]
 
 
-def postgres_fetch(conninfo: str, resolver: BoundedResolver | None = None,
-                   budget_seconds: float = READINESS_BUDGET_SECONDS) -> Fetch:
-    """A fetch that connects to the first reachable address, reads the version table and closes.
+async def open_connection(conninfo: str, resolver: BoundedResolver, deadline: float,
+                          reserve_seconds: float = QUERY_RESERVE_SECONDS):
+    """Connect to the first reachable address before ``deadline`` (``loop.time()`` units).
 
-    The probe's single deadline covers everything, host-name lookups included; within it, each
-    attempt gets a fair share of the time left (less a reserve for the query), counting the
-    remaining addresses of the current host plus one per host not yet resolved, so an address that
-    silently drops packets cannot consume the whole deadline before a later, reachable one is tried.
+    Host names are resolved lazily by ``resolver`` in libpq order (:func:`host_attempts`); each
+    attempt gets a fair share of the time left (less ``reserve_seconds``), counting the remaining
+    addresses of the current host plus one per host not yet resolved, so an address that silently
+    drops packets cannot consume the whole deadline before a later, reachable one is tried. Shared by
+    the readiness probe and the request-path engine (:func:`db.engine.create_async_app_engine`).
+    Raises the last connection error, or ``TimeoutError``.
     """
-    resolver = resolver or BoundedResolver()
+    import psycopg
 
-    async def fetch() -> list[str]:
-        import psycopg
-
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + budget_seconds
-        last_error: BaseException | None = None
-        hosts = host_attempts(conninfo, resolver)
-        try:
+    loop = asyncio.get_running_loop()
+    last_error: BaseException | None = None
+    hosts = host_attempts(conninfo, resolver)
+    try:
+        # The deadline covers host-name resolution too, not only each connect attempt (B2a: a stalled
+        # lookup must not outlive the caller's deadline on the request path).
+        async with asyncio.timeout_at(deadline):
             async for attempts, later_hosts in hosts:
                 for index, target in enumerate(attempts):
-                    remaining = deadline - loop.time() - QUERY_RESERVE_SECONDS
+                    remaining = deadline - loop.time() - reserve_seconds
                     if remaining <= 0:
                         raise last_error if last_error is not None else TimeoutError()
                     share = remaining / (len(attempts) - index + later_hosts)
                     try:
                         async with asyncio.timeout(share):
-                            connection = await psycopg.AsyncConnection.connect(
+                            return await psycopg.AsyncConnection.connect(
                                 target, connect_timeout=CONNECT_TIMEOUT_SECONDS, prepare_threshold=None,
                                 autocommit=False)
                     except (OSError, psycopg.OperationalError, TimeoutError) as exc:
                         last_error = exc
                         continue
-                    try:
-                        async with connection.cursor() as cursor:
-                            await cursor.execute(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}")
-                            await cursor.execute(f"SET LOCAL lock_timeout = {LOCK_TIMEOUT_MS}")
-                            await cursor.execute(VERSION_QUERY)
-                            rows = await cursor.fetchall()
-                        await connection.rollback()
-                        return [row[0] for row in rows]
-                    finally:
-                        await connection.close()
+    finally:
+        await hosts.aclose()
+    raise last_error if last_error is not None else TimeoutError()
+
+
+def postgres_fetch(conninfo: str, resolver: BoundedResolver | None = None,
+                   budget_seconds: float = READINESS_BUDGET_SECONDS, *, enforce_login: bool = True) -> Fetch:
+    """A fetch that connects to the first reachable address, reads the version table and closes.
+
+    The probe's single deadline covers everything, host-name lookups included (see
+    :func:`open_connection`). With ``enforce_login`` the connected login must pass the runtime-login
+    check; the version table is read as ``carvis_app`` (``SET LOCAL ROLE``).
+    """
+    resolver = resolver or BoundedResolver()
+
+    async def fetch() -> list[str]:
+        loop = asyncio.get_running_loop()
+        connection = await open_connection(conninfo, resolver, loop.time() + budget_seconds)
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}")
+                await cursor.execute(f"SET LOCAL lock_timeout = {LOCK_TIMEOUT_MS}")
+                if enforce_login:
+                    await _check_login(cursor)
+                try:
+                    await cursor.execute(f"SET LOCAL ROLE {APP_ROLE}")
+                except Exception as exc:  # noqa: BLE001 - classified by SQLSTATE only
+                    if _sqlstate(exc) == _ROLE_MISSING_SQLSTATE:
+                        raise RuntimeRoleMissing() from None
+                    raise
+                await cursor.execute(VERSION_QUERY)
+                rows = await cursor.fetchall()
+            await connection.rollback()
+            return [row[0] for row in rows]
         finally:
-            await hosts.aclose()
-        raise last_error if last_error is not None else TimeoutError()
+            await connection.close()
 
     return fetch
+
+
+async def _check_login(cursor) -> None:
+    """Runtime roles first (absent ⇒ not migrated yet), then the runtime-login conditions."""
+    from db.runtime_login import LOGIN_CHECK_SQL, RUNTIME_MEMBERSHIPS, check_params
+
+    await cursor.execute("SELECT count(*) FROM pg_catalog.pg_roles WHERE rolname = ANY(%s)",
+                         (list(RUNTIME_MEMBERSHIPS),))
+    if (await cursor.fetchone())[0] != len(RUNTIME_MEMBERSHIPS):
+        raise RuntimeRoleMissing()
+    await cursor.execute("SELECT session_user")
+    login = (await cursor.fetchone())[0]
+    await cursor.execute(LOGIN_CHECK_SQL, check_params(login))
+    found = sorted({row[0] for row in await cursor.fetchall()})
+    if found:
+        raise UnsafeLogin(", ".join(found))
 
 
 def _sqlstate(exc: BaseException) -> str | None:
@@ -272,11 +338,14 @@ class ReadinessProbe:
         if not settings.database_ready_to_probe:
             return cls(head, None, settings.readiness_timeout_seconds, DATABASE_UNCONFIGURED)
         from db.engine import libpq_conninfo
+        from webhook_auth import LOCAL
 
         assert settings.database_url is not None
         resolver = BoundedResolver()
+        # Local development may use a superuser; every other environment needs a safe runtime login.
         return cls(head, postgres_fetch(libpq_conninfo(settings.database_url), resolver,
-                                        settings.readiness_timeout_seconds),
+                                        settings.readiness_timeout_seconds,
+                                        enforce_login=settings.environment != LOCAL),
                    settings.readiness_timeout_seconds, resolver=resolver)
 
     async def _probe(self) -> Readiness:
@@ -289,9 +358,19 @@ class ReadinessProbe:
             log_event(logger, logging.WARNING, "readiness probe timed out", component="readiness",
                       outcome=DATABASE_UNREACHABLE)
             return Readiness(False, DATABASE_UNREACHABLE)
+        except (ConnectionConfigError, UnsafeLogin) as exc:
+            log_event(logger, logging.WARNING, "readiness probe misconfigured", component="readiness",
+                      outcome=DATABASE_MISCONFIGURED, error=type(exc).__name__)
+            return Readiness(False, DATABASE_MISCONFIGURED)
+        except RuntimeRoleMissing:
+            return Readiness(False, MIGRATIONS_PENDING)
         except Exception as exc:  # noqa: BLE001 - any failure is "not ready"; only its type is logged
             if _sqlstate(exc) in _NOT_MIGRATED_SQLSTATES:
                 return Readiness(False, MIGRATIONS_PENDING)
+            if _sqlstate(exc) in _MISCONFIGURED_SQLSTATES:
+                log_event(logger, logging.WARNING, "readiness probe misconfigured", component="readiness",
+                          outcome=DATABASE_MISCONFIGURED, error=type(exc).__name__)
+                return Readiness(False, DATABASE_MISCONFIGURED)
             log_event(logger, logging.WARNING, "readiness probe failed", component="readiness",
                       outcome=DATABASE_UNREACHABLE, error=type(exc).__name__)
             return Readiness(False, DATABASE_UNREACHABLE)

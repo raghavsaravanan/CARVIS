@@ -13,3 +13,5 @@ openai>=1.0.0
 sqlalchemy>=2.0
 alembic>=1.13
 psycopg[binary]>=3.2
+# JWT verification for the /v1 API (M2 B2a, ADR-0002): asymmetric signatures via cryptography.
+PyJWT[crypto]>=2.8
