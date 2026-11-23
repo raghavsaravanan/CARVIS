@@ -306,3 +306,22 @@ def test_grant_by_another_grantor_that_revoke_cannot_remove_stops_the_migration(
     finally:
         _sql(scratch.db_admin, "REVOKE USAGE ON SCHEMA carvis FROM b1_other CASCADE")
         _sql(scratch.admin, "DROP ROLE IF EXISTS anon")
+
+
+@pytest.mark.parametrize("statement", [
+    "CREATE TABLE b2a_x (a int); ALTER TABLE b2a_x OWNER TO carvis_app",
+    "CREATE TABLE b2a_x (a int); GRANT SELECT ON b2a_x TO carvis_worker",
+    "CREATE TABLE b2a_x (a int); ALTER TABLE b2a_x OWNER TO carvis_owner",
+])
+def test_preflight_refuses_b1_role_objects_in_another_database(scratch, migrator, statement):
+    """Round-1 review: ownership or privileges in another database of the cluster are refused too."""
+    from tests.test_b1_migrations import _url
+
+    ok(run_alembic(migrator, "upgrade", B1_HEAD))
+    other = scratch.extra_database("postgres")
+    _sql(_url(scratch.admin, database=other), *statement.split("; "))
+    before = full_catalog(scratch.db_admin)
+    result = run_alembic(migrator, "upgrade", HEAD)
+    assert result.returncode != 0 and "owns or holds privileges" in result.stderr, result.stderr[-1500:]
+    assert full_catalog(scratch.db_admin) == before
+    _sql(_url(scratch.admin, database=other), "DROP TABLE b2a_x")

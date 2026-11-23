@@ -203,3 +203,19 @@ def test_from_settings_enforces_outside_local_only(scratch, migrated):
             assert asyncio.run(probe.check()).reason == expected, environment
         finally:
             asyncio.run(probe.close())
+
+
+@pytest.mark.parametrize("statement,condition", [
+    (f"CREATE TABLE b2a_other_t (a int); ALTER TABLE b2a_other_t OWNER TO {RUNTIME}", "owns_objects"),
+    (f"CREATE TABLE b2a_other_t (a int); GRANT SELECT ON b2a_other_t TO {RUNTIME}", "acl_entries"),
+])
+def test_objects_in_another_database_are_refused(scratch, migrated, runtime, statement, condition):
+    """Round-1 review: the check covers every database in the cluster, not only the CARVIS one."""
+    from tests.test_b1_migrations import _url
+
+    other = scratch.extra_database("postgres")
+    _sql(_url(scratch.admin, database=other), *statement.split("; "))
+    result = runtime_login(migrated, "grant", RUNTIME)
+    assert result.returncode == 1 and condition in result.stderr, result.stderr
+    assert not [row for row in members_of(scratch.db_admin, "carvis_app") if row[0] == RUNTIME]
+    assert readiness(runtime, enforce=True) == DATABASE_MISCONFIGURED

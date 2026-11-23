@@ -139,16 +139,16 @@ def _unexpected_dependencies(role: str) -> int:
 
     Allowed: ``carvis_owner`` owning schema ``carvis`` and objects inside it; ``carvis_app`` and
     ``carvis_worker`` referenced in the ACLs of schemas ``carvis`` and ``carvis_migrations`` and of the
-    version table. Everything else (other ownership, any other ACL or policy reference, any shared
-    object such as a database or tablespace) is unexpected.
+    version table, all in this database. Everything else (other ownership, any other ACL or policy
+    reference, anything in another database of the cluster, any shared object such as a database or
+    tablespace) is unexpected.
     """
     return _scalar(f"""
         SELECT count(*) FROM pg_catalog.pg_shdepend d
         WHERE d.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
           AND d.refobjid = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = :r)
-          AND d.dbid IN (0, {CURRENT_DB})
           AND NOT (
-            (:r = :owner AND d.deptype = 'o' AND d.dbid <> 0 AND (
+            (:r = :owner AND d.deptype = 'o' AND d.dbid = {CURRENT_DB} AND (
                (d.classid = 'pg_catalog.pg_namespace'::pg_catalog.regclass
                   AND d.objid = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = :schema))
                OR (d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.objid IN (
@@ -160,7 +160,7 @@ def _unexpected_dependencies(role: str) -> int:
                OR (d.classid = 'pg_catalog.pg_type'::pg_catalog.regclass AND d.objid IN (
                   SELECT t.oid FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
                   WHERE n.nspname = :schema))))
-            OR (:r = ANY(:runtime) AND d.deptype = 'a' AND d.dbid <> 0 AND d.objsubid = 0 AND (
+            OR (:r = ANY(:runtime) AND d.deptype = 'a' AND d.dbid = {CURRENT_DB} AND d.objsubid = 0 AND (
                (d.classid = 'pg_catalog.pg_namespace'::pg_catalog.regclass AND d.objid IN (
                   SELECT oid FROM pg_catalog.pg_namespace WHERE nspname IN (:schema, :meta)))
                OR (d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.objid = (

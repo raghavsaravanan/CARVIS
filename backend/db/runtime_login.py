@@ -29,9 +29,9 @@ LOGIN_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 # Every condition a runtime login must meet, as one query returning the names of violated conditions.
 # ``%(login)s`` is the login name. Ownership and every ACL reference (any object kind, including
-# columns, the database itself and shared objects) come from pg_shdepend for the current database
-# and for shared objects (dbid 0); role memberships leave no pg_shdepend rows and are checked in
-# pg_auth_members. Every catalog is schema-qualified so a hostile search_path changes nothing.
+# columns, databases and shared objects) come from pg_shdepend for **every database in the cluster**
+# (another database's objects are as unsafe as this one's); role memberships leave no pg_shdepend
+# rows and are checked in pg_auth_members. Every catalog is schema-qualified so a hostile search_path changes nothing.
 LOGIN_CHECK_SQL = f"""
 WITH r AS (SELECT oid, rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls
            FROM pg_catalog.pg_roles WHERE rolname = %(login)s),
@@ -46,13 +46,11 @@ UNION ALL SELECT 'bypassrls' FROM r WHERE rolbypassrls
 UNION ALL SELECT 'owns_objects' FROM r WHERE EXISTS (
       SELECT 1 FROM pg_catalog.pg_shdepend d
       WHERE d.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass AND d.refobjid = r.oid
-        AND d.deptype = 'o'
-        AND d.dbid IN (0, (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())))
+        AND d.deptype = 'o')
 UNION ALL SELECT 'acl_entries' FROM r WHERE EXISTS (
       SELECT 1 FROM pg_catalog.pg_shdepend d
       WHERE d.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass AND d.refobjid = r.oid
-        AND d.deptype IN ('a', 'r', 'i')
-        AND d.dbid IN (0, (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())))
+        AND d.deptype IN ('a', 'r', 'i'))
 UNION ALL SELECT 'role_settings' FROM r WHERE EXISTS (
       SELECT 1 FROM pg_catalog.pg_db_role_setting WHERE setrole = r.oid)
 UNION ALL SELECT 'default_acl' FROM r WHERE

@@ -5,10 +5,13 @@
 - Only signature keys CARVIS accepts are kept: EC P-256 (ES256) and RSA of at least 2048 bits
   (RS256), with ``use`` absent or ``sig`` and an ``alg``, when given, that matches. A document with a
   duplicate ``kid`` or more than 20 keys is rejected as a whole.
-- Keys are cached for 10 minutes. An unknown ``kid`` triggers at most one refresh per 60 s
-  (single-flight), so a flood of tokens with random ``kid`` values cannot amplify requests.
-- When a refresh fails, the last good keys keep working for at most 1 hour after they were fetched;
-  with no usable keys :class:`AuthUnavailable` is raised (the API answers 503 in B2c, never 401).
+- Keys are cached for 10 minutes. Every refresh, whether for an expired cache or an unknown ``kid``,
+  is single-flight and happens at most once per 60 s, so neither a flood of random ``kid`` values nor
+  an issuer outage can amplify requests to the issuer.
+- While a refresh is running or throttled, every other caller is served from the cache without
+  waiting for it. Cached keys keep working for at most 1 hour after the last successful
+  fetch; after that, or with no usable keys, :class:`AuthUnavailable` is raised (the API answers 503
+  in B2c, never 401).
 
 Errors carry fixed reason codes; URLs, bodies and keys are never logged or placed in messages.
 """
@@ -116,17 +119,21 @@ class JwksCache:
     def _may_refresh(self, now: float) -> bool:
         return self._last_attempt is None or now - self._last_attempt >= self._min_refresh_interval
 
+    def _usable(self, now: float) -> bool:
+        return self._fetched_at is not None and bool(self._keys) and now - self._fetched_at <= self._max_stale
+
     async def key_for(self, kid: str):
         now = self._clock()
         if self._fresh(now) and kid in self._keys:
             return self._keys[kid]
-        if not self._fresh(now) or (kid not in self._keys and self._may_refresh(now)):
+        # The attempt time is recorded before the fetch starts (_refresh), so while one refresh is in
+        # flight every other caller is throttled and served from the cache instead of waiting.
+        if (not self._fresh(now) or kid not in self._keys) and self._may_refresh(now):
             async with self._lock:
                 now = self._clock()
-                if not self._fresh(now) or (kid not in self._keys and self._may_refresh(now)):
+                if (not self._fresh(now) or kid not in self._keys) and self._may_refresh(now):
                     await self._refresh(now)
-        # _refresh drops keys once they are older than the stale window and a refresh has failed.
-        if self._fetched_at is None or not self._keys:
+        if not self._usable(self._clock()):
             raise AuthUnavailable("no_verification_keys")
         key = self._keys.get(kid)
         if key is None:
@@ -138,9 +145,7 @@ class JwksCache:
         self.fetches += 1
         try:
             keys = _parse_keys(await self._fetch())
-        except Exception:  # noqa: BLE001 - keep the last good keys within the stale window
-            if self._fetched_at is not None and now - self._fetched_at > self._max_stale:
-                self._keys = {}
+        except Exception:  # noqa: BLE001 - keep the last good keys; key_for enforces the stale window
             return
         self._keys = keys
         self._fetched_at = self._clock()

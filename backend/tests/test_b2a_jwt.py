@@ -385,3 +385,52 @@ def test_token_signed_by_a_weak_rsa_key_is_rejected():
     weak = rsa.generate_private_key(public_exponent=65537, key_size=1024)
     issuer = FakeIssuer([public_jwk(weak, "weak-1"), public_jwk(EC_KEY, "ec-1")])
     assert reason(verifier_for(issuer), sign(claims(), weak, "RS256", "weak-1")) == "unknown_kid"
+
+
+# --- Round-1 review: refresh throttling during an issuer outage -----------------------------------
+
+def test_expired_cache_with_failing_issuer_refetches_at_most_once_per_interval(issuer):
+    clock = Clock()
+    verifier = verifier_for(issuer, clock=clock)
+    token = sign(claims())
+    verify(verifier, token)
+    issuer.status = 500
+    clock.now += 700  # cache expired
+    for _ in range(50):
+        verify(verifier, token)  # stale keys keep serving
+    assert issuer.requests == 2, "one failed refresh, not one per verification"
+    clock.now += 61
+    for _ in range(50):
+        verify(verifier, token)
+    assert issuer.requests == 3
+
+
+def test_concurrent_callers_do_not_queue_behind_a_hanging_refresh():
+    hanging = asyncio.Event()
+    calls = []
+
+    async def handler(request):
+        calls.append(1)
+        if len(calls) > 1:
+            await hanging.wait()  # the issuer hangs after the first good response
+        return httpx.Response(200, content=json.dumps({"keys": default_keys()}).encode())
+
+    clock = Clock()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    verifier = TokenVerifier(ISSUER, AUDIENCE, JwksCache(JWKS_URL, client, clock=clock, timeout=0.5))
+    token = sign(claims())
+
+    async def scenario():
+        await verifier.verify(token)
+        clock.now += 700
+        started = time.monotonic()
+        refresher = asyncio.create_task(verifier.verify(token))  # takes the lock, waits on the issuer
+        await asyncio.sleep(0.05)
+        others = await asyncio.gather(*(verifier.verify(token) for _ in range(10)))
+        quick = time.monotonic() - started
+        await refresher
+        return others, quick
+
+    others, quick = asyncio.run(scenario())
+    assert len(others) == 10 and quick < 0.3, "callers with a usable key are served without waiting"
+    assert len(calls) == 2, "exactly one refresh attempt for all concurrent callers"
