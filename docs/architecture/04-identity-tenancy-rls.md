@@ -37,7 +37,7 @@ JWKS path, claims), which B2 tests only against a fake JWKS.
 | `carvis_app` | API runtime | Not superuser, not owner, no `BYPASSRLS` |
 | `carvis_worker` | Tenant-scoped jobs | Same policies as `carvis_app` |
 | `carvis_bootstrap` | Bootstrap transaction (B2a) | `NOLOGIN`; `USAGE` on `carvis` and `EXECUTE` on `carvis.ensure_principal` only; no table privileges |
-| `carvis_provisioner` | Owner of `ensure_principal` (B2a) | `NOLOGIN`; owns no tables; no permanent members (see "Function ownership and migration membership"); `USAGE` on `carvis` plus only the column grants and policies in "Provisioning" (`CREATE` on `carvis` only inside the migration that creates its function, revoked in the same migration) |
+| `carvis_provisioner` | Owner of `ensure_principal` (B2a) | `NOLOGIN`; owns no tables; no permanent member with `SET` or `INHERIT`, and no runtime login is a member in any form; the only permanent membership is the migration login's automatic ADMIN-only grant (see "Function ownership and migration membership"); `USAGE` on `carvis` plus only the column grants and policies in "Provisioning" (`CREATE` on `carvis` only inside the migration that creates its function, revoked in the same migration) |
 | deployment login | Runtime connection | `LOGIN`, created at provisioning with a credential outside the repository; member of `carvis_app` and `carvis_bootstrap` **`WITH INHERIT FALSE, SET TRUE`** and of nothing else; not superuser, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS`; owns nothing, no role settings or ACL entries. Granted by an owner-run command at provisioning, never on deploy |
 | `carvis_maintenance` | Cross-tenant jobs (retention purge, reconciliation) | Granted only needed tables; named policies; **not** `BYPASSRLS` |
 | `carvis_resolver` | Owner of `resolve_call` | `NOLOGIN`; column-level read on one view |
@@ -78,14 +78,14 @@ creation (a later owner change keeps the ACL). Ownership and creating role per f
 | `carvis.resolve_call` (B4/B5) | `carvis_resolver` | `carvis_resolver` | `carvis_resolver`'s |
 | Invoker helpers and trigger functions (for example the UUID v7 helper and the membership trigger) | `carvis_owner` | `carvis_owner` (B1's `as_owner`) | `carvis_owner`'s |
 
-Definer owners have **no permanent members**. A non-superuser migration login (Supabase's
+Definer owners have **no permanent member with `SET` or `INHERIT`**. A non-superuser migration login (Supabase's
 `postgres` is one [?]) cannot otherwise `SET ROLE` to them, which PostgreSQL 16 requires both to
 create an object as that role and to run `ALTER DEFAULT PRIVILEGES FOR ROLE` for it. So the
 migration that creates (or later drops) a definer function does all of the following **inside its
 one migration transaction** (Alembic runs each revision in its own transaction):
 
 1. Refuse to continue if the login already holds a membership in the definer owner beyond
-   PostgreSQL 16's automatic administrative grant (below), or the owner already has members.
+   PostgreSQL 16's automatic administrative grant (below), or the owner has any other member.
 2. If the login is not a superuser: `GRANT <owner> TO CURRENT_USER WITH INHERIT FALSE, SET TRUE`.
 3. When creating: as the schema owner, grant the definer owner `CREATE` on `carvis`.
 4. Under `SET LOCAL ROLE <owner>`: `ALTER DEFAULT PRIVILEGES FOR ROLE <owner> REVOKE EXECUTE ON
@@ -94,15 +94,28 @@ one migration transaction** (Alembic runs each revision in its own transaction):
 5. Revoke any `CREATE` on `carvis` from the owner, and
    `REVOKE <owner> FROM CURRENT_USER GRANTED BY CURRENT_USER`.
 
-On success, the only membership left in the definer owner is the automatic administrative grant
-that PostgreSQL 16 gives a non-superuser `CREATEROLE` login on a role it creates (`ADMIN OPTION`,
-`INHERIT FALSE`, `SET FALSE`, granted by the bootstrap superuser). It confers no privileges and no
-`SET ROLE`. This is the same allowance B1's `0002_roles` makes, and the role-hardening revision
-in B2a decides whether it can and should also be revoked. Because grants, `SET LOCAL ROLE`,
-default-privilege changes and DDL are all transactional, a failed step rolls back every change of
-that migration, leaving no membership, `CREATE` grant, ownership or ACL drift. Downgrade uses the
-same temporary grant to drop the function. A catalog check after upgrade and downgrade asserts no
-member of a definer owner other than that administrative grant, and no `CREATE` on `carvis` for it.
+On success, the only membership left in the definer owner is the automatic grant that PostgreSQL 16
+gives a non-superuser `CREATEROLE` login on a role it creates (`ADMIN OPTION`, `INHERIT FALSE`,
+`SET FALSE`, granted by the bootstrap superuser). By owner decision (2026-11-23) this is an accepted
+**migration-administrator authority, not a runtime privilege**:
+
+- It is permitted, and that login cannot revoke it. It gives no privileges of the role and no
+  `SET ROLE` by itself; it lets the trusted migration login grant itself the temporary membership
+  above, which is how step 2 works (B1's `0002_roles` makes the same allowance).
+- Any temporary `SET` or `INHERIT` membership a migration needs is granted and revoked inside that
+  migration's transaction, as in steps 2 and 5.
+- No application runtime login receives `ADMIN`, `INHERIT` or `SET` membership in
+  `carvis_provisioner` (or `carvis_resolver`). The runtime login's only memberships are
+  `carvis_app` and `carvis_bootstrap` (see "Roles").
+- The migration login (`CARVIS_MIGRATION_DATABASE_URL`, read only by the Alembic environment) is
+  never used by request-path application code.
+
+Because grants, `SET LOCAL ROLE`, default-privilege changes and DDL are all transactional, a failed
+step rolls back every change of that migration, leaving no membership, `CREATE` grant, ownership or
+ACL drift. Downgrade uses the same temporary grant to drop the function. A catalog check after
+upgrade and downgrade asserts that a definer owner has no member other than the migration login's
+ADMIN-only grant (no `SET`, no `INHERIT`), that no runtime login is a member of it, and that it holds
+no `CREATE` on `carvis`.
 `carvis_resolver` follows the same procedure when B4/B5 create it.
 
 This procedure is specified, not yet executed. B2a and B2b must validate it on real PostgreSQL 16
@@ -163,10 +176,18 @@ Database-level bounds, which hold even if the function body is wrong:
 - `carvis_provisioner` grants: `SELECT (id, status, auth_issuer, auth_subject)` and
   `INSERT (auth_issuer, auth_subject, email)` on `users`; `SELECT (id, kind, personal_owner_user_id)`
   and `INSERT` on `workspaces`; `SELECT (workspace_id, user_id, role)` and `INSERT` on `memberships`;
-  `USAGE` on schema `carvis`. No `UPDATE`, `DELETE` or `TRUNCATE`, so it cannot change or remove an
-  existing row. The `SELECT` grants exist because `ON CONFLICT` with a conflict target requires
+  `USAGE` on schema `carvis`; `EXECUTE` on `carvis.uuid_v7()` (below). No `UPDATE`, `DELETE` or
+  `TRUNCATE`, so it cannot change or remove an existing row. The `SELECT` grants exist because `ON CONFLICT` with a conflict target requires
   `SELECT` on the target columns and applies the `SELECT` policies to the proposed row, for
   `DO NOTHING` as well.
+- `carvis.uuid_v7()`, the default of every identity table's `id`, is `SECURITY INVOKER` (never a
+  definer), `VOLATILE`, owned by `carvis_owner`, with a pinned `search_path`; it reads no table and
+  only combines the clock with random bytes. It loses `PUBLIC` `EXECUTE` through `carvis_owner`'s
+  default revoke and is then granted `EXECUTE` only to the roles that insert rows whose `id` uses
+  it: in B2 that is `carvis_provisioner` alone. `carvis_bootstrap`, `carvis_app`, `carvis_worker`,
+  `PUBLIC` and the issuer roles get no `EXECUTE` (a later package that grants a runtime role
+  `INSERT` on such a table also grants it `EXECUTE` here). The catalog check allow-lists exactly
+  this ACL.
 - Policies `TO carvis_provisioner` (RLS is forced, so they bind the definer too): `users` rows only
   where `auth_issuer = app.bootstrap_issuer AND auth_subject = app.bootstrap_subject`; `workspaces`
   rows only where `kind = 'personal' AND personal_owner_user_id = app.bootstrap_user_id`;

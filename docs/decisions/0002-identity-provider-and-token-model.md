@@ -25,10 +25,15 @@ tokens, and a verified principal on every request, without embedding server secr
 Supabase Auth as the OIDC issuer and Supabase PostgreSQL as the database host for V1 (owner direction,
 roadmap D-2, 2026-11-22); FastAPI is the only application API. Email and Sign in with Apple are the
 planned sign-in methods. The iOS app obtains tokens from the issuer, stores them in the Keychain, and
-sends only `Authorization: Bearer <JWT>` to FastAPI; it never talks to the database. Supabase's Data
-API/PostgREST is disabled, `anon`/`authenticated`/`service_role` hold no privileges on CARVIS objects,
-the service-role key never reaches iOS, and Alembic owns the schema. Not chosen: client-side database
-access.
+sends only `Authorization: Bearer <JWT>` to FastAPI; it never talks to the database. The service-role
+key never reaches iOS, and Alembic owns the schema. Not chosen: client-side database access.
+
+Provisioning requirements (not yet done; no Supabase project is provisioned by this record): the
+Supabase Data API/PostgREST must be disabled for the CARVIS database, and it must be verified that
+`anon`, `authenticated` and `service_role` hold no privileges on CARVIS objects. B2a's migrations
+revoke those privileges where the roles exist and CI checks the revokes against stub roles; the
+live verification and the Data API setting are checked at provisioning (B10) before any production
+use.
 
 Token rules (FastAPI, issuer-neutral code; issuer, audience and JWKS URL are configuration):
 
