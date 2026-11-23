@@ -37,7 +37,7 @@ JWKS path, claims), which B2 tests only against a fake JWKS.
 | `carvis_app` | API runtime | Not superuser, not owner, no `BYPASSRLS` |
 | `carvis_worker` | Tenant-scoped jobs | Same policies as `carvis_app` |
 | `carvis_bootstrap` | Bootstrap transaction (B2a) | `NOLOGIN`; `USAGE` on `carvis` and `EXECUTE` on `carvis.ensure_principal` only; no table privileges |
-| `carvis_provisioner` | Owner of `ensure_principal` (B2a) | `NOLOGIN`; owns no tables; no role is a member of it; `USAGE` on `carvis` plus only the column grants and policies in "Provisioning" (`CREATE` on `carvis` only inside the migration that creates or re-owns its function, revoked in the same migration) |
+| `carvis_provisioner` | Owner of `ensure_principal` (B2a) | `NOLOGIN`; owns no tables; no permanent members (see "Function ownership and migration membership"); `USAGE` on `carvis` plus only the column grants and policies in "Provisioning" (`CREATE` on `carvis` only inside the migration that creates its function, revoked in the same migration) |
 | deployment login | Runtime connection | `LOGIN`, created at provisioning with a credential outside the repository; member of `carvis_app` and `carvis_bootstrap` **`WITH INHERIT FALSE, SET TRUE`** and of nothing else; not superuser, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS`; owns nothing, no role settings or ACL entries. Granted by an owner-run command at provisioning, never on deploy |
 | `carvis_maintenance` | Cross-tenant jobs (retention purge, reconciliation) | Granted only needed tables; named policies; **not** `BYPASSRLS` |
 | `carvis_resolver` | Owner of `resolve_call` | `NOLOGIN`; column-level read on one view |
@@ -56,15 +56,57 @@ bypass RLS [?]; custom roles are created by Alembic and the app never connects a
 PostgreSQL grants `EXECUTE` on every new function to `PUBLIC` by default, and that default is global:
 `ALTER DEFAULT PRIVILEGES … IN SCHEMA` cannot remove it. Migrations therefore run
 `ALTER DEFAULT PRIVILEGES FOR ROLE carvis_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` (and the same
-for `carvis_provisioner` and `carvis_resolver`) **without** `IN SCHEMA`, and every sensitive function
+for `carvis_provisioner`, and later `carvis_resolver`, in the migration that creates that role)
+**without** `IN SCHEMA`, and every sensitive function
 additionally gets an explicit `REVOKE ALL ON FUNCTION … FROM PUBLIC`, a revoke from `anon`,
 `authenticated` and `service_role` where those roles exist, and then only its intended grant
 (`ensure_principal`: `carvis_bootstrap`; `resolve_call`: `carvis_app`). A CI catalog check treats a
 NULL `proacl` as `PUBLIC` `EXECUTE` and requires every `SECURITY DEFINER` function in CARVIS schemas
 to have exactly its allow-listed ACL, a pinned `search_path`, and a non-superuser owner that owns no
 tables. Supabase's default grants to `anon`, `authenticated` and `service_role` are scoped to
-objects `postgres` creates in `public` [?]; CARVIS objects are created by `carvis_owner` in `carvis`,
-and CI simulates hostile defaults with stub issuer roles.
+objects `postgres` creates in `public` [?]; CARVIS objects are created by `carvis_owner` or a definer
+owner in `carvis`, never by `postgres`, and CI simulates hostile defaults with stub issuer roles.
+
+### Function ownership and migration membership
+
+Default privileges apply according to the role that **creates** an object, and they are fixed at
+creation (a later owner change keeps the ACL). Ownership and creating role per function:
+
+| Function | Owner | Created while the current role is | Default privileges that apply |
+| --- | --- | --- | --- |
+| `carvis.ensure_principal` (B2b) | `carvis_provisioner` | `carvis_provisioner` (`SET LOCAL ROLE`) | `carvis_provisioner`'s |
+| `carvis.resolve_call` (B4/B5) | `carvis_resolver` | `carvis_resolver` | `carvis_resolver`'s |
+| Invoker helpers and trigger functions (for example the UUID v7 helper and the membership trigger) | `carvis_owner` | `carvis_owner` (B1's `as_owner`) | `carvis_owner`'s |
+
+Definer owners have **no permanent members**. A non-superuser migration login (Supabase's
+`postgres` is one [?]) cannot otherwise `SET ROLE` to them, which PostgreSQL 16 requires both to
+create an object as that role and to run `ALTER DEFAULT PRIVILEGES FOR ROLE` for it. So the
+migration that creates (or later drops) a definer function does all of the following **inside its
+one migration transaction** (Alembic runs each revision in its own transaction):
+
+1. Refuse to continue if the login already holds a membership in the definer owner beyond
+   PostgreSQL 16's automatic administrative grant (below), or the owner already has members.
+2. If the login is not a superuser: `GRANT <owner> TO CURRENT_USER WITH INHERIT FALSE, SET TRUE`.
+3. When creating: as the schema owner, grant the definer owner `CREATE` on `carvis`.
+4. Under `SET LOCAL ROLE <owner>`: `ALTER DEFAULT PRIVILEGES FOR ROLE <owner> REVOKE EXECUTE ON
+   FUNCTIONS FROM PUBLIC`; create the function; `REVOKE ALL ON FUNCTION … FROM PUBLIC` and from the
+   issuer roles that exist; `GRANT EXECUTE` only to its intended caller; then `RESET ROLE`.
+5. Revoke any `CREATE` on `carvis` from the owner, and
+   `REVOKE <owner> FROM CURRENT_USER GRANTED BY CURRENT_USER`.
+
+On success, the only membership left in the definer owner is the automatic administrative grant
+that PostgreSQL 16 gives a non-superuser `CREATEROLE` login on a role it creates (`ADMIN OPTION`,
+`INHERIT FALSE`, `SET FALSE`, granted by the bootstrap superuser). It confers no privileges and no
+`SET ROLE`. This is the same allowance B1's `0002_roles` makes, and the role-hardening revision
+in B2a decides whether it can and should also be revoked. Because grants, `SET LOCAL ROLE`,
+default-privilege changes and DDL are all transactional, a failed step rolls back every change of
+that migration, leaving no membership, `CREATE` grant, ownership or ACL drift. Downgrade uses the
+same temporary grant to drop the function. A catalog check after upgrade and downgrade asserts no
+member of a definer owner other than that administrative grant, and no `CREATE` on `carvis` for it.
+`carvis_resolver` follows the same procedure when B4/B5 create it.
+
+This procedure is specified, not yet executed. B2a and B2b must validate it on real PostgreSQL 16
+with a non-superuser `CREATEROLE` migration login, including forced failure at each step.
 
 ### Context carrier
 
