@@ -158,7 +158,7 @@ the decision records are marked `accepted` or the dependent PR starts:
 | ID | Decision | Recommendation | Blocks |
 | --- | --- | --- | --- |
 | D-1 | PostgreSQL as the single store | **Accepted** by the owner on 2026-11-22 (ADR-0001) | B1 (cleared) |
-| D-2 | Issuer and host: Supabase (Pro for production); confirm Apple Developer account and custom SMTP | Supabase | ADR-0002, B2a–B2c (not B1: owner, 2026-11-22) |
+| D-2 | Issuer and host: Supabase Auth and Supabase PostgreSQL for V1; FastAPI the only application API | **Accepted** by the owner on 2026-11-23 (ADR-0002); Apple Developer account, custom SMTP, paid plan and other provisioning choices remain deferred to provisioning | ADR-0002, B2a–B2c (cleared; not B1: owner, 2026-11-22) |
 | D-3 | Break legacy unauthenticated routes on a date agreed with the iOS worktree | Approve after B2 contract | B9 |
 | D-4 | Retention: transcript text 90 days then metadata, no raw audio, audit 1 year, deletion grace 30 days | Approve | ADR-0009, B8 |
 | D-5 | Backups: provider daily plus nightly external dump; PITR add-on yes or no | No PITR for pilot | ADR-0008 |

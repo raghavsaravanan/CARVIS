@@ -1,6 +1,6 @@
 # 0002. OIDC identity provider and token model
 
-- **Status:** proposed
+- **Status:** accepted (owner, 2026-11-23)
 - **Date:** 2026-11-15
 - **Resolves:** contract D-11 (identity half)
 - **Supersedes:** none

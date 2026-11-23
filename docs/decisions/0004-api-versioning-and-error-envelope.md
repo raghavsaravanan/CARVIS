@@ -1,6 +1,6 @@
 # 0004. Versioned REST API and structured error envelope
 
-- **Status:** proposed
+- **Status:** accepted (owner, 2026-11-23)
 - **Date:** 2026-11-15
 - **Resolves:** contract §11 item 4
 - **Supersedes:** none

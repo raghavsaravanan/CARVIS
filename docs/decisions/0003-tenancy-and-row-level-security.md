@@ -1,6 +1,6 @@
 # 0003. Workspace tenancy with application checks and PostgreSQL RLS
 
-- **Status:** proposed
+- **Status:** accepted (owner, 2026-11-23)
 - **Date:** 2026-11-15
 - **Resolves:** PRD CAR-003, CAR-004; contract §7.2
 - **Supersedes:** none
