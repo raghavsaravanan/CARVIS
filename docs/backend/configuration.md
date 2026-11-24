@@ -144,7 +144,7 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
   `CARVIS_AUTH_AUDIENCE`, `CARVIS_AUTH_JWKS_URL`. All unset means authentication is unconfigured; a
   partial set, or a JWKS URL that is not `https://`, refuses boot outside `local`. The verifier
   (`backend/auth/`) accepts only ES256/RS256 tokens of at most 1 hour with 30 s leeway and the
-  Supabase `authenticated` role; it is **not wired to any route** in B2a (that is B2c). Supabase
+  Supabase `authenticated` role; B2c wires it to the `/v1` routes (below). Supabase
   compatibility (issuer URL, audience, JWKS path, claims) is untested; tests use a fake JWKS.
 - The request-path async engine (`db.engine.create_async_app_engine`) bounds each new connection,
   name resolution included, by one 2-second deadline, and resolves names on its own small thread pool
@@ -170,7 +170,7 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
   `CREATE` on the database or the CARVIS schemas and no grant options. The migration runs it
   as a post-condition, and later packages extend it.
 - Downgrading `0004` refuses while any identity table has rows.
-- Nothing uses these tables from a request yet: the session context is B2b-2 and the routes B2c.
+- `/v1` reads them from B2c, through the B2b-2 session context.
 
 ## Request session context (M2 B2b-2)
 
@@ -185,4 +185,31 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
   cancellation or the connection's return to the pool.
 - The listener sends only a fixed list of statements, with every type, function and table schema-qualified, so a
   connection's `search_path` cannot redirect them; tests compare the SQL the driver receives with that list.
-- Nothing calls it from a route yet (B2c).
+- The `/v1` routes use it from B2c.
+
+## Versioned API `/v1` (M2 B2c)
+
+Contract: [`05-api-v1.md`](../architecture/05-api-v1.md); it is proposed until B2c merges with the iOS
+side's agreement recorded by the owner. Implemented: `GET /v1/me`, `GET /v1/workspaces`.
+
+- **Configuration.** `/v1` answers 503 `service_unavailable` until both the issuer settings
+  (`CARVIS_AUTH_ISSUER`, `CARVIS_AUTH_AUDIENCE`, `CARVIS_AUTH_JWKS_URL`) and `CARVIS_DATABASE_URL` are set
+  (ADR-0002 transitional rule); legacy routes are unaffected. Nothing connects at boot. Outside `local`,
+  the first `/v1` request runs the runtime-login check (`python -m db.runtime_login check`'s conditions) and
+  `/v1` stays at 503 while the login is unsafe or the runtime roles are missing.
+- **Authentication.** Exactly one `Authorization: Bearer <JWT>` header. No bearer credential ⇒ 401 with
+  `WWW-Authenticate: Bearer`; any unacceptable credential or a non-active user ⇒ 401 with
+  `WWW-Authenticate: Bearer error="invalid_token"`. No usable issuer keys ⇒ 503 (a token naming a key
+  the issuer does not publish is 401 while cached keys are usable).
+- **Database.** Each request is one bootstrap transaction and one tenant transaction (B2b-2). From the
+  login check on, a request has 5 s; a timeout, lock wait or any database error is 503.
+- **Errors.** Every application-produced `/v1` error is `{"error": {"code", "message", "request_id",
+  "retryable"}}`, with `request_id` equal to `X-Request-ID`; messages are fixed per code. Every `/v1`
+  response carries `Cache-Control: no-store`, and `Connection: close` when it is sent before an announced
+  request body was read to the end (A6). A response the ASGI server generates before the app runs
+  (Uvicorn's plain-text 400) cannot carry the envelope or these headers. Legacy routes keep their shapes.
+- **Logs.** Refusals are logged as `v1_request_refused` with a code and a reason code; unexpected errors as
+  `v1_unhandled_error` with the exception type name. Tokens, emails, messages and input are never logged.
+- **Contract snapshot.** `backend/tests/fixtures/openapi-v1.json` is the `/v1` OpenAPI contract; the test
+  fails on any difference. After an intended, additive change, regenerate it with
+  `CARVIS_UPDATE_OPENAPI_SNAPSHOT=1 .venv/bin/python -m pytest backend/tests/test_b2c_v1_api.py -k snapshot`.

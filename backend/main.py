@@ -42,6 +42,9 @@ from upload_security import (MAX_UPLOAD_BYTES, NOT_A_PDF_DETAIL, OPERATOR_TOKEN_
                              OperatorUploadRoute, configured_operator_token)
 from log_config import configure_logging, log_event, register_values
 from settings import load_settings
+from api_v1.auth import build_v1_runtime
+from api_v1.errors import install as install_v1_errors
+from api_v1.routes import router as v1_router
 from db.readiness import READY, STARTING, ReadinessProbe, expected_head
 from request_limits import DEFAULT_BODY_LIMIT_BYTES, MULTIPART_ENVELOPE_BYTES, BodyLimit, MiB, body_limited_route
 
@@ -1153,9 +1156,13 @@ async def lifespan(app: FastAPI):
         db_engine = create_app_engine(settings.database_url)
         app.state.db_session_factory = create_session_factory(db_engine)
     app.state.readiness = ReadinessProbe.from_settings(settings, expected_head())
+    # /v1 (M2 B2c): request engine, session factory, verifier and login gate; nothing connects at boot.
+    app.state.v1 = build_v1_runtime(settings)
     try:
         yield
     finally:
+        await app.state.v1.close()
+        app.state.v1 = None
         await app.state.readiness.close()
         if db_engine is not None:
             db_engine.dispose()
@@ -1259,6 +1266,12 @@ class RequestIdMiddleware:
 
 
 app.add_middleware(RequestIdMiddleware)
+
+# --- Versioned API (M2 B2c) ----------------------------------------------------------------------
+# The envelope handlers answer only for /v1 paths; every other path keeps FastAPI's default shapes.
+# V1HeadersMiddleware (no-store) is added after RequestIdMiddleware, so it wraps it.
+install_v1_errors(app)
+app.include_router(v1_router)
 
 
 # --- Health and readiness (M2 B1) ----------------------------------------------------------------
