@@ -2,16 +2,18 @@
 
 Carvis is an iOS-only automotive intelligence product. The native SwiftUI application lives in
 `ios/`; do not add a web product UI. `docs/PRD.md` is the product source of truth. FastAPI owns
-trusted API/orchestration behavior, Qdrant holds reviewed knowledge evidence, and
-`backend/spacetimedb/` is the retained server-side realtime module.
+trusted API/orchestration behavior, PostgreSQL is the designated single transactional store
+(`docs/decisions/0001-single-store-postgresql.md`), Qdrant holds reviewed knowledge evidence, and
+`backend/spacetimedb/` currently receives only best-effort telemetry (its retirement is proposed in
+`docs/decisions/0007-retire-spacetimedb.md`).
 
 ## Documentation authority
 
 Start at `docs/README.md`. `docs/PRD.md` defines product requirements;
 `docs/product/v1-product-experience-contract.md` defines the approved V1 pilot scope (its open
-decisions, such as D-11 and D-12, stay unresolved until a record in `docs/decisions/` resolves
+decisions, such as D-12, stay unresolved until a record in `docs/decisions/` resolves
 them); `docs/audits/` holds dated historical snapshots, so verify current behavior against code and
-tests. Terminology: V1 is the Tyler field-test release; M1–M5 are the engineering milestones
+tests. Terminology: V1 is the pilot technician's field-test release; M1–M5 are the engineering milestones
 leading to it, not product versions; P0 is mandatory in V1 and P1–P3 are post-V1 priorities with no
 assigned version (definitions in `docs/README.md`). Link to these documents; do not restate them here.
 
