@@ -145,37 +145,36 @@ CLAIM_CASES = [
 ]
 
 
+@pytest.fixture(params=[0, 150], ids=["on-time", "150s-late"])
+def clock_offset(request, monkeypatch):
+    """Runs a test with every clock it and PyJWT read either on time or 150 s ahead, as when a slow
+    suite reaches it long after collection. Returns the offset in seconds."""
+    if request.param:
+        import datetime as dt
+
+        import jwt.api_jwt
+
+        real_time, offset = time.time, request.param
+
+        class Later(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return dt.datetime.fromtimestamp(real_time() + offset, tz)
+
+        monkeypatch.setattr(time, "time", lambda: real_time() + offset)
+        monkeypatch.setattr(jwt.api_jwt, "datetime", Later)
+    return request.param
+
+
 @pytest.mark.parametrize("build,expected", [case[1:] for case in CLAIM_CASES], ids=[case[0] for case in CLAIM_CASES])
-def test_claim_failures(issuer, build, expected):
-    assert reason(verifier_for(issuer), sign(build(int(time.time())))) == expected
-
-
-@pytest.fixture
-def slow_suite(monkeypatch):
-    """Every clock the test and PyJWT read runs 150 s ahead, as when a slow suite reaches a test long
-    after collection."""
-    import datetime as dt
-
-    import jwt.api_jwt
-
-    real_time = time.time
-
-    class Later(dt.datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return dt.datetime.fromtimestamp(real_time() + 150, tz)
-
-    monkeypatch.setattr(time, "time", lambda: real_time() + 150)
-    monkeypatch.setattr(jwt.api_jwt, "datetime", Later)
-
-
-def test_claim_failures_hold_when_the_suite_is_slow(issuer, slow_suite):
-    """Regression: every case gives the same outcome however late the test runs. The verifier's own
-    clock defaults to the time.time bound at import, so the shifted clock is passed explicitly."""
+def test_claim_failures(issuer, clock_offset, build, expected):
+    """Each case is built and verified when the test runs. The 150s-late variant is the regression
+    for the collection-time payloads that made CI accept two "not yet valid" tokens: restoring
+    collection-time construction fails it. The verifier's clock defaults to the time.time bound at
+    import, so the (possibly shifted) clock is passed explicitly."""
     client = httpx.AsyncClient(transport=httpx.MockTransport(issuer.handler))
     verifier = TokenVerifier(ISSUER, AUDIENCE, JwksCache(JWKS_URL, client), clock=time.time)
-    for name, build, expected in CLAIM_CASES:
-        assert reason(verifier, sign(build(int(time.time())))) == expected, name
+    assert reason(verifier, sign(build(int(time.time())))) == expected
 
 
 def test_lifetime_of_exactly_one_hour_is_accepted(issuer):
