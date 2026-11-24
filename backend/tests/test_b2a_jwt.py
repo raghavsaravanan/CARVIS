@@ -115,40 +115,71 @@ def test_principal_repr_is_redacted(issuer):
 
 # --- Rejected tokens ------------------------------------------------------------------------------
 
-NOW = int(time.time())
+# Each case is built when its test runs, from the clock at that moment, never at import or collection
+# time: a slow suite must not turn a "future" timestamp into a past one (fixed after a CI run that
+# reached these cases minutes after collection accepted two "not yet valid" tokens).
+CLAIM_CASES = [
+    ("expired", lambda now: claims(exp=now - 60, iat=now - 120), "expired"),
+    ("nbf-in-future", lambda now: claims(nbf=now + 120), "not_yet_valid"),
+    ("iat-in-future", lambda now: claims(iat=now + 120, exp=now + 600), "not_yet_valid"),
+    ("lifetime-over-1h", lambda now: claims(iat=now - 10, exp=now + 3600), "lifetime"),  # 3610 s
+    ("iat-missing", lambda now: claims(iat=...), "missing_claim"),
+    ("exp-missing", lambda now: claims(exp=...), "missing_claim"),
+    ("iss-missing", lambda now: claims(iss=...), "missing_claim"),
+    ("aud-missing", lambda now: claims(aud=...), "missing_claim"),
+    ("sub-missing", lambda now: claims(sub=...), "missing_claim"),
+    ("iss-wrong", lambda now: claims(iss="https://evil.example.test/auth/v1"), "issuer"),
+    ("iss-trailing-slash", lambda now: claims(iss=ISSUER + "/"), "issuer"),
+    ("aud-wrong", lambda now: claims(aud="anon"), "audience"),
+    ("aud-list-without-ours", lambda now: claims(aud=["other", "anon"]), "audience"),
+    ("sub-empty", lambda now: claims(sub=""), "subject"),
+    ("sub-too-long", lambda now: claims(sub="x" * 256), "subject"),
+    ("sub-nul", lambda now: claims(sub="a\x00b"), "subject"),
+    ("sub-not-string", lambda now: claims(sub=42), "invalid"),
+    ("role-anon", lambda now: claims(role="anon"), "role"),
+    ("role-missing", lambda now: claims(role=...), "role"),
+    ("anonymous-true", lambda now: claims(is_anonymous=True), "anonymous"),
+    ("anonymous-string", lambda now: claims(is_anonymous="false"), "anonymous"),
+    ("email-not-string", lambda now: claims(email=42), "email"),
+    ("email-too-long", lambda now: claims(email="a" * 321), "email"),
+]
 
 
-@pytest.mark.parametrize("payload,expected", [
-    (claims(exp=NOW - 60, iat=NOW - 120), "expired"),
-    (claims(nbf=NOW + 120), "not_yet_valid"),
-    (claims(iat=NOW + 120, exp=NOW + 600), "not_yet_valid"),
-    (claims(iat=NOW - 10, exp=NOW + 3600), "lifetime"),  # 3610 s
-    (claims(iat=...), "missing_claim"),
-    (claims(exp=...), "missing_claim"),
-    (claims(iss=...), "missing_claim"),
-    (claims(aud=...), "missing_claim"),
-    (claims(sub=...), "missing_claim"),
-    (claims(iss="https://evil.example.test/auth/v1"), "issuer"),
-    (claims(iss=ISSUER + "/"), "issuer"),
-    (claims(aud="anon"), "audience"),
-    (claims(aud=["other", "anon"]), "audience"),
-    (claims(sub=""), "subject"),
-    (claims(sub="x" * 256), "subject"),
-    (claims(sub="a\x00b"), "subject"),
-    (claims(sub=42), "invalid"),
-    (claims(role="anon"), "role"),
-    (claims(role=...), "role"),
-    (claims(is_anonymous=True), "anonymous"),
-    (claims(is_anonymous="false"), "anonymous"),
-    (claims(email=42), "email"),
-    (claims(email="a" * 321), "email"),
-])
-def test_claim_failures(issuer, payload, expected):
-    assert reason(verifier_for(issuer), sign(payload)) == expected
+@pytest.fixture(params=[0, 150], ids=["on-time", "150s-late"])
+def clock_offset(request, monkeypatch):
+    """Runs a test with every clock it and PyJWT read either on time or 150 s ahead, as when a slow
+    suite reaches it long after collection. Returns the offset in seconds."""
+    if request.param:
+        import datetime as dt
+
+        import jwt.api_jwt
+
+        real_time, offset = time.time, request.param
+
+        class Later(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return dt.datetime.fromtimestamp(real_time() + offset, tz)
+
+        monkeypatch.setattr(time, "time", lambda: real_time() + offset)
+        monkeypatch.setattr(jwt.api_jwt, "datetime", Later)
+    return request.param
+
+
+@pytest.mark.parametrize("build,expected", [case[1:] for case in CLAIM_CASES], ids=[case[0] for case in CLAIM_CASES])
+def test_claim_failures(issuer, clock_offset, build, expected):
+    """Each case is built and verified when the test runs. The 150s-late variant is the regression
+    for the collection-time payloads that made CI accept two "not yet valid" tokens: restoring
+    collection-time construction fails it. The verifier's clock defaults to the time.time bound at
+    import, so the (possibly shifted) clock is passed explicitly."""
+    client = httpx.AsyncClient(transport=httpx.MockTransport(issuer.handler))
+    verifier = TokenVerifier(ISSUER, AUDIENCE, JwksCache(JWKS_URL, client), clock=time.time)
+    assert reason(verifier, sign(build(int(time.time())))) == expected
 
 
 def test_lifetime_of_exactly_one_hour_is_accepted(issuer):
-    verify(verifier_for(issuer), sign(claims(iat=NOW, exp=NOW + 3600)))
+    now = int(time.time())
+    verify(verifier_for(issuer), sign(claims(iat=now, exp=now + 3600)))
 
 
 def test_bad_signature(issuer):
