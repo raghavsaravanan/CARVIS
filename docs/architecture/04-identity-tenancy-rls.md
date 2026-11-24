@@ -184,10 +184,11 @@ Database-level bounds, which hold even if the function body is wrong:
   definer), `VOLATILE`, owned by `carvis_owner`, with a pinned `search_path`; it reads no table and
   only combines the clock with random bytes. It loses `PUBLIC` `EXECUTE` through `carvis_owner`'s
   default revoke and is then granted `EXECUTE` only to the roles that insert rows whose `id` uses
-  it: in B2 that is `carvis_provisioner` alone. `carvis_bootstrap`, `carvis_app`, `carvis_worker`,
+  it: in B2 that is `carvis_provisioner` alone, and from B3a (`0005_garage`, which grants `carvis_app`
+  `INSERT` on `vehicles` and `vehicle_snapshots`) also `carvis_app`. `carvis_bootstrap`, `carvis_worker`,
   `PUBLIC` and the issuer roles get no `EXECUTE` (a later package that grants a runtime role
   `INSERT` on such a table also grants it `EXECUTE` here). The catalog check allow-lists exactly
-  this ACL.
+  this ACL for the revision present.
 - Policies `TO carvis_provisioner` (RLS is forced, so they bind the definer too): `users` rows only
   where `auth_issuer = app.bootstrap_issuer AND auth_subject = app.bootstrap_subject`; `workspaces`
   rows only where `kind = 'personal' AND personal_owner_user_id = app.bootstrap_user_id`;
@@ -284,7 +285,8 @@ application for V1.
 
 Tests 1–8, 10 and 12–16 cover the identity tables in B2 (B2a: 12 and the default-privilege part of
 15; B2b: the rest, once `ensure_principal` and the tables exist); 9 on conversation and turn lists lands with B4, 11 with B4/B5, and the `carvis_maintenance`
-part of 7 with B8.
+part of 7 with B8. B3a repeats 1, 2, 6, 7 (worker part), 10, 12 and 13 for `vehicles` and
+`vehicle_snapshots` at database level (`backend/tests/test_b3a_garage.py`).
 
 ## Account lifecycle
 
