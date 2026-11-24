@@ -21,8 +21,13 @@ example payloads in `backend/tests/fixtures/v1/`.
 - `X-Workspace-Id` applies to **workspace-scoped** routes (the first lands in B3): optional, defaults to the
   caller's personal workspace, validated against the caller's memberships (malformed ⇒ 422, not a member ⇒
   404). **User-scoped** routes (`/v1/me`, `/v1/workspaces`) ignore it. It is never authority.
-- `X-Client-Version`; server may answer `426` (`unsupported_client`). Enforcement waits until a minimum
-  supported version exists; where `min_supported_version` is carried is provisional.
+- `X-Client-Version` is required from iOS clients on every `/v1` request and contains the application's
+  `CFBundleShortVersionString` in `MAJOR.MINOR.PATCH` format, with three nonnegative decimal integer
+  components. Components are compared numerically, not lexicographically. Enforcement is not active in B2c.
+  Once a minimum supported client version is configured and enforcement is enabled, a missing, malformed, or
+  unsupported version receives HTTP `426` with the `unsupported_client` error code. Until enforcement is
+  enabled, the server does not reject requests based on this header. The configuration mechanism for
+  `min_supported_version` remains provisional.
 - Mutating create endpoints accept `Idempotency-Key`.
 - Cursor pagination: `?cursor=&limit=` (default 25, range 1–100). A page is
   `{"items": [...], "next_cursor": string | null}`; the cursor is an opaque string (clients never parse or
