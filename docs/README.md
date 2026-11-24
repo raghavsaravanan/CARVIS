@@ -14,9 +14,12 @@ For an engineer new to CARVIS:
    exact V1 pilot scope and its decision register.
 4. [`architecture/README.md`](architecture/README.md) and [`decisions/`](decisions/README.md): the
    V1 design and each decision record's status.
-5. [`architecture/12-m2-roadmap.md`](architecture/12-m2-roadmap.md): the engineering sequence, its
+5. Optional context: [`product/carvis-product-experience-blueprint.md`](product/carvis-product-experience-blueprint.md),
+   the non-authoritative long-term product vision (experience domains, proposed post-V1 themes,
+   business hypotheses). It adds no requirement and yields to every document above.
+6. [`architecture/12-m2-roadmap.md`](architecture/12-m2-roadmap.md): the engineering sequence, its
    dependencies, and open owner decisions.
-6. [`development-workflow.md`](development-workflow.md) and [`../AGENTS.md`](../AGENTS.md): how to
+7. [`development-workflow.md`](development-workflow.md) and [`../AGENTS.md`](../AGENTS.md): how to
    branch, test, get review, and open a pull request safely.
 
 ## Terminology and milestones
@@ -53,6 +56,7 @@ as a plan.
 | --- | --- | --- |
 | What must the product do? | [`PRD.md`](PRD.md) (document revision 1.3) | Product requirements authority |
 | What exactly does the V1 pilot include? | [`product/v1-product-experience-contract.md`](product/v1-product-experience-contract.md) | Approved V1 pilot scope. Contract decisions D-06, D-07 and D-09 are proposed defaults, and **contract D-12 (retention) remains open**; do not treat them as resolved. Contract D-11 (identity/database vendors) is resolved by accepted ADR-0001 and ADR-0002. The roadmap's own D-numbers are a separate series |
+| What is the long-term product vision? | [`product/carvis-product-experience-blueprint.md`](product/carvis-product-experience-blueprint.md) | Non-authoritative strategy and evaluation plan; subordinate to the PRD, the contract, accepted ADRs and `AGENTS.md`. Its V2 to V5 themes are planning proposals, not assigned versions, release names, scope or dates |
 | What did the repository look like on 2026-11-15? | [`audits/2026-11-15-p0-readiness-audit.md`](audits/2026-11-15-p0-readiness-audit.md) | Historical snapshot, not current truth |
 | What does the code do now? | The code and its tests | Implementation truth |
 | How do we branch, test, review, coordinate agents, and open PRs? | [`development-workflow.md`](development-workflow.md) | Current workflow |
@@ -72,7 +76,7 @@ docs/
   README.md                  this index
   PRD.md                     product requirements (kept at this path; many links depend on it)
   development-workflow.md    branch, worktree, PR, CI, and agent workflow
-  product/                   approved product scope (V1 Product Experience Contract)
+  product/                   approved product scope (V1 Product Experience Contract) and the non-authoritative product experience blueprint
   audits/                    dated, immutable audit snapshots: YYYY-MM-DD-<topic>.md
   decisions/                 architecture decision records and owner operational decisions
   architecture/              V1 backend architecture (milestone M1): data model, RLS, API, Vapi, Brain, operations
@@ -90,6 +94,7 @@ into `AGENTS.md` or `CLAUDE.md`, link to it.
 | Repository file | Received as | SHA-256 of received file | Edits to received text |
 | --- | --- | --- | --- |
 | `product/v1-product-experience-contract.md` | `CARVIS_V1_Product_Experience_Contract.md` | `d029d7692525fda819267e134e0262beb2270216c4590498ff71742ea8b86927` | Imported byte-identical, then revised to document revision 1.1 on 2026-11-15: V1 / M1–M5 / P0–P3 terminology, "V2" replaced by "post-V1", milestone mapping added to §8, §10, and §11. No decision ID, journey, acceptance criterion, or scope item changed. Later revisions (1.2 to 1.4) are recorded in the contract's own revision line. The hash identifies the received file, not the current text |
+| `product/carvis-product-experience-blueprint.md` | `CARVIS Product Experience Blueprint` (collaborator draft, pasted text, 2026-11-24) | `a25cbbb7324e8034f3e28d5e5d3fb0af6f4f7893457c29958587e35aa7205a32` | Reconciled against `main` at `e807df7` on 2026-11-24: PR #27 references changed from pending to merged; the proposed master timeline, tracker task IDs and near-term decision dates removed (scheduling belongs in the operating tracker); a precedence section added; the iOS sign-in status claim narrowed; unconfirmed anchors and links verified. Domains, variants, journeys, principles, dependency map, V1 to V5 themes and business hypotheses preserved |
 | `audits/2026-11-15-p0-readiness-audit.md` | `CARVIS_P0_READINESS_AUDIT.txt` | `2f5cb2eaf06d7d99c935300d4028b4264a883849799077b7b6e576f081f3f58c` | Added a snapshot banner; rewrote 7 machine-specific absolute source links to repo-relative code references so links resolve and no local paths are committed |
 
 `docs/PRD.md` was already in the repository. Document revision 1.1 (2026-11-15) changed terminology
