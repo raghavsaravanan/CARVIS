@@ -13,10 +13,10 @@
 ADR-0006 makes PostgreSQL authoritative for Brain state, but the serve-time rule in
 [`07-brain.md`](../architecture/07-brain.md) took its candidates from the Qdrant exact-filter scroll,
 so a verified, withdrawn or conflicting record missing from the projection was invisible. V1 also
-needs a typed knowledge model, an operator ingestion pipeline and a retrieval approach for Tyler's
-workflow (exact specifications, vehicle-specific service methods) without broad research or new
-infrastructure. ADR-0001 (PostgreSQL as the canonical transactional and knowledge store) was
-accepted by the owner on 2026-11-22.
+needs a typed knowledge model, an operator ingestion pipeline and a retrieval approach for the pilot
+technician's workflow (exact specifications, vehicle-specific service methods) without broad research or new
+infrastructure. ADR-0001 (PostgreSQL as the single canonical transactional store) was
+accepted by the owner on 2026-11-22; PostgreSQL authority for Brain knowledge is proposed in ADR-0006.
 
 ## Options considered
 
@@ -31,8 +31,8 @@ accepted by the owner on 2026-11-22.
 
 ## Decision
 
-- One Python/FastAPI modular monolith; PostgreSQL canonical for transactions and knowledge (ADR-0001,
-  accepted); Qdrant a rebuildable projection plus the alias-independent control collection
+- One Python/FastAPI modular monolith; PostgreSQL canonical for transactions (ADR-0001, accepted) and for
+  knowledge (ADR-0006, proposed); Qdrant a rebuildable projection plus the alias-independent control collection
   (ADR-0006); Vapi as conversational transport; Swift/SwiftUI on iOS. No new graph database,
   microservices or model training.
 - The serve-time rule enumerates the full applicable scope, with its dependency closure, from one

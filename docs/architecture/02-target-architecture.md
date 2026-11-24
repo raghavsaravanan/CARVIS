@@ -52,11 +52,11 @@ deadline) stay process-local; a deploy mid-call drops that request and nothing e
 
 ## Database and identity choice (summary; see ADR-0001, ADR-0002)
 
-PostgreSQL with SQLAlchemy 2 and Alembic. Supabase is the preferred host and OIDC issuer (Sign in
-with Apple) **used strictly as plain PostgreSQL plus an OIDC issuer**: the Data API is disabled,
+PostgreSQL with SQLAlchemy 2 and Alembic. Supabase is the host and OIDC issuer (Sign in
+with Apple; accepted ADR-0002) **used strictly as plain PostgreSQL plus an OIDC issuer**: the Data API is disabled,
 `anon`/`authenticated` privileges are revoked, the service-role key never reaches iOS, and our
 Alembic chain owns the schema. FastAPI validates JWTs provider-agnostically (issuer, audience,
-expiry, JWKS) so the issuer can be replaced. SpacetimeDB is retired ([ADR-0007](../decisions/0007-retire-spacetimedb.md)).
+expiry, JWKS) so the issuer can be replaced. SpacetimeDB retirement is proposed ([ADR-0007](../decisions/0007-retire-spacetimedb.md)) and not yet decided.
 
 ## External reference review (pattern level only)
 

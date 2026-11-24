@@ -4,9 +4,24 @@ Start here. Engineering policy lives in [`../AGENTS.md`](../AGENTS.md) (with sco
 `AGENTS.md` files under `backend/`, `backend/spacetimedb/`, and `ios/`); this index only says where
 each kind of document lives and which one wins when they disagree.
 
+## Recommended reading path
+
+For an engineer new to CARVIS:
+
+1. [`../README.md`](../README.md): what CARVIS is, its target architecture, and how to run it.
+2. [`PRD.md`](PRD.md): product requirements and priorities.
+3. [`product/v1-product-experience-contract.md`](product/v1-product-experience-contract.md): the
+   exact V1 pilot scope and its decision register.
+4. [`architecture/README.md`](architecture/README.md) and [`decisions/`](decisions/README.md): the
+   V1 design and each decision record's status.
+5. [`architecture/12-m2-roadmap.md`](architecture/12-m2-roadmap.md): the engineering sequence, its
+   dependencies, and open owner decisions.
+6. [`development-workflow.md`](development-workflow.md) and [`../AGENTS.md`](../AGENTS.md): how to
+   branch, test, get review, and open a pull request safely.
+
 ## Terminology and milestones
 
-- **V1** is the first complete field-testable CARVIS release, deployed through TestFlight for Tyler.
+- **V1** is the first complete field-testable CARVIS release, deployed through TestFlight for the pilot technician.
   It is the only product version defined today.
 - **M1–M5** are the engineering milestones that lead to V1. They are work stages, not product
   versions. [`PRD.md` §6.5](PRD.md#65-engineering-milestones-to-v1) is the authoritative definition.
@@ -24,7 +39,7 @@ each kind of document lives and which one wins when they disagree.
 | M3 — CARVIS Brain Pilot Configuration | Rights-cleared, reviewed, evaluated pilot knowledge corpus |
 | M4 — Native iOS V1 | The five-destination iPhone application on real data |
 | M5 — Deployment and TestFlight Validation | Stable release infrastructure and physical-device validation |
-| V1 — Tyler Field Test | Tyler uses the TestFlight build; results measured against PRD §14 |
+| V1 — Technician Field Test | The pilot technician uses the TestFlight build; results measured against PRD §14 |
 
 The release gates in [`PRD.md` §15](PRD.md#15-testflight-release-criteria) decide whether V1 is
 ready; completing a milestone does not by itself establish readiness. The historical audit's
@@ -36,14 +51,14 @@ as a plan.
 
 | Question | Authoritative source | Status |
 | --- | --- | --- |
-| What must the product do? | [`PRD.md`](PRD.md) (document revision 1.1) | Product requirements authority |
-| What exactly does the V1 pilot include? | [`product/v1-product-experience-contract.md`](product/v1-product-experience-contract.md) | Approved V1 pilot scope. Decisions D-06 to D-09 are proposed defaults and **D-11 (identity/database vendors) and D-12 (retention) remain open**; do not treat them as resolved |
+| What must the product do? | [`PRD.md`](PRD.md) (document revision 1.2) | Product requirements authority |
+| What exactly does the V1 pilot include? | [`product/v1-product-experience-contract.md`](product/v1-product-experience-contract.md) | Approved V1 pilot scope. Contract decisions D-06, D-07 and D-09 are proposed defaults, and **contract D-12 (retention) remains open**; do not treat them as resolved. Contract D-11 (identity/database vendors) is resolved by accepted ADR-0001 and ADR-0002. The roadmap's own D-numbers are a separate series |
 | What did the repository look like on 2026-11-15? | [`audits/2026-11-15-p0-readiness-audit.md`](audits/2026-11-15-p0-readiness-audit.md) | Historical snapshot, not current truth |
 | What does the code do now? | The code and its tests | Implementation truth |
 | How do we branch, test, review, coordinate agents, and open PRs? | [`development-workflow.md`](development-workflow.md) | Current workflow |
 | Which working rules has the owner accepted for the engineering workflow? | [`decisions/operational-decisions.md`](decisions/operational-decisions.md) | Owner-accepted; resolves no decision |
-| How is the backend built and operated? | [`backend/architecture.md`](backend/architecture.md) | Current backend architecture |
-| What is the proposed V1 production backend design? | [`architecture/README.md`](architecture/README.md) and decision records 0001–0009 in [`decisions/`](decisions/) | Proposed (milestone M1); not implemented until the owner accepts the records |
+| How is the backend built and operated? | [`backend/architecture.md`](backend/architecture.md) and [`backend/configuration.md`](backend/configuration.md) | Current backend architecture and configuration |
+| What is the V1 production backend design? | [`architecture/README.md`](architecture/README.md) and decision records 0001–0010 in [`decisions/`](decisions/) | Milestone M1 design. ADR-0001 to ADR-0004 are accepted; the others stay proposed until the owner accepts them. Each record's status line is authoritative |
 
 Conflict rule (from the contract): the PRD and owner-approved decisions define desired behavior;
 fresh repository tests and audits define implementation truth; an older audit or prototype never
@@ -61,7 +76,7 @@ docs/
   audits/                    dated, immutable audit snapshots: YYYY-MM-DD-<topic>.md
   decisions/                 architecture decision records and owner operational decisions
   architecture/              V1 backend architecture (milestone M1): data model, RLS, API, Vapi, Brain, operations
-  backend/                   current backend architecture, Qdrant v2 runbook, demo testing
+  backend/                   current backend architecture and configuration, Qdrant v2 runbook, demo testing
   ios/                       native iOS setup, hands-free, and wake-listener guides
   archive/                   superseded records; read for history, never for current behavior
 ```
@@ -74,11 +89,12 @@ into `AGENTS.md` or `CLAUDE.md`, link to it.
 
 | Repository file | Received as | SHA-256 of received file | Edits to received text |
 | --- | --- | --- | --- |
-| `product/v1-product-experience-contract.md` | `CARVIS_V1_Product_Experience_Contract.md` | `d029d7692525fda819267e134e0262beb2270216c4590498ff71742ea8b86927` | Imported byte-identical, then revised to document revision 1.1 on 2026-11-15: V1 / M1–M5 / P0–P3 terminology, "V2" replaced by "post-V1", milestone mapping added to §8, §10, and §11. No decision ID, journey, acceptance criterion, or scope item changed. The hash identifies the received file, not the current text |
+| `product/v1-product-experience-contract.md` | `CARVIS_V1_Product_Experience_Contract.md` | `d029d7692525fda819267e134e0262beb2270216c4590498ff71742ea8b86927` | Imported byte-identical, then revised to document revision 1.1 on 2026-11-15: V1 / M1–M5 / P0–P3 terminology, "V2" replaced by "post-V1", milestone mapping added to §8, §10, and §11. No decision ID, journey, acceptance criterion, or scope item changed. Later revisions (1.2 and 1.3) are recorded in the contract's own revision line. The hash identifies the received file, not the current text |
 | `audits/2026-11-15-p0-readiness-audit.md` | `CARVIS_P0_READINESS_AUDIT.txt` | `2f5cb2eaf06d7d99c935300d4028b4264a883849799077b7b6e576f081f3f58c` | Added a snapshot banner; rewrote 7 machine-specific absolute source links to repo-relative code references so links resolve and no local paths are committed |
 
 `docs/PRD.md` was already in the repository. Document revision 1.1 (2026-11-15) changed terminology
-only and removed statements that the repository audit had not yet happened; requirement IDs,
-priorities, and acceptance criteria are unchanged. A `CARVIS_PRD.pdf` exists outside the repository; it
+only and removed statements that the repository audit had not yet happened; revision 1.2
+(2026-11-23) names the pilot participant by role and marks two §18 decisions resolved by accepted
+records. Requirement IDs, priorities, and acceptance criteria are unchanged. A `CARVIS_PRD.pdf` exists outside the repository; it
 was not imported because CI rejects tracked `.pdf` files and `PRD.md` is the maintained text form.
 Confirm the two match before treating either as canonical.

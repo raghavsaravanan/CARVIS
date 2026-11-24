@@ -42,9 +42,10 @@ Not in Track A: authenticating `/vision-query` or `/conversation/sessions`, remo
 
 Parallel: M3 corpus work after the B7 contract; iOS M4 consumes the contracts frozen at B2c.
 
-B2 is split into serial rows B2a, B2b and B2c (owner, 2026-11-22), each its own draft PR titled
-`(M2 B2a)` and so on, each starting only after the previous one merges. All three rely on ADR-0002,
-ADR-0003 and ADR-0004 and start only after the owner accepts those records. No row provisions Supabase, configures a provider or creates credentials.
+B2 is split into serial rows B2a, B2b and B2c (owner, 2026-11-22), and B2b further into B2b-1 and
+B2b-2 (table above), each its own draft PR titled `(M2 B2a)` and so on, each starting only after the
+previous one merges. All rely on ADR-0002, ADR-0003 and ADR-0004, which the owner accepted on
+2026-11-23. No row provisions Supabase, configures a provider or creates credentials.
 
 ## B7 Brain packages (approved split, subject to review)
 
@@ -93,7 +94,7 @@ structured plus reviewed aliases and lexical matching, **C** B plus dense discov
 
 ## M3 — pilot knowledge acquisition (parallel, external gate)
 
-Acquisition and Tyler's task confirmation start now, in parallel with Track B; ingestion,
+Acquisition and the pilot technician's task confirmation start now, in parallel with Track B; ingestion,
 technical review, evaluation, coverage publication and correction follow the relevant B7 gates. An
 internal CLI and report are required; a dashboard is optional; there is no mechanic ingestion UI.
 No purchase, account change, licensing outreach or scraping without owner approval. Proposed pilot
@@ -173,7 +174,7 @@ the decision records are marked `accepted` or the dependent PR starts:
 | D-13 | PostgreSQL-first authoritative evidence scope (07 "Serve-time rule"): mandatory requirements, the delivery-window residual (07 requirement 6) and the detailed evidence protocol | Requirements and the residual (for V1) approved by the owner on 2026-11-22; the detailed protocol stays proposed until it resolves F1–F3, passes T4 design review and receives final owner sign-off | ADR-0010; design acceptance of B7c–e; B7a schema elements for publication status or decision counters; B7f activation |
 | D-14 | Spoken-output integrity as a mandatory V1 release gate | Approved by the owner on 2026-11-22 | B5, technical voice release, M5 |
 | D-15 | R3 adoption thresholds and latency target | Accept before R3 scoring | R3, B7d discovery adapter |
-| D-16 | Pilot targets with Tyler (V1 contract §6.5) | Confirm with Tyler | M3 evaluation, V1 field test |
+| D-16 | Pilot targets with the pilot technician (V1 contract §6.5) | Confirm with the pilot technician | M3 evaluation, V1 field test |
 | D-17 | Named qualified technical reviewer and publisher | Name before any real-scope publication | M3 publication |
 | D-18 | Include conditional TSB/recall discovery in V1 | Decide per rights, coverage, quality and cost; not a release gate | CAR-042 |
 

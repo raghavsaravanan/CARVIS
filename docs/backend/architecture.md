@@ -5,8 +5,13 @@
 Carvis has one user-facing application: the native SwiftUI iOS app. FastAPI owns API and
 webhook orchestration, Qdrant stores reviewed automotive evidence, Vapi provides current voice
 infrastructure, Nemotron supplies optional non-authoritative visual context, and Meta Wearables
-is an optional future device capability. The retained SpacetimeDB module is reserved for future
-native shop intelligence; it has no browser client and is not yet integrated into iOS.
+is an optional future device capability. The SpacetimeDB module currently receives only
+best-effort telemetry; it has no browser client, is not integrated into iOS, and its retirement is
+proposed in [ADR-0007](../decisions/0007-retire-spacetimedb.md).
+
+Operator-facing configuration (environment variables, startup guards, request limits, logging,
+migrations and the runtime database login) is collected in the
+[backend configuration reference](configuration.md).
 
 ## Request flow
 
@@ -152,15 +157,18 @@ The v2 application refuses legacy numeric answers until migration is complete. D
 
 ## Open architecture decisions
 
-- Select the P0 authentication provider and canonical transactional store.
-- Decide whether SpacetimeDB is the P1 realtime shop store and whether future iOS access is direct
-  or mediated through authenticated FastAPI. No integration is approved yet.
+- The P0 authentication provider and canonical transactional store are decided: PostgreSQL
+  ([ADR-0001](../decisions/0001-single-store-postgresql.md)) and Supabase Auth as the OIDC issuer
+  ([ADR-0002](../decisions/0002-identity-provider-and-token-model.md)), both accepted.
+- Decide SpacetimeDB's future (its retirement is proposed in
+  [ADR-0007](../decisions/0007-retire-spacetimedb.md)) and, if it is kept, whether future iOS
+  access is direct or mediated through authenticated FastAPI. No integration is approved yet.
 - Approve the phone-first Vapi/audio lifecycle and transcript/audio retention policy.
 - Define rights-cleared pilot vehicle and repair-information coverage.
 - Decide whether guided-repair and simulated shop UI remain development-only or become future
   source-grounded product features.
 
-Secrets remain server-side and captured images are intended to remain ephemeral. The retained
-SpacetimeDB module and optional best-effort backend telemetry do not yet establish end-user iOS
+Secrets remain server-side and captured images are intended to remain ephemeral. The
+SpacetimeDB module and optional best-effort backend telemetry do not establish end-user iOS
 identity. Meta SDK lifecycle code remains isolated in the native application.
 

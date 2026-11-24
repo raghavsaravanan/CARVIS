@@ -1,32 +1,68 @@
 # CARVIS
 
-CARVIS is a native iOS automotive intelligence platform for delivering vehicle-specific,
-source-grounded repair information through conversational voice and optional visual context.
+**Conversational Automotive Repair & Visual Intelligence System**
 
-The system is designed for professional technicians: it preserves explicit vehicle context,
-validates technical evidence deterministically, and refuses unsupported specifications rather than
-guessing.
+CARVIS is a native iOS assistant that gives professional automotive technicians vehicle-specific,
+source-grounded repair information by voice, without stepping away from the vehicle.
+
+## The problem
+
+Technicians regularly stop physical repair work to look up information that already exists in
+service-information systems: they remove gloves, walk to a shop computer, navigate documentation and
+interpret the result. The information exists; using it at the moment it is needed is the hard part.
+CARVIS closes that gap. It augments the technician's expertise and never replaces professional
+judgment.
+
+## Product principles
+
+- **Minimal interruption.** The technician keeps working; CARVIS fits existing shop workflows
+  instead of adding administrative tasks.
+- **Voice first.** The primary interaction is natural conversation through the iPhone or a connected
+  headset. Wearables are optional adapters, never a prerequisite.
+- **Explicit vehicle context.** Every technical answer is bound to a vehicle the technician has
+  confirmed. Images and model output never establish vehicle identity.
+- **Verified information or a clear refusal.** Answers come only from reviewed, applicable evidence
+  with provenance. When evidence is missing, conflicting or out of scope, CARVIS says so instead of
+  guessing.
+
+The first release, **V1**, is a TestFlight field test with a pilot technician. Its scope is defined
+in the [V1 Product Experience Contract](docs/product/v1-product-experience-contract.md).
 
 ## Architecture
 
+The diagram shows the target architecture for V1, whose direction the owner approved in principle.
+Each component's decision record and status (accepted or proposed) is in the table below.
+Implementation is incremental; progress and dependencies are tracked in the
+[M2 roadmap](docs/architecture/12-m2-roadmap.md).
+
 ```mermaid
 flowchart LR
-    I[Native iOS app] <--> V[Vapi voice]
-    I <--> A[FastAPI backend]
-    V <--> A
-    A <--> Q[Qdrant verified knowledge]
-    A -. visual context .-> N[NVIDIA Nemotron]
+    T((Technician)) --> I[Native SwiftUI iOS app]
+    I -- sign-in --> ID[Supabase Auth<br/>OIDC issuer]
+    I <-- voice call --> V[Vapi voice]
+    I -- HTTPS, bearer JWT --> A[FastAPI backend]
+    V -- authenticated tool webhook --> A
+    A --> P[(PostgreSQL<br/>authoritative transactional store)]
+    A --> Q[(Qdrant<br/>evidence index)]
+    A -. optional visual context .-> N[NVIDIA Nemotron]
     I -. optional wearable adapter .-> M[Meta Wearables]
-    A -. shop intelligence .-> S[SpacetimeDB]
 ```
 
-- `ios/` — SwiftUI application, voice experience, device integrations, and native tests.
-- `backend/` — FastAPI APIs, conversation orchestration, ingestion, retrieval, verification, and
-  provider adapters.
-- `backend/spacetimedb/` — server-side shop/workspace schema, views, reducers, and authorization.
-- `docs/` — product requirements, active architecture, operational runbooks, and archived records.
+| Component | Responsibility | Decision |
+| --- | --- | --- |
+| Native SwiftUI app (`ios/`) | The only user-facing client: voice session, Garage, history, evidence display, feedback | [PRD](docs/PRD.md) |
+| FastAPI backend (`backend/`) | The single application API and policy enforcement point: authentication, tenant authorization, conversation orchestration, verification and refusals | [ADR-0002](docs/decisions/0002-identity-provider-and-token-model.md), [ADR-0004](docs/decisions/0004-api-versioning-and-error-envelope.md) (accepted) |
+| PostgreSQL | The single transactional store for users, workspaces, vehicles, conversations and audit data, with forced row-level security as a second isolation layer | [ADR-0001](docs/decisions/0001-single-store-postgresql.md), [ADR-0003](docs/decisions/0003-tenancy-and-row-level-security.md) (accepted) |
+| Supabase | Hosts PostgreSQL and acts only as the OIDC token issuer; the app never talks to the database | [ADR-0002](docs/decisions/0002-identity-provider-and-token-model.md) (accepted) |
+| Qdrant | Evidence index for reviewed knowledge; never holds identity or transactions | [ADR-0001](docs/decisions/0001-single-store-postgresql.md) (accepted); its role as a rebuildable projection of PostgreSQL knowledge is part of the proposed Brain design below |
+| CARVIS Brain | Operator-reviewed knowledge with PostgreSQL as its authority and Qdrant as a rebuildable projection, checked at serve time; whether a discovery layer beyond exact retrieval is adopted is decided by benchmark | [ADR-0006](docs/decisions/0006-brain-ownership-and-restore-safety.md), [ADR-0010](docs/decisions/0010-brain-knowledge-model-and-retrieval.md) (proposed) |
+| Vapi | Conversational voice transport; it calls FastAPI tools and is never an authority for tenant, vehicle or facts | [PRD](docs/PRD.md); webhook authentication and call binding in [ADR-0005](docs/decisions/0005-vapi-ingress-and-call-binding.md) (proposed) |
+| NVIDIA Nemotron, Meta Wearables | Optional visual context and an optional wearable adapter; neither is a V1 prerequisite or a source of repair facts | [PRD](docs/PRD.md) |
 
-The iOS application is the only user-facing client. Carvis has no web frontend.
+The repository also contains a SpacetimeDB module (`backend/spacetimedb/`). Today it receives only
+best-effort telemetry, and the target design does not depend on it; its retirement is proposed in
+[ADR-0007](docs/decisions/0007-retire-spacetimedb.md) and not yet decided. The full design, with trust boundaries and
+flows, is in [`docs/architecture/`](docs/architecture/README.md).
 
 ## Knowledge safety
 
@@ -41,6 +77,18 @@ Semantic similarity may rank already-applicable evidence; it never proves correc
 vision models cannot establish vehicle identity or authorize repair specifications. New ingestion
 is staged as pending review, and Qdrant migration or alias work must follow the
 [migration runbook](docs/backend/qdrant-v2-migration.md).
+
+## Repository layout
+
+- `ios/` — SwiftUI application, voice experience, device integrations, and native tests.
+- `backend/` — FastAPI APIs, conversation orchestration, ingestion, retrieval, verification,
+  database migrations, and provider adapters.
+- `backend/spacetimedb/` — SpacetimeDB module that currently receives best-effort telemetry (see above).
+- `docs/` — product requirements, architecture and decision records, roadmap, runbooks, and
+  archived records.
+- `scripts/` — repository verification, worktree bootstrap, and review tooling.
+
+CARVIS has no web frontend.
 
 ## Development setup
 
@@ -86,162 +134,12 @@ Add `--upgrade` (or `--upgrade-package <name>`) to move pins forward deliberatel
 
 Native code that bypasses Python's `socket` module is not covered.
 
-`backend/setup.sh` loads `backend/.env` with python-dotenv's `load_dotenv(override=False)`, as the
-API does, and never sources the file as shell. As a result:
-
-- a variable present in the environment takes precedence even when it is empty;
-- `${VAR}` references resolve the same way;
-- `PYTHON_DOTENV_DISABLED` is honoured.
-
-Surrounding whitespace is trimmed; internal whitespace is kept. The script uses `.venv/bin/python`
-(or `CARVIS_SETUP_PYTHON`). It exits with status 2 if it cannot read `.env` safely, for example when
-python-dotenv is not installed or a value spans several lines.
-
 Keep provider credentials in the local `backend/.env`; never commit secrets, source manuals,
 captured images, parse caches, Qdrant data, or review exports.
 
-`CARVIS_ENV` is `local`, `staging` or `production`; when unset the API assumes `production`, and any
-other value, or `local` on Render, refuses to start. Outside `local` the API also refuses to start
-without `VAPI_WEBHOOK_SECRET`. `/vapi-tool` rejects every request whose `X-Vapi-Secret` header does not
-exactly match the configured secret (surrounding whitespace in the variable is ignored), so set it
-(any value, matching the assistant's tool headers) to exercise the webhook locally, or set
-`CARVIS_ENV=local` to run the rest of the API without one.
-
-Outside `local` the API also refuses to start unless `CARVIS_DEFAULT_SHOP_ID` (the shop used when a
-request omits `shop_id`, as the iOS app always does) and `CARVIS_QDRANT_COLLECTION` are set, and, when
-both `SPACETIMEDB_URI` and `SPACETIMEDB_TOKEN` are set (telemetry on), `SPACETIMEDB_DB_NAME`. The old fallbacks `shop_demo`,
-`george_specs` and `hackutd` apply only with `CARVIS_ENV=local`. To keep a deployment's current
-behavior, set these variables to the values it was implicitly using.
-
-`/upload` is an operator-only endpoint. It rejects every request (401) that does not carry exactly one
-`X-Carvis-Operator-Token` header exactly matching `CARVIS_OPERATOR_TOKEN` (surrounding whitespace in the variable is
-ignored); when the variable is unset or blank every upload is rejected, though the API still starts.
-Accepted files must begin with the `%PDF-` magic and be at most 50 MiB (larger bodies get 413 and stop
-streaming at the cap). These checks run before ingestion is scheduled, so a rejected request never
-reaches LlamaParse.
-
-Every other route caps its request body while it streams, and answers 413 `{"detail": …}` with
-`Connection: close` above the cap:
-
-| Route | Body cap |
-| --- | --- |
-| `/vision-query` and camera photos | 8 MiB image plus 64 KiB of form fields |
-| `/vapi-tool` | 4 MiB |
-| Every other route | 64 KiB |
-
-Unexpected failures return a fixed message, such as `Specification lookup is temporarily
-unavailable.`, never exception text; the reason is logged on the server.
-
-Carvis's own logs are JSON lines by default; set `CARVIS_LOG_FORMAT=text` for the human-readable
-format. Structured log fields pass an explicit allowlist (`FIELD_POLICY` in `backend/log_config.py`),
-so request paths log codes, counts, type names, known vocabularies and salted fingerprints of
-caller-supplied IDs, never the mechanic's questions, transcripts, answers, images, model output,
-phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own access and error lines
-(and the httpx and openai libraries' loggers) stay outside that policy; B1 did not change them. Limits are listed in
-[`docs/backend/architecture.md`](docs/backend/architecture.md#api-contracts).
-
-#### PostgreSQL foundation, health and request IDs (M2 B1)
-
-- `GET /healthz` answers 200 `{"status": "ok"}` and consults nothing. `GET /health` is unchanged.
-- `GET /readyz` answers 200 `{"status": "ready"}` only when PostgreSQL is reachable and the recorded
-  Alembic revision is this build's head; otherwise 503 `{"status": "not_ready", "reason": …}` with
-  `starting`, `database_unconfigured`, `database_misconfigured`, `database_unreachable` or
-  `migrations_pending`. The probe has a hard 2-second deadline, opens one connection at a time, resolves host names on one
-  dedicated thread (never more than one lookup outstanding), tries hosts in order and every address
-  of each, resolving a host only after the earlier ones have failed, all within that deadline, and
-  concurrent requests share it. A first host name whose lookup stalls makes the probe report
-  `database_unreachable` even if a later host is healthy (accepted B1 limit).
-- `CARVIS_DATABASE_URL` (optional in B1, transitional): the API's PostgreSQL URL. `postgresql://`,
-  `postgres://` and `postgresql+psycopg://` are accepted and use the psycopg 3 driver; anything else
-  refuses boot outside `local` (in `local` it boots and `/readyz` reports `database_misconfigured`).
-  Unset means `/readyz` reports `database_unconfigured`. The value is never logged.
-- `CARVIS_MIGRATION_DATABASE_URL`: the privileged login that runs migrations (separate from the API's
-  URL; there is no fallback). PostgreSQL 16 or later. From `backend/`:
-
-  ```bash
-  CARVIS_MIGRATION_DATABASE_URL=postgresql://… ../.venv/bin/python -m alembic -c migrations/alembic.ini upgrade head
-  ../.venv/bin/python -m db.history   # fails unless the chain is linear with one head
-  ```
-
-  The login needs `CREATE` on the database and `CREATEROLE` (or superuser). Nothing runs migrations
-  automatically on deploy.
-- Every response carries exactly one `X-Request-ID`: a caller's value if it is a single UUID
-  (normalized to 32 lowercase hex), otherwise a new one.
-- Real-PostgreSQL tests (`backend/tests/test_b1_migrations.py`) need a throwaway PostgreSQL 16+ server's
-  superuser URL in `CARVIS_TEST_POSTGRES_URL`; they create and drop databases and cluster-wide roles,
-  so never point it at a real server. Without it they skip (CI sets `CARVIS_REQUIRE_POSTGRES=1`, which
-  makes them fail instead). For example:
-  `docker run -d --rm -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=scratch postgres:16` and
-  `CARVIS_TEST_POSTGRES_URL=postgresql://postgres:scratch@127.0.0.1:55432/postgres`.
-
-#### Runtime roles, runtime login and JWT verification (M2 B2a)
-
-- Migration `0003_runtime_roles` adds `carvis_bootstrap` and `carvis_provisioner` (`NOLOGIN`), revokes
-  `EXECUTE` on new functions from `PUBLIC` for `carvis_owner` and `carvis_provisioner` (global default
-  privileges), and revokes everything on the CARVIS schemas and their objects (tables, sequences,
-  routines and types) from `PUBLIC` and, where they exist, from `anon`, `authenticated` and
-  `service_role`. CARVIS schemas must not define range types: PostgreSQL makes their constructor
-  functions owned by the bootstrap superuser with `PUBLIC` `EXECUTE`, which the migration cannot
-  revoke, so it refuses to proceed. It first rechecks the B1 roles and refuses to continue
-  (changing nothing) if any has gained an attribute, membership, setting, owned object or privilege
-  that 0002 did not give it. A non-superuser `CREATEROLE` migration login keeps PostgreSQL 16's
-  automatic ADMIN-only membership in the roles it creates; that is migration-administrator authority,
-  never a runtime privilege (doc 04, "Function ownership and migration membership").
-- The deployment's runtime login holds no privileges of its own: it is a member of `carvis_app` and
-  `carvis_bootstrap` with `INHERIT FALSE, SET TRUE` and of nothing else. The owner grants this once per
-  database, at provisioning, with the migration login (never on deploy):
-
-  ```bash
-  CARVIS_MIGRATION_DATABASE_URL=postgresql://… ../.venv/bin/python -m db.runtime_login grant <login>
-  CARVIS_MIGRATION_DATABASE_URL=postgresql://… ../.venv/bin/python -m db.runtime_login check <login>
-  ```
-
-  Both refuse an unsafe login (superuser, `BYPASSRLS`, `CREATEROLE`, `CREATEDB`, replication, owning
-  any object or the database, holding any ACL or default ACL, role settings, other memberships or
-  members) and name the failed conditions only. The login's credential is created by the deployment
-  and never enters the repository.
-- `/readyz` now reads the version table as `carvis_app` (`SET LOCAL ROLE`). Outside `local` it also
-  runs the same runtime-login check on the connected login, so a superuser, `BYPASSRLS` or otherwise
-  unsafe login, or one that may not switch to `carvis_app`, reports `database_misconfigured`. Runtime
-  roles that do not exist yet report `migrations_pending`. The response shape and reason set are
-  unchanged.
-- `CARVIS_DATABASE_URL` must describe the connection explicitly: libpq service files (`service`,
-  `servicefile`, `PGSERVICE`, `PGSERVICEFILE`) are refused, and the effective host, `hostaddr` and port
-  counts (from the URL, else `PGHOST`/`PGHOSTADDR`/`PGPORT`) must follow libpq's rule: hosts and
-  addresses match when both are given, and there is one port or one per target. A URL
-  that breaks either rule is invalid: boot refused outside `local`, `database_misconfigured` in
-  `local`.
-- Issuer settings for JWT verification (ADR-0002), optional and transitional: `CARVIS_AUTH_ISSUER`,
-  `CARVIS_AUTH_AUDIENCE`, `CARVIS_AUTH_JWKS_URL`. All unset means authentication is unconfigured; a
-  partial set, or a JWKS URL that is not `https://`, refuses boot outside `local`. The verifier
-  (`backend/auth/`) accepts only ES256/RS256 tokens of at most 1 hour with 30 s leeway and the
-  Supabase `authenticated` role; it is **not wired to any route** in B2a (that is B2c). Supabase
-  compatibility (issuer URL, audience, JWKS path, claims) is untested; tests use a fake JWKS.
-- The request-path async engine (`db.engine.create_async_app_engine`) bounds each new connection,
-  name resolution included, by one 2-second deadline, and resolves names on its own small thread pool
-  shared by concurrent pool fills. Nothing uses it yet (B2b).
-
-#### Identity tables and provisioning (M2 B2b-1)
-
-- Migration `0004_identity` adds `carvis.users`, `carvis.workspaces` and `carvis.memberships`, each
-  with row-level security enabled and forced. `carvis_app` and `carvis_worker` may only read them,
-  and only the rows their transaction context (`app.user_id`, `app.workspace_ids`) allows; with no
-  context they see nothing.
-- `carvis.ensure_principal(issuer, subject, email)` is the only runtime path that creates identity
-  rows. It is a `SECURITY DEFINER` function owned by `carvis_provisioner` and executable only by
-  `carvis_bootstrap`. It finds or creates the user, their personal workspace and their owner
-  membership, and returns `(user_id, status)`. It requires `READ COMMITTED`. The provisioner's policies
-  confine each read and insert to the principal the `app.bootstrap_*` settings name at that
-  statement. The function body sets those settings from its arguments and clears them on return, so
-  confinement of a whole call to one principal rests on that (reviewed and tested) body, not on the
-  policies alone.
-- `db.catalog.violations()` is the reusable catalog check: forced RLS, role attributes, no `PUBLIC`
-  or issuer grants, allow-listed definer routines, exact table privileges without grant options, and
-  for the CARVIS runtime roles no ownership of any object (database and schemas included), no
-  `CREATE` on the database or the CARVIS schemas and no grant options. The migration runs it
-  as a post-condition, and later packages extend it.
-- Downgrading `0004` refuses while any identity table has rows.
-- Nothing uses these tables from a request yet: the session context is B2b-2 and the routes B2c.
+The `.env` loader, environment variables and startup guards, request limits, logging, PostgreSQL
+migrations and readiness, the runtime database login and authentication settings are documented in
+the [backend configuration reference](docs/backend/configuration.md).
 
 #### Request session context (M2 B2b-2)
 
@@ -266,7 +164,8 @@ the official Device Access Toolkit configuration described in the [iOS guide](do
 
 ## Verification
 
-Install Python and SpacetimeDB package dependencies, then run:
+In a fresh checkout, run `scripts/bootstrap-worktree.sh` to install the Python and SpacetimeDB
+package dependencies (`--check` validates without installing), then run:
 
 ```bash
 ./scripts/verify.sh
@@ -276,18 +175,23 @@ The verifier runs backend regression tests, Python compilation, pure Swift conve
 checks, SpacetimeDB type-checking, Apple configuration lint, repository structure checks,
 documentation-link validation, and an iOS simulator build when full Xcode is available.
 
+## Contributing
+
+Read [`AGENTS.md`](AGENTS.md) (engineering policy, with scoped extensions under `backend/`,
+`backend/spacetimedb/` and `ios/`) and the [development workflow](docs/development-workflow.md)
+(branches, review tiers, required checks and draft pull requests) before changing anything.
+
 ## Documentation
 
-- [Documentation map and precedence](docs/README.md)
-- [Product requirements](docs/PRD.md)
+Start with the [documentation map](docs/README.md), which defines precedence and a reading path.
+
+- [Product requirements (PRD)](docs/PRD.md)
 - [V1 Product Experience Contract](docs/product/v1-product-experience-contract.md)
-- [P0 Readiness Audit, 2026-11-15 (historical snapshot)](docs/audits/2026-11-15-p0-readiness-audit.md)
+- [V1 architecture](docs/architecture/README.md) and [decision records](docs/decisions/README.md)
+- [M2 roadmap and owner decisions](docs/architecture/12-m2-roadmap.md)
 - [Development workflow](docs/development-workflow.md)
-- [Architecture decision records](docs/decisions/README.md)
-- [Backend architecture](docs/backend/architecture.md)
+- [Current backend architecture](docs/backend/architecture.md) and
+  [configuration reference](docs/backend/configuration.md)
 - [Qdrant review and migration](docs/backend/qdrant-v2-migration.md)
 - [Native iOS setup and testing](docs/ios/README.md)
-- [Historical architecture and validation records](docs/archive/)
-
-Engineering policy is defined in [`AGENTS.md`](AGENTS.md), with scoped extensions under `backend/`
-and `ios/`.
+- [Historical audits](docs/audits/) and [archived records](docs/archive/)
