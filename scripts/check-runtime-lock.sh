@@ -72,9 +72,9 @@ threads_before = set(threading.enumerate())
 backend = Path(sys.argv[1])
 sys.path.insert(0, str(backend))
 modules = sorted(path.stem for path in backend.glob("*.py"))
-# Packages and lazily imported dependencies that no top-level module imports at load time (M2 B2a):
-# the database and auth packages and the drivers they load on first use.
-modules += ["db.conninfo", "db.engine", "db.history", "db.readiness", "db.roles", "db.runtime_login",
+# Packages and lazily imported dependencies that no top-level module imports at load time (M2 B2a;
+# db.context M2 B2b-2): the database and auth packages and the drivers they load on first use.
+modules += ["db.conninfo", "db.context", "db.engine", "db.history", "db.readiness", "db.roles", "db.runtime_login",
             "auth.jwks", "auth.tokens", "psycopg", "sqlalchemy.ext.asyncio", "jwt", "jwt.algorithms",
             "cryptography.hazmat.primitives.asymmetric.ec", "cryptography.hazmat.primitives.asymmetric.rsa"]
 for name in modules:
