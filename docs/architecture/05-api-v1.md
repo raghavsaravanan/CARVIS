@@ -61,7 +61,7 @@ detail). Responses the ASGI server generates before the application runs (for ex
 | 405 | `method_not_allowed` | false | Wrong method (`Allow` header present) |
 | 413 | `payload_too_large` | false | Body over the route's cap |
 | 422 | `validation_failed` | false | Invalid parameters or body |
-| 426 | `unsupported_client` | false | Client below the minimum version (not emitted yet) |
+| 426 | `unsupported_client` | false | Missing, malformed or unsupported `X-Client-Version` once enforcement is enabled (not emitted in B2c) |
 | 429 | `rate_limited` | true | Rate limit (none in B2c) |
 | 500 | `server_error` | false | Unexpected error |
 | 503 | `service_unavailable` | true | Issuer keys, database or configuration unavailable; try later |
