@@ -171,3 +171,18 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
   as a post-condition, and later packages extend it.
 - Downgrading `0004` refuses while any identity table has rows.
 - Nothing uses these tables from a request yet: the session context is B2b-2 and the routes B2c.
+
+## Request session context (M2 B2b-2)
+
+- `db.context` runs each request as two transactions on the runtime login. `provision()` runs a bootstrap
+  transaction as `carvis_bootstrap` in READ COMMITTED and returns `(user_id, status)` from
+  `ensure_principal`. `tenant_session()` then runs the unit of work as `carvis_app`, with `app.user_id` set and
+  `app.workspace_ids` derived from the caller's memberships under row-level security before the first query; the
+  workspace set is also on the session for the caller.
+- An `after_begin` listener on the request session class installs the context and refuses any transaction that
+  has none, before sending anything. A non-active user is refused before a tenant transaction starts. Savepoints
+  keep the outer context. Only transaction-scoped settings are used, so nothing survives commit, rollback,
+  cancellation or the connection's return to the pool.
+- The listener sends only a fixed list of statements, with every type, function and table schema-qualified, so a
+  connection's `search_path` cannot redirect them; tests compare the SQL the driver receives with that list.
+- Nothing calls it from a route yet (B2c).
