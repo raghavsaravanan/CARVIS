@@ -290,7 +290,7 @@ The user can identify a vehicle through:
 - Camera-assisted VIN recognition where supported.
 - Manual year/make/model/engine selection.
 - A previously saved vehicle.
-- *Conditional V1 enhancement (CAR-019):* a vehicle described in conversation, proposed as a candidate that the technician confirms in the app like any other identification.
+- *Conditional V1 enhancement (CAR-019):* a vehicle described in conversation, proposed as a candidate that the technician confirms in the app like any other identification. Its form is part of roadmap decision D-19: proposing a replacement vehicle during a conversation that already has a confirmed vehicle, or identifying the first vehicle by voice, which would need a pre-vehicle conversation state.
 
 CARVIS decodes or resolves the available vehicle information and shows a confirmation screen.
 
@@ -735,7 +735,7 @@ An incorrect technical answer delivered quickly is a more serious failure than a
 
 ## 14.0 Validation Stages
 
-Every validation method and result is labeled with the stage it belongs to. The stages are provenance labels: they do not replace or reclassify the targets in §14.3 or the gates in §15.
+Every pilot and product evaluation method and result (this section; contract §6) is labeled with the stage it belongs to. The stages are provenance labels: they do not replace or reclassify the targets in §14.3 or the gates in §15. Engineering validation (automated tests, including tests on synthetic fixtures) is not stage-labeled and satisfies the §15.2 checks as before.
 
 | Stage | Purpose | Evidence allowed |
 | --- | --- | --- |
@@ -743,7 +743,7 @@ Every validation method and result is labeled with the stage it belongs to. The 
 | **R — Real technical validation** | Correctness, applicability, safety, reliability and measurable utility on genuine supported repair-information tasks | Authorized, independently reviewed evidence only |
 | **C — Commercial validation** | Continued technician use, shop-owner evaluation and a concrete purchasing assessment | Real use under Stage R conditions |
 
-A Stage S result never satisfies a §14.3 target, a Stage R or C measure, or a §15 gate, and is never reported as real technical coverage or commercial utility. The pilot technician remains the primary V1 participant, and the pilot shop is the first commercial validation target.
+A Stage S result never satisfies a §14.3 target, a Stage R or C measure, or a §15 gate that requires real evidence or real use (§15.1, §15.3, §15.4), and is never reported as real technical coverage or commercial utility. The pilot technician remains the primary V1 participant, and the pilot shop is the first commercial validation target.
 
 ## 14.1 Primary Product Hypothesis
 

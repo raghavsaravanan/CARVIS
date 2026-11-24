@@ -70,8 +70,8 @@ assistant and the captured payloads are committed as test fixtures. Track A does
    returns the stored response only while its call is still the conversation's active, current generation;
    a replay for an ended or superseded call (for example after a vehicle switch ended the conversation)
    returns no technical content.
-7. **Tool scope.** Tools may invoke `lookup_spec`, `set_work_context`, `look_at_part`. No tool accepts
-   tenant fields, and no tool creates or changes confirmed vehicle context: the legacy `confirm_vehicle`
+7. **Tool scope.** The V1 tool set is `lookup_spec` and `set_work_context`; `look_at_part` is preserved but not
+   offered in V1 (camera input is deferred, PRD CAR-062). No tool accepts tenant fields, and no tool creates or changes confirmed vehicle context: the legacy `confirm_vehicle`
    ("confirmed aloud") has no authority in v2 and is removed from the V1 tool set or returns a nonconfirming
    result. Only if roadmap D-19 includes CAR-019 does a proposal tool exist; it returns an unconfirmed
    candidate that the technician confirms in the app (`POST /v1/vehicles/{id}/confirm`). `lookup_spec` is

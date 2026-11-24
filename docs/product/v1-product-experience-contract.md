@@ -206,14 +206,15 @@ coverage of the agreed representative tasks as a proposed minimum usefulness thr
 planning targets, not quotas or achieved results; every mandatory pilot category needs meaningful
 supported examples, and an unmet core task is never hidden by changing the denominator.
 
-Three kinds of criteria stay separate:
+Three kinds of criteria stay separate. Separately, every pilot and product evaluation method and result in this
+section (§6.1–§6.4 and the pilot utility targets) is labeled with its validation stage (PRD §14.0): S (experience,
+real app, possibly labeled synthetic evidence), R (real technical, authorized reviewed evidence) or C (commercial).
+Stage S results never satisfy a pilot utility target, a release blocker or an R or C measure. Engineering
+validation is not stage-labeled.
 
 - **Engineering validation:** the B7 acceptance cases, the R3 safety suite and the PRD §15.2 checks;
   synthetic fixtures may validate engineering but never support real repair advice.
 - **Pilot utility targets:** §6.4 and the coverage targets above; hypotheses until measured.
-- **Validation stage labels (PRD §14.0):** every method and result above is also labeled S (experience,
-  real app, possibly labeled synthetic evidence), R (real technical, authorized reviewed evidence) or C
-  (commercial). Stage S results never satisfy a pilot utility target, a release blocker or an R or C measure.
 - **Release blockers:** §10 gates plus these outstanding items: documented rights for every active
   source; a named qualified technical reviewer and publisher (D-17); pilot-technician-confirmed coverage;
   spoken-output integrity validated on staging and devices (D-14); accepted ADRs; Apple Developer

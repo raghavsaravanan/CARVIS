@@ -41,7 +41,7 @@ erDiagram
 | `vehicle_snapshots` | `workspace_id`, `vehicle_id` (composite FK `(workspace_id, vehicle_id)` to `vehicles`), `vehicle_version` (the version confirmed), `config` jsonb (distinguishes *unknown* from *not applicable* for each attribute, versioned by `schema_version`), `config_hash`, `source` (vin_decode, manual), `confirmed_by`, `confirmed_at`, `schema_version` | **Immutable** (UPDATE/DELETE blocked by trigger and grants); created only by the confirm transaction (see "Vehicle context rules") |
 | `conversations` | `user_id`, `vehicle_snapshot_id` NOT NULL (composite FK with `workspace_id`; set at creation, immutable), `title`, `last_activity_at`, `ended_at` | Per retention decision (ADR-0009) |
 | `calls` | `conversation_id`, `generation` (UNIQUE with conversation), `vapi_call_id` UNIQUE NULL, `status` (created, bound, active, ended, failed), `bind_nonce_hash`, `bind_expires_at`, `bound_at`, `verified_with_vapi_at`, `end_reason`, `idempotency_key` UNIQUE per user | Metadata retained; no raw audio stored |
-| `turns` | `call_id`, `seq` UNIQUE with call, `question_text`, `answer_text`, `outcome` (answered, refused, clarification, error), `refusal_reason`, `vehicle_snapshot_id` (composite FK with `workspace_id`; equal to the conversation's; required for every turn evaluated against evidence), `tool_call_id` UNIQUE, `latency_ms` | Full text 90 days, then text nulled and metadata kept (proposed) |
+| `turns` | `call_id`, `seq` UNIQUE with call, `question_text`, `answer_text`, `outcome` (answered, refused, clarification, error), `refusal_reason`, `conversation_id`, `vehicle_snapshot_id` (equal to the conversation's by constraint: composite FK `(workspace_id, conversation_id, vehicle_snapshot_id)` to a UNIQUE key on those `conversations` columns, and `(conversation_id, call_id)` to `calls`; required for every turn evaluated against evidence), `tool_call_id` UNIQUE, `latency_ms` | Full text 90 days, then text nulled and metadata kept (proposed) |
 | `evidence_references` | `turn_id`, `evidence_id`, `revision_id`, `page`, `excerpt_sha256`, `conditions` jsonb | Kept with the turn; withdrawn evidence renders "source withdrawn" |
 | `feedback` | `turn_id`, `user_id`, `kind` (incorrect, unhelpful, missing), `note`, `status` | User-deletable |
 | `source_documents` | `scope` (global, workspace), `workspace_id` NULL iff global (`CHECK`), `title`, `rights_basis` (required before activation), `provenance`, `created_by` | Operator-only |
@@ -76,7 +76,8 @@ Bounded B3–B5 design review (2026-11-24); invariants are enforced in B3, B4, B
 
 - A snapshot is created only by the authenticated technician's confirmation (`POST /v1/vehicles/{id}/confirm`)
   of a non-archived vehicle in their workspace, at the vehicle version they saw; a stale version is refused.
-- A conversation is bound to one snapshot for its whole life. Switching vehicles ends the conversation and its
+- A conversation is created only for a snapshot of a non-archived vehicle in the caller's workspace, and is bound to
+  that snapshot for its whole life. Switching vehicles ends the conversation and its
   active call, and a new conversation starts with the new snapshot. Derived state (pending question, work
   context, grounded answer, camera request) never crosses a conversation boundary. Ending the call also discards
   the voice agent's context and cuts audio in flight; speech already played before the switch was produced for

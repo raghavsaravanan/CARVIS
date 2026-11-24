@@ -82,7 +82,7 @@ outcome**, not an HTTP error (see turns below).
 | `GET/POST /v1/vehicles`; `GET/PATCH/DELETE /v1/vehicles/{id}` | Garage (DELETE archives) | Provisional (path reserved; B3) |
 | `POST /v1/vehicles/decode` | VIN validation + decode behind a provider interface | Provisional (provider) |
 | `POST /v1/vehicles/{id}/confirm` | Creates the immutable `vehicle_snapshot`, the only way to establish vehicle context; binds to the vehicle version the technician saw; refuses an archived vehicle | Provisional (path reserved; B3) |
-| `POST /v1/conversations`; `GET /v1/conversations`; `GET /v1/conversations/{id}` | Lifecycle, history list and detail; a conversation is bound to one confirmed vehicle snapshot for its whole life, and a vehicle switch ends it | Provisional (path reserved; B4) |
+| `POST /v1/conversations`; `GET /v1/conversations`; `GET /v1/conversations/{id}` | Lifecycle, history list and detail; a conversation is bound to one confirmed vehicle snapshot for its whole life, and a vehicle switch ends it; history detail shows each turn with its own vehicle snapshot (vehicle and resolved configuration) | Provisional (path reserved; B4) |
 | `POST /v1/conversations/{id}/calls` | Starts a call generation; returns `{call_id, generation, vapi_variables, bind_nonce, bind_expires_at}` | Provisional (D-9, G-V1…G-V6) |
 | `POST /v1/calls/{id}/bind` | Body `{vapi_call_id, bind_nonce}`; see [06-vapi-ingress.md](06-vapi-ingress.md) | Provisional (D-9) |
 | `POST /v1/calls/{id}/end` | Ends a call | Provisional (D-9) |
