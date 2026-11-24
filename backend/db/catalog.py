@@ -15,10 +15,10 @@ Rules (both CARVIS schemas, ``carvis`` and ``carvis_migrations``):
 - no ACL on a CARVIS schema, relation, column, routine or type grants anything to ``PUBLIC`` or an
   issuer role, and no routine or non-array type has a NULL ACL (NULL means defaults that include
   ``PUBLIC``);
-- every ``SECURITY DEFINER`` routine is allow-listed with its exact ACL, has a pinned ``search_path``
-  and an owner that is not a superuser and owns no relation;
+- every ``SECURITY DEFINER`` routine is allow-listed with its exact ACL, has ``search_path`` pinned to exactly
+  ``pg_catalog, pg_temp`` and an owner that is not a superuser and owns no relation;
 - each definer owner has no member except PostgreSQL 16's ADMIN-only grant (no SET, no INHERIT) and
-  no ``CREATE`` on ``carvis``;
+  no ``CREATE`` on either CARVIS schema;
 - the listed roles hold exactly the listed privileges on the identity tables, no more and no less.
 """
 
@@ -62,6 +62,8 @@ EXACT_TABLE_PRIVILEGES: dict[tuple[str, str], set[tuple[str, str]]] = {
 ELEVATED = ("rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls", "rolcanlogin")
 NOT_ARRAY = ("NOT (t.typelem <> 0 AND t.typsubscript = "
              "'pg_catalog.array_subscript_handler'::pg_catalog.regproc)")
+# The only accepted definer search_path: catalogs first, pg_temp last, nothing caller-writable.
+PINNED_SEARCH_PATH = "search_path=pg_catalog, pg_temp"
 PRIVILEGE_NAMES = {"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"}
 
 
@@ -145,7 +147,7 @@ def violations(connection: Connection) -> list[str]:
             continue
         if set(acl or []) != expected:
             found.append(f"definer_acl:{signature}")
-        if not any(str(item).startswith("search_path=") for item in (config or [])):
+        if PINNED_SEARCH_PATH not in (config or []):
             found.append(f"definer_search_path:{signature}")
         if owner_super or _rows(connection, "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_roles r "
                                             "ON r.oid = c.relowner WHERE r.rolname = :r", r=owner):
@@ -167,8 +169,9 @@ def violations(connection: Connection) -> list[str]:
                 JOIN pg_catalog.pg_roles mr ON mr.oid = m.member WHERE r.rolname = :r""", r=role):
             if inherit or can_set or not admin:
                 found.append(f"definer_owner_member:{role}:{member}")
-        if _rows(connection, "SELECT 1 WHERE pg_catalog.has_schema_privilege(:r, :s, 'CREATE')", r=role, s=SCHEMA):
-            found.append(f"definer_owner_create:{role}")
+        for schema in schemas:
+            if _rows(connection, "SELECT 1 WHERE pg_catalog.has_schema_privilege(:r, :s, 'CREATE')", r=role, s=schema):
+                found.append(f"definer_owner_create:{role}:{schema}")
 
     # Exact privileges on the identity tables.
     present = {row[0] for row in _rows(connection, """
