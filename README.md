@@ -172,6 +172,7 @@ Start with the [documentation map](docs/README.md), which defines precedence and
 
 - [Product requirements (PRD)](docs/PRD.md)
 - [V1 Product Experience Contract](docs/product/v1-product-experience-contract.md)
+- [Product Experience Blueprint](docs/product/carvis-product-experience-blueprint.md) (non-authoritative long-term vision)
 - [V1 architecture](docs/architecture/README.md) and [decision records](docs/decisions/README.md)
 - [M2 roadmap and owner decisions](docs/architecture/12-m2-roadmap.md)
 - [Development workflow](docs/development-workflow.md)
