@@ -685,6 +685,13 @@ def test_vin_is_unique_per_workspace_including_archived(scratch, people):
     add_vehicle(scratch, people, "a")
 
 
+def test_duplicate_vin_in_another_workspace_is_refused_by_rls_not_the_unique_key(scratch, people):
+    """No VIN oracle: WITH CHECK refuses a foreign workspace before the unique index is consulted."""
+    add_vehicle(scratch, people, "b", vin=VIN)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege, match="row-level security"):
+        add_vehicle(scratch, people, "a", workspace=people["wb"], vin=VIN)
+
+
 def test_vehicle_list_by_workspace_uses_an_index(scratch, people):
     for _ in range(3):
         add_vehicle(scratch, people, "a")
