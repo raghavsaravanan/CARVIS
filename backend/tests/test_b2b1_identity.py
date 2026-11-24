@@ -25,7 +25,7 @@ ISSUER = "https://issuer.example.test/auth/v1"
 
 # --- helpers ------------------------------------------------------------------------------------
 
-def violations(url: str) -> list[str]:
+def violations(url: str, search_path: str | None = None) -> list[str]:
     from sqlalchemy import create_engine
     from sqlalchemy.pool import NullPool
 
@@ -34,6 +34,8 @@ def violations(url: str) -> list[str]:
     engine = create_engine(_url(url).replace("postgresql://", "postgresql+psycopg://", 1), poolclass=NullPool)
     try:
         with engine.connect() as connection:
+            if search_path:
+                connection.exec_driver_sql(f"SET search_path = {search_path}")
             return check(connection)
     finally:
         engine.dispose()
@@ -137,7 +139,7 @@ def test_forced_failure_rolls_back_without_drift(scratch, migrator, step):
 def test_forced_failure_in_downgrade_rolls_back(scratch, head):
     before = identity_catalog(scratch.db_admin)
     result = run_alembic(head, "downgrade", B2A_HEAD, CARVIS_ENV="local", CARVIS_TEST_FAIL_AT="downgrade_drop")
-    assert result.returncode != 0
+    assert result.returncode != 0 and "forced failure at downgrade_drop" in result.stderr
     assert identity_catalog(scratch.db_admin) == before
 
 
@@ -193,14 +195,35 @@ def test_preflight_refuses_a_preexisting_table(scratch, migrator):
     (["ALTER FUNCTION carvis.ensure_principal(text,text,text) SET search_path = public, pg_temp"],
      "definer_search_path"),
     (["ALTER FUNCTION carvis.ensure_principal(text,text,text) RESET search_path"], "definer_search_path"),
+    (["CREATE ROLE rv_b2b1_admin LOGIN",
+      "GRANT carvis_provisioner TO rv_b2b1_admin WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"],
+     "definer_owner_member:carvis_provisioner:rv_b2b1_admin"),
+    (["CREATE ROLE rv_b2b1_admin2 LOGIN CREATEROLE",
+      "GRANT carvis_provisioner TO rv_b2b1_admin2 WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"],
+     "definer_owner_members:carvis_provisioner"),
+    (["SET ROLE carvis_owner", "CREATE FUNCTION carvis.b2b1_o() RETURNS int LANGUAGE sql AS 'SELECT 1'",
+      "REVOKE ALL ON FUNCTION carvis.b2b1_o() FROM PUBLIC", "RESET ROLE",
+      "ALTER FUNCTION carvis.b2b1_o() OWNER TO carvis_app"], "role_owns_routine:carvis_app:carvis.b2b1_o()"),
+    (["CREATE TYPE carvis.b2b1_e AS ENUM ('x')", "REVOKE ALL ON TYPE carvis.b2b1_e FROM PUBLIC",
+      "ALTER TYPE carvis.b2b1_e OWNER TO carvis_worker"], "role_owns_type:carvis_worker"),
     (["GRANT carvis_provisioner TO postgres"], "definer_owner_member:carvis_provisioner:postgres"),
     (["GRANT USAGE ON TYPE carvis.workspaces TO PUBLIC"], "public_or_issuer_type"),
     (["GRANT EXECUTE ON FUNCTION carvis.uuid_v7() TO carvis_app"], "routine_acl:carvis.uuid_v7()"),
 ])
 def test_catalog_check_detects_violations(scratch, head, setup, code):
     assert violations(scratch.db_admin) == []
-    _sql(scratch.db_admin, *setup)
-    assert any(item.startswith(code) for item in violations(scratch.db_admin)), violations(scratch.db_admin)
+    try:
+        _sql(scratch.db_admin, *setup)
+        assert any(item.startswith(code) for item in violations(scratch.db_admin)), violations(scratch.db_admin)
+    finally:
+        _sql(scratch.admin, "DROP ROLE IF EXISTS rv_b2b1_admin", "DROP ROLE IF EXISTS rv_b2b1_admin2")
+
+
+def test_catalog_does_not_depend_on_the_callers_search_path(scratch, head):
+    """regprocedure output drops the schema when carvis is on the path; signatures must not."""
+    assert violations(scratch.db_admin, search_path="carvis, public") == []
+    _sql(scratch.db_admin, "GRANT EXECUTE ON FUNCTION carvis.uuid_v7() TO carvis_app")
+    assert "routine_acl:carvis.uuid_v7()" in violations(scratch.db_admin, search_path="carvis, public")
 
 
 def test_catalog_covers_the_migrations_schema(scratch, head):
@@ -308,6 +331,28 @@ def test_search_path_hijack_has_no_effect(scratch, login):
     assert _sql(scratch.db_admin, "SELECT count(*) FROM public.users", fetch=True) == [(0,)]
 
 
+def test_temp_schema_hijack_has_no_effect(scratch, login):
+    with psycopg.connect(login) as conn:
+        conn.execute("CREATE TEMP TABLE users (id uuid, status text, auth_issuer text, auth_subject text, email text)")
+        conn.execute("CREATE TEMP TABLE workspaces (id uuid, kind text, name text, personal_owner_user_id uuid)")
+        conn.execute("SET LOCAL search_path = pg_temp, pg_catalog")
+        conn.execute("SET LOCAL ROLE carvis_bootstrap")
+        conn.execute("SELECT * FROM carvis.ensure_principal(%s, %s, %s)", (ISSUER, "user-t", None)).fetchone()
+        conn.execute("RESET ROLE")
+        assert conn.execute("SELECT count(*) FROM pg_temp.users").fetchone() == (0,)
+    assert counts(scratch.db_admin) == (1, 1, 1)
+
+
+def test_provisioner_insert_without_bootstrap_settings_fails_with_check(scratch, two_users):
+    """Doc 04 validation 2: with no bootstrap context, every provisioner insert fails WITH CHECK."""
+    for statement in ("INSERT INTO carvis.users (auth_issuer, auth_subject) VALUES ('i', 's')",
+                      "INSERT INTO carvis.workspaces (kind, name, personal_owner_user_id) "
+                      f"VALUES ('personal', 'P', '{two_users['a']}')",
+                      f"INSERT INTO carvis.memberships VALUES ('{two_users['wa']}', '{two_users['a']}', 'owner')"):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege, match="row-level security"):
+            as_role(scratch.db_admin, "carvis_provisioner", [statement])
+
+
 # --- database-level bounds, independent of the function body (doc 04 test 14) ----------------------
 
 def _boot(user_id: str, subject: str = "user-a") -> dict[str, str]:
@@ -361,7 +406,8 @@ def test_trigger_rejects_non_owner_personal_membership_even_for_superuser(scratc
 
 
 def test_trigger_fails_closed_when_the_workspace_is_invisible(scratch, two_users):
-    """The owner role has no policy under FORCE RLS, so it cannot see the workspace: refused."""
+    """The owner role has no policy under FORCE RLS, so its insert is refused (by RLS, before the
+    trigger runs; the trigger's own branch is proven by the throwaway-role test below)."""
     with pytest.raises((psycopg.errors.CheckViolation, psycopg.errors.InsufficientPrivilege)):
         as_role(scratch.db_admin, "carvis_owner",
                 [f"INSERT INTO carvis.memberships VALUES ('{two_users['wa']}', '{two_users['a']}', 'owner')"])
