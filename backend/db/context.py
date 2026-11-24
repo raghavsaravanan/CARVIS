@@ -16,7 +16,7 @@ Every statement this module sends is one of :data:`APPROVED_STATEMENTS`, written
 ``exec_driver_sql`` (no SQLAlchemy compilation), with every type, function and relation schema-qualified so the
 caller's ``search_path`` resolves nothing. Tests compare the SQL captured at the driver with this list exactly.
 
-Not wired to any route yet (B2c).
+Used by the ``/v1`` routes from B2c (:mod:`api_v1.auth`).
 """
 
 from __future__ import annotations

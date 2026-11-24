@@ -3,5 +3,5 @@
 - :mod:`auth.jwks`: bounded JWKS cache (asymmetric keys only).
 - :mod:`auth.tokens`: token verification into a :class:`auth.tokens.Principal`.
 
-Not wired to any route in B2a; B2c adds the ``/v1`` auth dependency.
+B2c wires them into the ``/v1`` auth dependency (:mod:`api_v1.auth`).
 """

@@ -78,7 +78,17 @@ def closing(exc: StarletteHTTPException) -> HTTPException:
                          headers={**(exc.headers or {}), **CLOSE_CONNECTION})
 
 
-def limited_receive(request: Request, limit: BodyLimit, outcome: dict[str, Any]) -> Receive:
+Rejection = Callable[[int, str, Request, dict[str, str]], Response]
+"""Builds the response for a rejected body: ``(status, detail, request, headers) -> Response``."""
+
+
+def detail_rejection(status: int, detail: str, request: Request, headers: dict[str, str]) -> Response:
+    """The default rejection: FastAPI's ``{"detail": ...}`` shape (unchanged since A6)."""
+    return JSONResponse(status_code=status, content={"detail": detail}, headers=headers)
+
+
+def limited_receive(request: Request, limit: BodyLimit, outcome: dict[str, Any],
+                    rejection: Rejection = detail_rejection) -> Receive:
     """Wrap ``request.receive`` so the body cannot exceed ``limit``; record a rejection in ``outcome``."""
     receive = request.receive
     received = 0
@@ -86,8 +96,8 @@ def limited_receive(request: Request, limit: BodyLimit, outcome: dict[str, Any])
 
     def reject(status: int, detail: str) -> _BodyRejected:
         # Connection: close stops the server draining the rest of a rejected body on keep-alive.
-        outcome.setdefault("response", JSONResponse(status_code=status, content={"detail": detail},
-                                                    headers=CLOSE_CONNECTION))
+        if "response" not in outcome:
+            outcome["response"] = rejection(status, detail, request, dict(CLOSE_CONNECTION))
         return _BodyRejected(status_code=status, detail=detail)
 
     async def wrapped() -> Message:
@@ -114,8 +124,12 @@ def limited_receive(request: Request, limit: BodyLimit, outcome: dict[str, Any])
     return wrapped
 
 
-def body_limited_route(limits: dict[str, BodyLimit], default: BodyLimit) -> type[APIRoute]:
-    """An ``APIRoute`` class that caps each route's body by its path template."""
+def body_limited_route(limits: dict[str, BodyLimit], default: BodyLimit,
+                       rejection: Rejection = detail_rejection) -> type[APIRoute]:
+    """An ``APIRoute`` class that caps each route's body by its path template.
+
+    ``rejection`` shapes the 400/413 response; the default keeps ``{"detail": ...}`` (the ``/v1`` router passes the
+    M2 B2c envelope)."""
 
     class BodyLimitedRoute(APIRoute):
         def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
@@ -124,7 +138,7 @@ def body_limited_route(limits: dict[str, BodyLimit], default: BodyLimit) -> type
 
             async def guarded(request: Request) -> Response:
                 outcome: dict[str, Any] = {}
-                limited = Request(request.scope, receive=limited_receive(request, limit, outcome))
+                limited = Request(request.scope, receive=limited_receive(request, limit, outcome, rejection))
                 try:
                     response = await handler(limited)
                 except Exception as exc:
