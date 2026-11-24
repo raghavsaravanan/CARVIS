@@ -364,7 +364,8 @@ def upgrade() -> None:
 def _postconditions() -> None:
     from db.catalog import violations
 
-    found = violations(op.get_bind())
+    # The migration login is the only role allowed to keep the ADMIN-only definer-owner membership.
+    found = violations(op.get_bind(), migration_login=_login()[0])
     if found:
         raise IdentityMigrationError("Catalog check failed: " + ", ".join(found))
 

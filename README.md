@@ -230,10 +230,11 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
 - `carvis.ensure_principal(issuer, subject, email)` is the only runtime path that creates identity
   rows. It is a `SECURITY DEFINER` function owned by `carvis_provisioner` and executable only by
   `carvis_bootstrap`. It finds or creates the user, their personal workspace and their owner
-  membership, and returns `(user_id, status)`. It requires `READ COMMITTED`. The function body sets
-  the `app.bootstrap_*` settings from its arguments, and the provisioner's policies confine every
-  read and insert to the principal those settings name: the policies bound what any body can do to
-  one principal's rows, but which principal that is depends on the body setting them correctly.
+  membership, and returns `(user_id, status)`. It requires `READ COMMITTED`. The provisioner's policies
+  confine each read and insert to the principal the `app.bootstrap_*` settings name at that
+  statement. The function body sets those settings from its arguments and clears them on return, so
+  confinement of a whole call to one principal rests on that (reviewed and tested) body, not on the
+  policies alone.
 - `db.catalog.violations()` is the reusable catalog check: forced RLS, role attributes, no `PUBLIC`
   or issuer grants, allow-listed definer routines and exact table privileges. The migration runs it
   as a post-condition, and later packages extend it.

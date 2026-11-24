@@ -4,8 +4,8 @@
 ``0004_identity`` runs it as a post-condition, the tests run it after upgrade and downgrade, and later
 packages extend :data:`IDENTITY_TABLES`, :data:`DEFINER_ALLOW_LIST` and :data:`EXACT_TABLE_PRIVILEGES`
 when they add tables, definer functions or grants. It reads only catalogs, schema-qualified, and builds
-routine signatures from the catalog rather than ``regprocedure`` output, so the caller's
-``search_path`` changes nothing.
+routine signatures (argument types included) from catalog columns rather than ``regprocedure`` or
+``oidvectortypes`` output, so the caller's ``search_path`` changes nothing.
 
 Rules (both CARVIS schemas, ``carvis`` and ``carvis_migrations``):
 
@@ -19,8 +19,10 @@ Rules (both CARVIS schemas, ``carvis`` and ``carvis_migrations``):
   ``PUBLIC``);
 - every ``SECURITY DEFINER`` routine is allow-listed with its exact ACL, has ``search_path`` pinned to exactly
   ``pg_catalog, pg_temp`` and an owner that is not a superuser and owns no relation;
+- every allow-listed definer is still ``SECURITY DEFINER`` and owned by its definer owner, and exists
+  whenever the identity tables do;
 - each definer owner has at most one member: PostgreSQL 16's ADMIN-only grant (no SET, no INHERIT) to
-  a role administrator (the migration login), and
+  the migration login named by the caller, and
   no ``CREATE`` on either CARVIS schema;
 - the listed roles hold exactly the listed privileges on the identity tables, no more and no less.
 """
@@ -39,7 +41,7 @@ NON_OWNING_ROLES = (APP_ROLE, WORKER_ROLE, BOOTSTRAP_ROLE, PROVISIONER_ROLE)
 DEFINER_OWNERS = (PROVISIONER_ROLE,)
 # routine signature -> exact ACL entries "grantee=privileges/grantor"
 DEFINER_ALLOW_LIST = {
-    f"{SCHEMA}.ensure_principal(text,text,text)": {
+    f"{SCHEMA}.ensure_principal(pg_catalog.text,pg_catalog.text,pg_catalog.text)": {
         f"{PROVISIONER_ROLE}=X/{PROVISIONER_ROLE}", f"{BOOTSTRAP_ROLE}=X/{PROVISIONER_ROLE}"},
 }
 # Invoker routines whose ACL is fixed exactly (other invoker routines only need no PUBLIC/issuer entry).
@@ -67,10 +69,14 @@ NOT_ARRAY = ("NOT (t.typelem <> 0 AND t.typsubscript = "
              "'pg_catalog.array_subscript_handler'::pg_catalog.regproc)")
 # The only accepted definer search_path: catalogs first, pg_temp last, nothing caller-writable.
 PINNED_SEARCH_PATH = "search_path=pg_catalog, pg_temp"
-# Routine signature as "schema.name(argtypes)", independent of the caller's search_path (an
-# ``oid::regprocedure::text`` cast drops the schema when the routine is visible on the path).
-SIGNATURE = ("n.nspname || '.' || p.proname || '(' || "
-             "pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes), ', ', ',') || ')'")
+# Routine signature as "schema.name(schema.type,...)", every part read from the catalogs, so the
+# caller's search_path changes nothing (``regprocedure`` output and ``oidvectortypes`` both drop a
+# schema that is on the path).
+SIGNATURE = ("n.nspname || '.' || p.proname || '(' || COALESCE(("
+             "SELECT pg_catalog.string_agg(tn.nspname || '.' || t.typname, ',' ORDER BY a.ord) "
+             "FROM pg_catalog.unnest(p.proargtypes::pg_catalog.oid[]) WITH ORDINALITY AS a(typ, ord) "
+             "JOIN pg_catalog.pg_type t ON t.oid = a.typ JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace"
+             "), '') || ')'")
 PRIVILEGE_NAMES = {"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"}
 
 
@@ -78,7 +84,9 @@ def _rows(connection: Connection, sql: str, **params) -> list:
     return list(connection.execute(text(sql), params).all())
 
 
-def violations(connection: Connection) -> list[str]:
+def violations(connection: Connection, migration_login: str | None = None) -> list[str]:
+    """``migration_login`` is the only role allowed to hold the PostgreSQL 16 automatic ADMIN-only
+    membership in a definer owner (doc 04); ``None`` allows no member at all."""
     found: list[str] = []
     schemas = [SCHEMA, METADATA_SCHEMA]
     issuers = list(ISSUER_ROLES)
@@ -170,6 +178,26 @@ def violations(connection: Connection) -> list[str]:
         if owner_super or _rows(connection, "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_roles r "
                                             "ON r.oid = c.relowner WHERE r.rolname = :r", r=owner):
             found.append(f"definer_owner:{signature}")
+    # Allow-listed definers must stay SECURITY DEFINER and owned by a definer owner, and must exist
+    # whenever the identity tables do (the provisioning path depends on them).
+    allow_listed = {row[0]: row[1:] for row in _rows(connection, f"""
+            SELECT {SIGNATURE}, p.prosecdef, r.rolname
+            FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            JOIN pg_catalog.pg_roles r ON r.oid = p.proowner WHERE n.nspname = ANY(:schemas)""", schemas=schemas)
+                    if row[0] in DEFINER_ALLOW_LIST}
+    tables_present = bool(_rows(connection, """
+            SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = :schema AND c.relname = ANY(:tables)""", schema=SCHEMA, tables=list(IDENTITY_TABLES)))
+    for signature in DEFINER_ALLOW_LIST:
+        if signature not in allow_listed:
+            if tables_present:
+                found.append(f"definer_missing:{signature}")
+            continue
+        secdef, owner = allow_listed[signature]
+        if not secdef:
+            found.append(f"definer_not_definer:{signature}")
+        if owner not in DEFINER_OWNERS:
+            found.append(f"definer_owner:{signature}")
     for signature, expected in EXACT_ROUTINE_ACLS.items():
         # Matched through the catalog (to_regprocedure needs USAGE on the schema).
         rows = _rows(connection, "SELECT ARRAY(SELECT pg_catalog.unnest(p.proacl)::text ORDER BY 1) "
@@ -182,16 +210,16 @@ def violations(connection: Connection) -> list[str]:
     # Definer owners: only the ADMIN-only member; no CREATE on carvis.
     for role in DEFINER_OWNERS:
         members = _rows(connection, """
-                SELECT mr.rolname, m.admin_option, m.inherit_option, m.set_option, mr.rolsuper OR mr.rolcreaterole
+                SELECT mr.rolname, m.admin_option, m.inherit_option, m.set_option
                 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
                 JOIN pg_catalog.pg_roles mr ON mr.oid = m.member WHERE r.rolname = :r""", r=role)
         # Doc 04: the sole permanent member is the migration login's PostgreSQL 16 automatic grant,
-        # which is ADMIN-only and held by a role administrator. Any second member, or an ADMIN-only
-        # member that is not a role administrator, could grant itself SET on the definer owner.
+        # which is ADMIN-only. Any other member, or any other option, could grant itself SET on the
+        # definer owner.
         if len(members) > 1:
             found.append(f"definer_owner_members:{role}")
-        for member, admin, inherit, can_set, administrator in members:
-            if inherit or can_set or not admin or not administrator or member in CHECKED_ROLES:
+        for member, admin, inherit, can_set in members:
+            if member != migration_login or inherit or can_set or not admin:
                 found.append(f"definer_owner_member:{role}:{member}")
         for schema in schemas:
             if _rows(connection, "SELECT 1 WHERE pg_catalog.has_schema_privilege(:r, :s, 'CREATE')", r=role, s=schema):

@@ -25,7 +25,7 @@ ISSUER = "https://issuer.example.test/auth/v1"
 
 # --- helpers ------------------------------------------------------------------------------------
 
-def violations(url: str, search_path: str | None = None) -> list[str]:
+def violations(url: str, search_path: str | None = None, migration_login: str | None = MIGRATOR) -> list[str]:
     from sqlalchemy import create_engine
     from sqlalchemy.pool import NullPool
 
@@ -36,7 +36,7 @@ def violations(url: str, search_path: str | None = None) -> list[str]:
         with engine.connect() as connection:
             if search_path:
                 connection.exec_driver_sql(f"SET search_path = {search_path}")
-            return check(connection)
+            return check(connection, migration_login=migration_login)
     finally:
         engine.dispose()
 
@@ -206,6 +206,8 @@ def test_preflight_refuses_a_preexisting_table(scratch, migrator):
       "ALTER FUNCTION carvis.b2b1_o() OWNER TO carvis_app"], "role_owns_routine:carvis_app:carvis.b2b1_o()"),
     (["CREATE TYPE carvis.b2b1_e AS ENUM ('x')", "REVOKE ALL ON TYPE carvis.b2b1_e FROM PUBLIC",
       "ALTER TYPE carvis.b2b1_e OWNER TO carvis_worker"], "role_owns_type:carvis_worker"),
+    (["ALTER FUNCTION carvis.ensure_principal(text,text,text) SECURITY INVOKER"], "definer_not_definer"),
+    (["DROP FUNCTION carvis.ensure_principal(text,text,text)"], "definer_missing"),
     (["GRANT carvis_provisioner TO postgres"], "definer_owner_member:carvis_provisioner:postgres"),
     (["GRANT USAGE ON TYPE carvis.workspaces TO PUBLIC"], "public_or_issuer_type"),
     (["GRANT EXECUTE ON FUNCTION carvis.uuid_v7() TO carvis_app"], "routine_acl:carvis.uuid_v7()"),
@@ -224,6 +226,26 @@ def test_catalog_does_not_depend_on_the_callers_search_path(scratch, head):
     assert violations(scratch.db_admin, search_path="carvis, public") == []
     _sql(scratch.db_admin, "GRANT EXECUTE ON FUNCTION carvis.uuid_v7() TO carvis_app")
     assert "routine_acl:carvis.uuid_v7()" in violations(scratch.db_admin, search_path="carvis, public")
+
+
+def test_catalog_signatures_qualify_argument_types_under_any_search_path(scratch, head):
+    """A routine taking a carvis type must keep its type's schema with carvis on the path."""
+    _sql(scratch.db_admin, "SET ROLE carvis_owner", "CREATE DOMAIN carvis.b2b1_dom AS int",
+         "CREATE FUNCTION carvis.b2b1_t(carvis.b2b1_dom) RETURNS int LANGUAGE sql AS 'SELECT 1'",
+         "GRANT EXECUTE ON FUNCTION carvis.b2b1_t(carvis.b2b1_dom) TO PUBLIC", "RESET ROLE")
+    for path in (None, "carvis, public"):
+        found = violations(scratch.db_admin, search_path=path)
+        assert "public_or_issuer_routine:carvis.b2b1_t(carvis.b2b1_dom)" in found, (path, found)
+
+
+def test_definer_owner_member_must_be_the_migration_login(scratch, head):
+    """The only member (the migrator's automatic ADMIN-only grant) passes only for that login; the
+    same grant held by another role administrator in its place fails."""
+    assert violations(scratch.db_admin) == []
+    assert f"definer_owner_member:carvis_provisioner:{MIGRATOR}" in violations(scratch.db_admin,
+                                                                                migration_login="rv_other")
+    assert f"definer_owner_member:carvis_provisioner:{MIGRATOR}" in violations(scratch.db_admin,
+                                                                                migration_login=None)
 
 
 def test_catalog_covers_the_migrations_schema(scratch, head):
