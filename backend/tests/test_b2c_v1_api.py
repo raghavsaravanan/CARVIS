@@ -660,3 +660,19 @@ def test_openapi_v1_declares_bearer_security_and_the_envelope():
             if operation.get("parameters"):
                 assert operation["responses"]["422"]["content"]["application/json"]["schema"]["$ref"].endswith(
                     "/ErrorEnvelope")
+
+
+def test_login_gate_deadline_covers_the_pool_checkout():
+    """Pre-review: a stalled checkout or connect is bounded by the gate's own deadline, not only the caller's."""
+    class StalledEngine:
+        async def connect(self):
+            await asyncio.sleep(30)
+
+    async def scenario():
+        gate = LoginGate(StalledEngine(), deadline_seconds=0.2)
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            await gate.ensure()
+        assert time.monotonic() - started < 2 and not gate.passed
+
+    asyncio.run(scenario())

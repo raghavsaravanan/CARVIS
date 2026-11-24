@@ -115,21 +115,25 @@ class LoginGate:
         from db.readiness import _check_login
 
         self.checks += 1
-        connection = await self._engine.connect()
+        async with asyncio.timeout(self._deadline):  # covers the pool checkout and connect too
+            connection = await self._engine.connect()
+            await self._run(connection, _check_login)
+        self._passed = True
+
+    @staticmethod
+    async def _run(connection, check_login) -> None:
         try:
-            async with asyncio.timeout(self._deadline):
-                await connection.exec_driver_sql(f"SET LOCAL statement_timeout = {GATE_STATEMENT_TIMEOUT_MS}")
-                await connection.exec_driver_sql(f"SET LOCAL lock_timeout = {GATE_LOCK_TIMEOUT_MS}")
-                raw = await connection.get_raw_connection()
-                async with raw.driver_connection.cursor() as cursor:
-                    await _check_login(cursor)
-                await connection.rollback()
+            await connection.exec_driver_sql(f"SET LOCAL statement_timeout = {GATE_STATEMENT_TIMEOUT_MS}")
+            await connection.exec_driver_sql(f"SET LOCAL lock_timeout = {GATE_LOCK_TIMEOUT_MS}")
+            raw = await connection.get_raw_connection()
+            async with raw.driver_connection.cursor() as cursor:
+                await check_login(cursor)
+            await connection.rollback()
         except BaseException:
             await connection.invalidate()  # never return a connection in an unknown state to the pool
             raise
         finally:
             await connection.close()
-        self._passed = True
 
 
 def _consume(future: asyncio.Future) -> None:
