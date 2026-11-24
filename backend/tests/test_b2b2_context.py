@@ -193,6 +193,7 @@ def test_no_context_refuses_before_any_statement(scratch, login):
                 with pytest.raises(ContextMissing):
                     await session.execute(text("SELECT 1"))
         assert sent(statements) == [], statements
+        assert unapproved(sent(statements)) == []  # C14b: the refusal path sends nothing at all
         assert engine.sync_engine.pool.checkedout() == 0
         return await raw_state(engine)
 
@@ -283,7 +284,12 @@ def test_savepoints_do_not_rederive_the_context(scratch, login):
             with captured() as statements:
                 async with session.begin_nested():
                     await session.execute(text("SELECT 1"))
-            assert not set(statements) & set(TENANT_PREFIX), statements
+            # Exactly SQLAlchemy's savepoint, the test's own statement and the release: the listener sends
+            # nothing on the nested path (C14b covers this path; C17).
+            assert len(statements) == 3, statements
+            savepoint = re.fullmatch(r"SAVEPOINT (\w+)", statements[0])
+            assert savepoint, statements
+            assert statements[1:] == ["SELECT 1", f"RELEASE SAVEPOINT {savepoint.group(1)}"], statements
             assert session.info[WORKSPACES_KEY] == before
 
     run(login, scenario)
@@ -624,6 +630,9 @@ def test_emitted_sql_is_exactly_the_approved_statements(scratch, login):
             user = await provision(factory, boot("user-a"))
             async with tenant_session(factory, user):
                 pass
+            async with factory() as session:  # the no-context refusal path adds nothing
+                with pytest.raises(ContextMissing):
+                    await session.execute(text("SELECT 1"))
         return sent(statements)
 
     emitted = run(login, scenario)
