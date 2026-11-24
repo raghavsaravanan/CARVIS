@@ -14,7 +14,7 @@ erDiagram
   vehicles ||--o{ vehicle_snapshots : "immutable configurations"
   workspaces ||--o{ conversations : scopes
   users ||--o{ conversations : starts
-  vehicle_snapshots ||--o{ conversations : "active snapshot"
+  vehicle_snapshots ||--o{ conversations : "vehicle snapshot"
   conversations ||--o{ calls : has
   calls ||--o{ turns : has
   turns ||--o{ evidence_references : cites
@@ -37,11 +37,11 @@ erDiagram
 | `users` | `(auth_issuer, auth_subject)` UNIQUE (the verified principal, ADR-0002), `email`, `display_name`, `status` (active, deleting, deleted) | Soft-delete then purge after a grace period (proposed 30 days) |
 | `workspaces` | `kind` (personal, shop), `name`, `personal_owner_user_id` (set if and only if `kind = 'personal'`, `UNIQUE`): one personal workspace per user | Removed with its owner; a shop with other members requires ownership transfer or refuses deletion |
 | `memberships` | `(workspace_id, user_id)` UNIQUE, `role` (owner, admin, member) | Every workspace has an owner. B2b-1 (owner decision, 2026-11-24): no database owner-presence trigger yet. The invariant holds through the only mutation surface: `ensure_principal` creates or reuses a personal workspace and its owner membership atomically, a trigger keeps a personal workspace's only member its owner, and no runtime role can create a shop workspace or update or delete a membership or workspace. The owner-presence trigger is **mandatory in the first package that introduces shop-workspace creation, membership UPDATE or DELETE, or ownership transfer**, before those mutations are exposed |
-| `vehicles` | `vin` (17 chars, `CHECK` no I/O/Q; check digit validated in application), `(workspace_id, vin)` UNIQUE where VIN present, year, make, model, trim, engine, transmission, wheel_size, `archived_at` | Editable; edits never alter past snapshots |
-| `vehicle_snapshots` | `vehicle_id`, `config` jsonb, `config_hash`, `source` (vin_decode, manual), `confirmed_by`, `confirmed_at`, `schema_version` | **Immutable** (UPDATE/DELETE blocked by trigger and grants) |
-| `conversations` | `user_id`, `active_snapshot_id`, `title`, `last_activity_at` | Per retention decision (ADR-0009) |
+| `vehicles` | `vin` (17 chars, `CHECK` no I/O/Q; check digit validated in application), `(workspace_id, vin)` UNIQUE where VIN present, year, make, model, trim, engine, transmission, wheel_size, `archived_at`, `version` (incremented on every edit) | Editable; edits never alter past snapshots |
+| `vehicle_snapshots` | `workspace_id`, `vehicle_id` (composite FK `(workspace_id, vehicle_id)` to `vehicles`), `vehicle_version` (the version confirmed), `config` jsonb (distinguishes *unknown* from *not applicable* for each attribute, versioned by `schema_version`), `config_hash`, `source` (vin_decode, manual), `confirmed_by`, `confirmed_at`, `schema_version` | **Immutable** (UPDATE/DELETE blocked by trigger and grants); created only by the confirm transaction (see "Vehicle context rules") |
+| `conversations` | `user_id`, `vehicle_snapshot_id` NOT NULL (composite FK with `workspace_id`; set at creation, immutable), `title`, `last_activity_at`, `ended_at` | Per retention decision (ADR-0009) |
 | `calls` | `conversation_id`, `generation` (UNIQUE with conversation), `vapi_call_id` UNIQUE NULL, `status` (created, bound, active, ended, failed), `bind_nonce_hash`, `bind_expires_at`, `bound_at`, `verified_with_vapi_at`, `end_reason`, `idempotency_key` UNIQUE per user | Metadata retained; no raw audio stored |
-| `turns` | `call_id`, `seq` UNIQUE with call, `question_text`, `answer_text`, `outcome` (answered, refused, clarification, error), `refusal_reason`, `tool_call_id` UNIQUE, `latency_ms` | Full text 90 days, then text nulled and metadata kept (proposed) |
+| `turns` | `call_id`, `seq` UNIQUE with call, `question_text`, `answer_text`, `outcome` (answered, refused, clarification, error), `refusal_reason`, `vehicle_snapshot_id` (composite FK with `workspace_id`; equal to the conversation's; required for every turn evaluated against evidence), `tool_call_id` UNIQUE, `latency_ms` | Full text 90 days, then text nulled and metadata kept (proposed) |
 | `evidence_references` | `turn_id`, `evidence_id`, `revision_id`, `page`, `excerpt_sha256`, `conditions` jsonb | Kept with the turn; withdrawn evidence renders "source withdrawn" |
 | `feedback` | `turn_id`, `user_id`, `kind` (incorrect, unhelpful, missing), `note`, `status` | User-deletable |
 | `source_documents` | `scope` (global, workspace), `workspace_id` NULL iff global (`CHECK`), `title`, `rights_basis` (required before activation), `provenance`, `created_by` | Operator-only |
@@ -68,6 +68,26 @@ indexes in `backend/qdrant_v2.py`. Every table with `workspace_id` has RLS enabl
 `vehicle_snapshots`, `document_revisions`, `review_decisions`, `audit_events` reject UPDATE and DELETE
 for every application role; the tests in [10-threat-model-and-tests.md](10-threat-model-and-tests.md)
 assert this through the application role, not only through the owner.
+
+## Vehicle context rules
+
+Bounded B3–B5 design review (2026-11-24); invariants are enforced in B3, B4, B5 and B7d/B7e as noted in
+[12-m2-roadmap.md](12-m2-roadmap.md).
+
+- A snapshot is created only by the authenticated technician's confirmation (`POST /v1/vehicles/{id}/confirm`)
+  of a non-archived vehicle in their workspace, at the vehicle version they saw; a stale version is refused.
+- A conversation is bound to one snapshot for its whole life. Switching vehicles ends the conversation and its
+  active call, and a new conversation starts with the new snapshot. Derived state (pending question, work
+  context, grounded answer, camera request) never crosses a conversation boundary. Ending the call also discards
+  the voice agent's context and cuts audio in flight; speech already played before the switch was produced for
+  the old vehicle while it was current. That residual is validated by Vapi gate G-V6 and the real spoken-output
+  tests (D-14, M5).
+- Every technical request is evaluated against its conversation's snapshot and call generation, captured when the
+  request begins; retrieval and verification read configuration only from the snapshot, never from `vehicles`.
+  The answer is released only if that call is still the conversation's active generation, checked in the
+  transaction that persists the turn.
+- Cross-table links to snapshots are composite foreign keys including `workspace_id`, because foreign-key checks
+  are not subject to RLS. Only the authenticated app path sets a conversation's snapshot, never a voice-agent tool.
 
 ## Ownership and deletion
 

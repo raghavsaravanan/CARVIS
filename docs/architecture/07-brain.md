@@ -329,6 +329,13 @@ reconcile.
   warning scope and heading context; ingestion and query normalization use the same rules.
 - The original source is the evidence, not the generated extraction. Synthetic fixtures are never
   published to a real pilot scope.
+- **Stage S synthetic evidence (PRD P-09, §14.0; owner direction 2026-11-24).** Synthetic evidence may be
+  served to validate the experience only through a server-issued Stage S mode bound to a dedicated synthetic
+  workspace: never part of any real workspace's or the global scope resolution; labeled "simulated" in spoken
+  and displayed output and durably in turns, history, evidence cards and feedback; never shown as verified;
+  never counted as coverage or as Stage R or C evidence. The mechanism is open (roadmap D-20) and must be
+  settled before B7a design acceptance, any B7c publication decision that encodes the synthetic partition, or
+  any Stage S serving run.
 
 ## Retrieval layers
 
@@ -352,7 +359,10 @@ it means this no-match refusal. A partial answer is allowed only for separable p
 each independently verified and labeled as covering only that part. A procedure is never delivered
 partially: a missing required step or dependency makes it `incomplete`, which refuses (CAR-043).
 Ambiguity is never resolved by guessing. A vehicle switch invalidates derived facts and pending
-responses.
+responses: a vehicle switch ends the conversation, each request is evaluated against the immutable snapshot and
+call generation captured when it began (query mapping, authoritative scope, verification), configuration is read
+only from that snapshot, and the answer is released only if the call is still current at release
+([03-data-model.md](03-data-model.md), "Vehicle context rules"; B7d, B7e).
 
 A deterministic compiler builds each answer from approved facts, units, conditions and citations
 into one versioned answer from which both the spoken and the displayed output derive. An LLM may

@@ -19,6 +19,7 @@ way with existing tests, not that the V1 design exists.
 | CAR-010/011/012 VIN, decode, manual | P05 | vehicles | `/v1/vehicles`, `/decode` | VIN check-digit vectors, decode fake | B3 | Not started |
 | CAR-013/016 confirm, unresolved details | P06 | vehicle_snapshots | `/confirm` | snapshot immutability | B3 | Not started |
 | CAR-014/015 Garage, safe switching | P04 | vehicles, conversations | `/v1/vehicles`, new conversation on switch | switch invalidates conversation memory | B3, B4 | Not started |
+| CAR-019 conversational vehicle identification (conditional V1 enhancement) | P04, P07 | vehicles (candidate only) | proposal tool; `/confirm` | proposal never creates a snapshot; model-claimed confirmation changes nothing | B5 if included (D-19) | Not started; conditional |
 | CAR-020–026 voice | P07 | calls | `/calls`, bind, end, Vapi | `test_conversation.py` plus physical-device checks | B4, B5 | Not started |
 | CAR-027 persistence | P07, P10 | conversations, calls, turns | `/v1/conversations` | restart-durability integration test | B4 | Not started |
 | CAR-030–036 retrieval, verification, refusal | P08, P09 | evidence_* | webhook tool | `test_specs_v2.py`, `test_ride_height.py` unchanged | B7d, B7e | Prototype (legacy Qdrant path, tests exist) |
