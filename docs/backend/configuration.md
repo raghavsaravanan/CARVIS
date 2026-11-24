@@ -205,7 +205,8 @@ side's agreement recorded by the owner. Implemented: `GET /v1/me`, `GET /v1/work
   login check on, a request has 5 s; a timeout, lock wait or any database error is 503.
 - **Errors.** Every application-produced `/v1` error is `{"error": {"code", "message", "request_id",
   "retryable"}}`, with `request_id` equal to `X-Request-ID`; messages are fixed per code. Every `/v1`
-  response carries `Cache-Control: no-store`. A response the ASGI server generates before the app runs
+  response carries `Cache-Control: no-store`, and `Connection: close` when it is sent before an announced
+  request body was read to the end (A6). A response the ASGI server generates before the app runs
   (Uvicorn's plain-text 400) cannot carry the envelope or these headers. Legacy routes keep their shapes.
 - **Logs.** Refusals are logged as `v1_request_refused` with a code and a reason code; unexpected errors as
   `v1_unhandled_error` with the exception type name. Tokens, emails, messages and input are never logged.

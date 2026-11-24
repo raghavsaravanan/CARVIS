@@ -676,3 +676,99 @@ def test_login_gate_deadline_covers_the_pool_checkout():
         assert time.monotonic() - started < 2 and not gate.passed
 
     asyncio.run(scenario())
+
+
+# --- Unread announced bodies (implementation review round 1: Claude F1 / Codex B1) --------------------
+#
+# Rule (A6): any response sent without reading an announced body carries Connection: close, so the server does not
+# drain the rest on keep-alive. Class: every way a /v1 response is produced. One parametrized case per path.
+
+def _no_runtime(monkeypatch, issuer):
+    main.app.state.v1 = None
+
+
+def _runtime(monkeypatch, issuer):
+    install(runtime_for(issuer))
+
+
+def _database_down(monkeypatch, issuer):
+    install(runtime_for(issuer))
+    monkeypatch.setattr(v1auth, "provision", Recorder(error=psycopg.OperationalError("down")).provision)
+
+
+def _unexpected(monkeypatch, issuer):
+    install(runtime_for(issuer))
+    monkeypatch.setattr(v1auth, "provision", Recorder().provision)
+    monkeypatch.setattr(v1auth, "tenant_session", failing_tenant(ValueError("boom")))
+
+
+def _authenticated(monkeypatch, issuer):
+    install(runtime_for(issuer))
+    monkeypatch.setattr(v1auth, "provision", Recorder().provision)
+
+
+UNREAD_BODY_CASES = [
+    ("401-no-credentials", _runtime, "GET", "/v1/me", {}, 401),
+    ("401-invalid-token", _runtime, "GET", "/v1/me", {"Authorization": "Bearer a.b.c"}, 401),
+    ("401-workspaces", _runtime, "GET", "/v1/workspaces", {}, 401),
+    ("503-no-runtime", _no_runtime, "GET", "/v1/me", {}, 503),
+    ("503-database", _database_down, "GET", "/v1/me", None, 503),
+    ("500-unexpected", _unexpected, "GET", "/v1/me", None, 500),
+    ("422-validation", _authenticated, "GET", "/v1/workspaces?limit=0", None, 422),
+    ("404-unknown-path", _runtime, "GET", "/v1/nope", {}, 404),
+    ("405-wrong-method", _runtime, "DELETE", "/v1/me", {}, 405),
+    ("307-redirect", _runtime, "GET", "/v1/me/", {}, 307),
+]
+
+
+@pytest.mark.parametrize("prepare,method,path,headers,status", [case[1:] for case in UNREAD_BODY_CASES],
+                         ids=[case[0] for case in UNREAD_BODY_CASES])
+def test_every_v1_response_to_an_unread_announced_body_closes_the_connection(client, issuer, monkeypatch, prepare,
+                                                                              method, path, headers, status):
+    prepare(monkeypatch, issuer)
+    headers = bearer() if headers is None else headers
+    response = client.request(method, path, content=b"x" * 100_000, headers=headers, follow_redirects=False)
+    assert response.status_code == status, response.text
+    assert response.headers["connection"] == "close"
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_v1_response_without_a_body_keeps_the_connection(client, issuer):
+    install(runtime_for(issuer))
+    response = client.get("/v1/me")
+    assert response.status_code == 401 and "connection" not in response.headers
+
+
+def test_chunked_and_fully_read_bodies():
+    """The rule on raw ASGI: chunked counts as announced; a body read to the end before answering does not close."""
+    from api_v1.errors import V1HeadersMiddleware
+
+    async def reads_body(scope, receive, send):
+        while (await receive()).get("more_body"):
+            pass
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def ignores_body(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": [(b"connection", b"keep-alive")]})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def call(app, headers):
+        sent = []
+        chunks = iter([{"type": "http.request", "body": b"a", "more_body": True},
+                       {"type": "http.request", "body": b"b", "more_body": False}])
+
+        async def receive():
+            return next(chunks)
+
+        async def send(message):
+            sent.append(message)
+
+        await V1HeadersMiddleware(app)({"type": "http", "path": "/v1/me", "headers": headers}, receive, send)
+        return dict(sent[0]["headers"])
+
+    chunked = [(b"transfer-encoding", b"chunked")]
+    assert b"connection" not in asyncio.run(call(reads_body, chunked))
+    assert asyncio.run(call(ignores_body, chunked))[b"connection"] == b"close"
+    assert asyncio.run(call(ignores_body, [(b"content-length", b"abc")]))[b"connection"] == b"close"
+    assert b"connection" not in asyncio.run(call(reads_body, [(b"content-length", b"2")]))

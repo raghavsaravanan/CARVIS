@@ -14,7 +14,8 @@ Mechanisms:
   :class:`ApiError` to the envelope, re-raises ``HTTPException`` and ``RequestValidationError`` to the handlers,
   and turns any other exception into a 500 (logged by type name only). An app-wide ``Exception`` handler is not
   used because Starlette installs it outside ``RequestIdMiddleware``.
-- :class:`V1HeadersMiddleware` puts ``Cache-Control: no-store`` on every ``/v1`` response, redirects included.
+- :class:`V1HeadersMiddleware` puts ``Cache-Control: no-store`` on every ``/v1`` response, redirects included, and
+  ``Connection: close`` on any ``/v1`` response sent before an announced body was read to the end (A6).
 
 Responses the ASGI server generates before the application runs (for example Uvicorn's plain-text 400 for a
 malformed request) cannot carry the envelope, the request ID or ``no-store``.
@@ -161,8 +162,25 @@ def v1_route_class(limits: dict[str, BodyLimit], default: BodyLimit):
     return V1Route
 
 
+def _announces_body(scope: dict) -> bool:
+    """A6's rule on the raw headers: a non-zero (or malformed) ``Content-Length``, or chunked encoding."""
+    for name, value in scope.get("headers", []):
+        name = name.lower()
+        if name == b"content-length" and value.strip() not in (b"0",):
+            return True
+        if name == b"transfer-encoding" and b"chunked" in value.lower():
+            return True
+    return False
+
+
 class V1HeadersMiddleware:
-    """Pure ASGI: ``Cache-Control: no-store`` on every response to a ``/v1`` path (redirects and 404/405 too)."""
+    """Pure ASGI, on every response to a ``/v1`` path (redirects, 404/405 and every error included):
+
+    - ``Cache-Control: no-store``;
+    - ``Connection: close`` when the request announced a body that was not read to the end before the response
+      started (A6: the server must not drain an unread body on keep-alive). This one layer covers every way a
+      ``/v1`` response can be produced, so no route class or handler has to repeat it.
+    """
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -171,15 +189,26 @@ class V1HeadersMiddleware:
         if scope["type"] != "http" or not is_v1_path(scope.get("path", "")):
             await self.app(scope, receive, send)
             return
+        unread = _announces_body(scope)
 
-        async def send_no_store(message: dict) -> None:
+        async def tracked_receive() -> dict:
+            nonlocal unread
+            message = await receive()
+            if message["type"] == "http.request" and not message.get("more_body", False):
+                unread = False
+            return message
+
+        async def send_v1_headers(message: dict) -> None:
             if message["type"] == "http.response.start":
-                headers = [(name, value) for name, value in message.get("headers", [])
-                           if name.lower() != b"cache-control"]
-                message = {**message, "headers": [*headers, (b"cache-control", NO_STORE.encode("ascii"))]}
+                drop = {b"cache-control", b"connection"} if unread else {b"cache-control"}
+                headers = [(name, value) for name, value in message.get("headers", []) if name.lower() not in drop]
+                headers.append((b"cache-control", NO_STORE.encode("ascii")))
+                if unread:
+                    headers.append((b"connection", b"close"))
+                message = {**message, "headers": headers}
             await send(message)
 
-        await self.app(scope, receive, send_no_store)
+        await self.app(scope, tracked_receive, send_v1_headers)
 
 
 def install(app) -> None:
