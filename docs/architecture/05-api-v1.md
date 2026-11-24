@@ -2,7 +2,7 @@
 
 Status: proposed contract. The iOS and platform worktrees agree on this document before either side
 implements against it ([`../development-workflow.md`](../development-workflow.md)). It freezes at the
-end of M2 PR B2 (see [12-m2-roadmap.md](12-m2-roadmap.md)).
+end of M2 package B2c (see [12-m2-roadmap.md](12-m2-roadmap.md)).
 
 ## Conventions
 

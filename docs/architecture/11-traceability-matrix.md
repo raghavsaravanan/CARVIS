@@ -4,15 +4,17 @@ Requirement IDs are from [`../PRD.md`](../PRD.md); screens P01–P14 from the
 [V1 contract §4](../product/v1-product-experience-contract.md). M2 PR references are in
 [12-m2-roadmap.md](12-m2-roadmap.md).
 
-Status reflects repository evidence on 2026-11-22: nothing in Track B has started. "Prototype"
-means today's legacy path behaves this way with existing tests, not that the V1 design exists.
+Status reflects merged `main` as of 2026-11-24: Track B packages B1, B2a, B2b-1 and B2b-2 are
+merged (PRs #17, #19, #22, #24); B2c is an open draft PR and is not counted. Rows are updated only
+where merged tests cover part of the requirement. "Prototype" means today's legacy path behaves this
+way with existing tests, not that the V1 design exists.
 
 | Requirement | Screen | Entities | Endpoint | Test | PR | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| CAR-001 secure sign-in | P01 | users | identity provider; `GET /v1/me` | JWT validity matrix; Keychain persistence (device) | B2 | Not started |
-| CAR-002 profile, preferences | P12 | users | `/v1/me` | profile CRUD, tenant tests | B2 | Not started |
-| CAR-003 workspace | P12 | workspaces, memberships | `/v1/workspaces` | one personal workspace per user | B2 | Not started |
-| CAR-004 authorization | all | memberships, RLS | all | IDOR matrix, RLS-only test | B2 | Not started |
+| CAR-001 secure sign-in | P01 | users | identity provider; `GET /v1/me` | JWT validity matrix; Keychain persistence (device) | B2a, B2c | Partial: JWT verifier and matrix merged (B2a, `test_b2a_jwt.py`); `GET /v1/me` is B2c, not merged; Keychain is device-only, not started |
+| CAR-002 profile, preferences | P12 | users | `/v1/me` | profile CRUD, tenant tests | B2 (package unassigned) | Not started |
+| CAR-003 workspace | P12 | workspaces, memberships | `/v1/workspaces` | one personal workspace per user | B2b-1, B2c | Partial: tables and `ensure_principal` provisioning merged (B2b-1, `test_b2b1_identity.py`); `/v1/workspaces` is B2c, not merged |
+| CAR-004 authorization | all | memberships, RLS | all | IDOR matrix, RLS-only test | B2b-1, B2b-2, B2c | Partial: forced RLS and session-context isolation merged (`test_b2b1_identity.py`, `test_b2b2_context.py`); route-level IDOR matrix is B2c, not merged |
 | CAR-005 deletion | P12 | users and cascade | `DELETE /v1/me`, `/v1/me/export` | purge and export tests | B8 | Not started |
 | CAR-010/011/012 VIN, decode, manual | P05 | vehicles | `/v1/vehicles`, `/decode` | VIN check-digit vectors, decode fake | B3 | Not started |
 | CAR-013/016 confirm, unresolved details | P06 | vehicle_snapshots | `/confirm` | snapshot immutability | B3 | Not started |

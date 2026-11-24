@@ -126,4 +126,4 @@ Parallel work is appropriate only when files and decisions do not overlap. A lea
 
 Good parallel tasks: read-only inventory, isolated test additions, independent security review, documentation validation. Bad parallel tasks: multiple agents editing `backend/main.py`, choosing architecture independently, changing shared schemas, alias operations, dependency upgrades, or resolving the same failing tests. The lead integrates, runs the complete relevant suite, and owns conflict resolution.
 
-Access remains limited to this repository and explicitly authorized resources. The bondingAI repository and all employer/private materials are out of scope.
+Access remains limited to this repository and explicitly authorized resources. Third-party proprietary or confidential materials are out of scope.
