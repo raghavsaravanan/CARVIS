@@ -100,6 +100,6 @@ with status `proposed`. Only the repository owner accepts a record. Design docum
 
 ## 8. Guardrails
 
-No secrets, customer data, manuals, or transcripts in documents. Do not access bondingAI material.
+No secrets, customer data, manuals, or transcripts in documents. Do not access or reuse third-party proprietary or confidential material without explicit written authorization from its owner.
 State which findings were verified in code, which were taken from the historical audit, and which are
 assumptions. Do not commit or push without approval.

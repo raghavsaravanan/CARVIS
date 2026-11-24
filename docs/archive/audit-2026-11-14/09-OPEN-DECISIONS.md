@@ -30,6 +30,6 @@ No cleanup or feature implementation should begin until decisions 1–6 are reso
 - iPhone foreground audio is sufficient for v1; locked-screen wake is not required unless the missing PRD says otherwise.
 - Images are optional context and never vehicle/specification authority.
 - A modular monolith is adequate for pilot scale.
-- No access to bondingAI or proprietary employer resources is needed or permitted.
+- No access to third-party proprietary or confidential resources is needed, and none is permitted without explicit written authorization from its owner.
 
 If any assumption is wrong, update the PRD and architecture decision record before implementation rather than silently adapting during a code change.

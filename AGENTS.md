@@ -28,8 +28,9 @@ assigned version (definitions in `docs/README.md`). Link to these documents; do 
   caller-supplied user, shop, vehicle, or session identifier.
 - Keep secrets, credentials, raw audio, transcripts, captured images, personal/shop/vehicle data,
   local Qdrant data, manuals, caches, and review exports out of commits and logs.
-- Use automotive content only with documented rights. Do not access bondingAI repositories,
-  credentials, schemas, confidential employer resources, or implementation details.
+- Use automotive content only with documented rights. Do not access, copy, transfer, or
+  reuse third-party proprietary source code, data, schemas, credentials, or other confidential
+  information without explicit written authorization from its owner.
 
 ## Protected boundaries
 

@@ -333,7 +333,7 @@ These gates restate PRD §15 for the V1 field test. They are the completion test
 
 ## 11. Claude Max engineering handoff instructions
 
-**Inputs:** this contract; the PRD (document revision 1.1); latest Codex audit (the 2026-11-15 P0 Readiness Audit is a historical snapshot, so re-verify against current code); latest local CARVIS repository; existing Figma design exploration. Any bondingAI reference requires explicit employer permission; use only authorized architecture patterns, without transferring proprietary source code, data, credentials or unreleased product secrets.
+**Inputs:** this contract; the PRD (document revision 1.1); latest Codex audit (the 2026-11-15 P0 Readiness Audit is a historical snapshot, so re-verify against current code); latest local CARVIS repository; existing Figma design exploration. Do not access, copy, transfer or reuse third-party proprietary source code, data, credentials or confidential information (including unreleased product details) without explicit written authorization from its owner; use only authorized architecture patterns.
 
 **First deliverables, before code changes (milestone M1 — Production Architecture):**
 

@@ -1,5 +1,10 @@
 # 01 — Current-state assessment
 
+> **Historical snapshot.** This is the repository as of 2026-11-15, before M2 Track A and the
+> Track B packages merged after it (see [12-m2-roadmap.md](12-m2-roadmap.md) and
+> [11-traceability-matrix.md](11-traceability-matrix.md) for current status). Its observations are
+> preserved unchanged as audit evidence; verify current behavior against code and tests.
+
 Snapshot of the repository at `main` as of 2026-11-15. Claims are verified against code unless
 labeled [A]. Line numbers drift; re-check before relying on them.
 
