@@ -1,6 +1,6 @@
 # CARVIS — V1 Product Experience Contract
 
-**Document revision:** 1.3 · Approved V1 scope; items marked Proposed or Open remain unresolved (1.2, 2026-11-22: §6.5 and gate additions; 1.3, 2026-11-23: the pilot participant is named by role, and D-11 and the matching §7 and §12 entries record their resolution by accepted ADR-0001 and ADR-0002; no decision ID, journey, acceptance criterion, or scope item changed)  
+**Document revision:** 1.4 · Approved V1 scope; items marked Proposed or Open remain unresolved (1.2, 2026-11-22: §6.5 and gate additions; 1.3, 2026-11-23: the pilot participant is named by role, and D-11 and the matching §7 and §12 entries record their resolution by accepted ADR-0001 and ADR-0002; no decision ID, journey, acceptance criterion, or scope item changed; 1.4, 2026-11-24: owner direction of that date adds the conditional CAR-019 note to J-02 and the validation-stage labels to §6.5; no decision ID, acceptance criterion or scope item changed)  
 **Date:** November 15, 2026 (terminology revised November 15, 2026)  
 **Purpose:** Define the exact experience to validate whether CARVIS is useful to working automotive technicians before Claude Max designs the canonical multi-tenant platform and before the pilot technician receives an independent TestFlight build.  
 **Authority:** CARVIS PRD (document revision 1.1; first drafted Nov 14, 2026); CARVIS P0 Readiness Audit (Nov 15, 2026); historical architecture/consolidation reports; verified phone-to-knowledge demonstration.  
@@ -73,7 +73,8 @@ At minimum every user belongs to an isolated personal or pilot shop context. The
 **Entry:** Home prompts “Which vehicle are you working on?” if no confirmed active vehicle.  
 **Flow:** Select saved vehicle, enter VIN, or use manual year/make/model plus required engine, drivetrain, trim, wheel/market/production variants → show resolved configuration → explicit “Use this vehicle” confirmation. VIN decoding is an explicit PRD P0 requirement; a VIN result must not imply every service variant is known.  
 **Data:** durable `Vehicle`, owner/workspace, normalized configuration, optional VIN reference, confirmation event, immutable conversation vehicle snapshot.  
-**Acceptance:** cannot retrieve vehicle-specific technical values for an unconfirmed or ambiguous configuration. Duplicate or invalid VIN is handled visibly. Switching vehicles ends/invalidates current vehicle-scoped assumptions and stale tool results without deleting prior history.
+**Acceptance:** cannot retrieve vehicle-specific technical values for an unconfirmed or ambiguous configuration. Duplicate or invalid VIN is handled visibly. Switching vehicles ends/invalidates current vehicle-scoped assumptions and stale tool results without deleting prior history.  
+**Conditional V1 enhancement (PRD CAR-019, roadmap D-19):** a vehicle described in conversation may become an unconfirmed candidate; it is confirmed only through this journey's explicit in-app confirmation, never by the voice agent.
 
 ### J-03 — Start CARVIS voice
 
@@ -205,7 +206,11 @@ coverage of the agreed representative tasks as a proposed minimum usefulness thr
 planning targets, not quotas or achieved results; every mandatory pilot category needs meaningful
 supported examples, and an unmet core task is never hidden by changing the denominator.
 
-Three kinds of criteria stay separate:
+Three kinds of criteria stay separate. Separately, every pilot and product evaluation method and result in this
+section (§6.1–§6.4 and the pilot utility targets) is labeled with its validation stage (PRD §14.0): S (experience,
+real app, possibly labeled synthetic evidence), R (real technical, authorized reviewed evidence) or C (commercial).
+Stage S results never satisfy a pilot utility target, a release blocker or an R or C measure. Engineering
+validation is not stage-labeled.
 
 - **Engineering validation:** the B7 acceptance cases, the R3 safety suite and the PRD §15.2 checks;
   synthetic fixtures may validate engineering but never support real repair advice.

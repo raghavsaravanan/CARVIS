@@ -2,7 +2,7 @@
 ## Product Requirements Document
 **Conversational Automotive Repair & Visual Intelligence System**
 
-**Document revision:** 1.2 — Draft for Review (revision 1.0: November 14, 2026)
+**Document revision:** 1.3 — Draft for Review (revision 1.0: November 14, 2026)
 **Date:** November 14, 2026 · terminology revised November 15, 2026
 **Product stage:** Hackathon prototype → Field-testable product
 **V1:** The first complete field-testable CARVIS release — iOS / Audio-First / TestFlight
@@ -12,6 +12,8 @@
 **Revision 1.1** changes terminology only. It adopts the V1 / M1–M5 / P0–P3 conventions below and removes statements that the repository audit had not yet happened. All requirement IDs, priorities, and acceptance criteria are unchanged.
 
 **Revision 1.2** (November 23, 2026) refers to the pilot participant by role ("the pilot technician") instead of by name, and marks the two §18 decisions that accepted decision records have resolved. All requirement IDs, priorities, acceptance criteria, and scope are unchanged.
+
+**Revision 1.3** (November 24, 2026) records the owner's product direction of that date: CARVIS's positioning as a conversational intelligence layer (§2.2), development principle P-09 (§5), validation stages S, R and C as provenance labels (§14.0), and conversational vehicle identification as a conditional V1 enhancement (CAR-019, §7.2, §8.2). V1 scope, existing requirement IDs, priorities, acceptance criteria and §14.3 targets are unchanged.
 
 ---
 
@@ -66,6 +68,8 @@ The product should integrate into established repair workflows rather than creat
 ## 2.2 Core Product Proposition
 
 **CARVIS brings verified automotive intelligence to the technician, in the context of the vehicle and task already being worked on.**
+
+CARVIS is a conversational intelligence layer over the repair-information and shop systems technicians already use. The product is designed around the technician experience it should ultimately deliver, not around today's data availability or integration limits; V1 delivers the part of that experience defined in §6.1.
 
 ## 2.3 V1 Proposition
 
@@ -180,6 +184,10 @@ Every user, shop, vehicle, and conversation must be protected by appropriate acc
 
 Support future vision, wearables, and external data integrations through clear boundaries. Do not build unnecessary infrastructure before it delivers value.
 
+**P-09 — Design the experience. Integrate what we can. Simulate what we cannot. Validate incrementally. Replace simulations with authorized integrations when available.**
+
+Build real application and backend infrastructure, and integrate authorized real data wherever it is available. Where an external integration is unavailable, isolated and explicitly labeled synthetic data may exercise the real application, retrieval and verification pipeline to validate the experience (Stage S, §14.0). Simulated and real technical information stay separated, and synthetic evidence never authorizes repair guidance. Integration boundaries are designed so authorized sources can replace simulations without redesigning the product. Unavailable commercial integrations are not prerequisites for controlled experience validation; real technical use still requires authorized data, qualified review and the §15 gates. This principle does not authorize any deferred capability (§16).
+
 # 6. Release Strategy
 
 ## 6.1 V1 — Technician Field Test (P0)
@@ -282,6 +290,7 @@ The user can identify a vehicle through:
 - Camera-assisted VIN recognition where supported.
 - Manual year/make/model/engine selection.
 - A previously saved vehicle.
+- *Conditional V1 enhancement (CAR-019):* a vehicle described in conversation, proposed as a candidate that the technician confirms in the app like any other identification. Manual Garage and VIN identification with explicit in-app confirmation is the mandatory V1 baseline; a voice proposal arises only inside a conversation that already has a confirmed vehicle. Pre-vehicle conversations and spoken confirmation are not part of V1; any expansion to them requires explicit owner approval and reconciliation of the affected contracts (owner direction, 2026-11-24; roadmap D-19).
 
 CARVIS decodes or resolves the available vehicle information and shows a confirmation screen.
 
@@ -403,6 +412,7 @@ A user can sign in again without repeating onboarding. Unauthorized users cannot
 | CAR-016 | Ask for unresolved configuration details | P0 |
 | CAR-017 | VIN camera recognition | P1 |
 | CAR-018 | Repair-order-based automatic vehicle identification | P1 |
+| CAR-019 | Conversational vehicle identification: a vehicle described in conversation becomes an unconfirmed candidate; only the technician's in-app confirmation (CAR-013) establishes vehicle context | Conditional V1 enhancement (roadmap D-19) |
 
 **Acceptance conditions:**
 
@@ -722,6 +732,18 @@ The latency figures are targets, not measured current capabilities or guarantees
 An incorrect technical answer delivered quickly is a more serious failure than a justified refusal delivered more slowly.
 
 # 14. Pilot Evaluation and Success Metrics
+
+## 14.0 Validation Stages
+
+Every pilot and product evaluation method and result (this section; contract §6) is labeled with the stage it belongs to. The stages are provenance labels: they do not replace or reclassify the targets in §14.3 or the gates in §15. Engineering validation (automated tests, including tests on synthetic fixtures) is not stage-labeled and satisfies the §15.2 checks as before.
+
+| Stage | Purpose | Evidence allowed |
+| --- | --- | --- |
+| **S — Experience validation** | Interaction quality, reliability, usability, context management and workflow friction, in controlled sessions on the real application | Isolated, explicitly labeled synthetic evidence where authorized data is unavailable (P-09), served only in a dedicated synthetic workspace and always presented as simulated |
+| **R — Real technical validation** | Correctness, applicability, safety, reliability and measurable utility on genuine supported repair-information tasks | Authorized, independently reviewed evidence only |
+| **C — Commercial validation** | Continued technician use, shop-owner evaluation and a concrete purchasing assessment | Real use under Stage R conditions |
+
+A Stage S result never satisfies a §14.3 target, a Stage R or C measure, or a §15 gate that requires real evidence or real use (§15.1, §15.3, §15.4), and is never reported as real technical coverage or commercial utility. The pilot technician remains the primary V1 participant, and the pilot shop is the first commercial validation target.
 
 ## 14.1 Primary Product Hypothesis
 

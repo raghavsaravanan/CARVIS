@@ -51,7 +51,7 @@ as a plan.
 
 | Question | Authoritative source | Status |
 | --- | --- | --- |
-| What must the product do? | [`PRD.md`](PRD.md) (document revision 1.2) | Product requirements authority |
+| What must the product do? | [`PRD.md`](PRD.md) (document revision 1.3) | Product requirements authority |
 | What exactly does the V1 pilot include? | [`product/v1-product-experience-contract.md`](product/v1-product-experience-contract.md) | Approved V1 pilot scope. Contract decisions D-06, D-07 and D-09 are proposed defaults, and **contract D-12 (retention) remains open**; do not treat them as resolved. Contract D-11 (identity/database vendors) is resolved by accepted ADR-0001 and ADR-0002. The roadmap's own D-numbers are a separate series |
 | What did the repository look like on 2026-11-15? | [`audits/2026-11-15-p0-readiness-audit.md`](audits/2026-11-15-p0-readiness-audit.md) | Historical snapshot, not current truth |
 | What does the code do now? | The code and its tests | Implementation truth |
@@ -89,12 +89,13 @@ into `AGENTS.md` or `CLAUDE.md`, link to it.
 
 | Repository file | Received as | SHA-256 of received file | Edits to received text |
 | --- | --- | --- | --- |
-| `product/v1-product-experience-contract.md` | `CARVIS_V1_Product_Experience_Contract.md` | `d029d7692525fda819267e134e0262beb2270216c4590498ff71742ea8b86927` | Imported byte-identical, then revised to document revision 1.1 on 2026-11-15: V1 / M1–M5 / P0–P3 terminology, "V2" replaced by "post-V1", milestone mapping added to §8, §10, and §11. No decision ID, journey, acceptance criterion, or scope item changed. Later revisions (1.2 and 1.3) are recorded in the contract's own revision line. The hash identifies the received file, not the current text |
+| `product/v1-product-experience-contract.md` | `CARVIS_V1_Product_Experience_Contract.md` | `d029d7692525fda819267e134e0262beb2270216c4590498ff71742ea8b86927` | Imported byte-identical, then revised to document revision 1.1 on 2026-11-15: V1 / M1–M5 / P0–P3 terminology, "V2" replaced by "post-V1", milestone mapping added to §8, §10, and §11. No decision ID, journey, acceptance criterion, or scope item changed. Later revisions (1.2 to 1.4) are recorded in the contract's own revision line. The hash identifies the received file, not the current text |
 | `audits/2026-11-15-p0-readiness-audit.md` | `CARVIS_P0_READINESS_AUDIT.txt` | `2f5cb2eaf06d7d99c935300d4028b4264a883849799077b7b6e576f081f3f58c` | Added a snapshot banner; rewrote 7 machine-specific absolute source links to repo-relative code references so links resolve and no local paths are committed |
 
 `docs/PRD.md` was already in the repository. Document revision 1.1 (2026-11-15) changed terminology
 only and removed statements that the repository audit had not yet happened; revision 1.2
 (2026-11-23) names the pilot participant by role and marks two §18 decisions resolved by accepted
-records. Requirement IDs, priorities, and acceptance criteria are unchanged. A `CARVIS_PRD.pdf` exists outside the repository; it
+records; revision 1.3 (2026-11-24) records the owner's product direction (positioning, P-09, validation stages,
+conditional CAR-019). Existing requirement IDs, priorities, and acceptance criteria are unchanged. A `CARVIS_PRD.pdf` exists outside the repository; it
 was not imported because CI rejects tracked `.pdf` files and `PRD.md` is the maintained text form.
 Confirm the two match before treating either as canonical.

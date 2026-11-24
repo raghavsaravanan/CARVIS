@@ -31,9 +31,9 @@ Not in Track A: authenticating `/vision-query` or `/conversation/sessions`, remo
 | B2b-1 | Users, workspaces, memberships with forced RLS; `ensure_principal` provisioning; reusable catalog check; database-level isolation tests ([04](04-identity-tenancy-rls.md) "Validation" 1, 2, 6, 7, 8, 10, 12–15). T3 (owner split of B2b's 150 min, 2026-11-24), 90 min | B2a |
 | B2b-2 | Two-phase `after_begin` session context (`db/context.py`); app-level harness: pool leak, interleaving, rollback, fail-closed layers ([04](04-identity-tenancy-rls.md) "Validation" 3, 4, 5, 16). T3, 60 min | B2b-1 |
 | B2c | `/v1` auth dependency, `GET /v1/me`, `GET /v1/workspaces`, `/v1`-scoped error envelope, OpenAPI snapshot; **API contract freeze** (frozen/provisional, iOS agreement required, ADR-0004). T4, 120 min | B2b-2; ADR-0004 |
-| B3 | Garage: vehicles, snapshots with immutability triggers, VIN validation, `/v1/vehicles*` | B2c |
-| B4 | Durable conversations, calls, turns, `webhook_events`; PostgreSQL-backed `ConversationStore` behind the existing interface; restart-durability tests | B2c |
-| B5 | Vapi ingress v2 ([06](06-vapi-ingress.md)): credential, bind proof, `resolve_call`, dedupe, `call_not_ready`; flagged removal of payload-trusting bind and sessionless path | B4; gates G-V1…G-V6 (D-9) |
+| B3 | Garage: vehicles, snapshots with immutability triggers, VIN validation, `/v1/vehicles*`; the confirm transaction as the only snapshot-creation path (vehicle version bound, archived refused, `workspace_id` and composite FKs, unknown versus not-applicable attributes); `Idempotency-Key` on create and confirm; `X-Workspace-Id` validation (first workspace-scoped route). `POST /v1/vehicles/decode` stays provisional | B2c |
+| B4 | Durable conversations, calls, turns, `webhook_events`; PostgreSQL-backed `ConversationStore` behind the existing interface; restart-durability tests; conversation bound to one snapshot of a non-archived vehicle at creation, a switch ends conversation and call, per-conversation derived state (including any visual hypothesis), `turns.vehicle_snapshot_id` NOT NULL with workspace-scoped composite links; carry-forward (design-review N3): the server ends the user's other open conversations and their calls in the same transaction that creates a new conversation, before the new context is usable; acceptance: switch between a request and its release releases nothing for the old vehicle | B3 |
+| B5 | Vapi ingress v2 ([06](06-vapi-ingress.md)): credential, bind proof, `resolve_call`, dedupe, `call_not_ready`; flagged removal of payload-trusting bind and sessionless path; `confirm_vehicle` without authority; replay only on the current call; acceptance: replay after a switch and a model claiming spoken confirmation change nothing. carry-forward: validate that ending a call cuts in-flight audio (G-V6 covers only tool-call retries; add the check to the gate set or the D-14 spoken-output tests); CAR-019 proposal tool only under D-19, with its confirmation on P06 | B4; gates G-V1…G-V6 (D-9) |
 | B6 | Evidence references, history, feedback endpoints | B4 |
 | B7a–f | Brain in PostgreSQL ([07](07-brain.md)), split below | B2c, D-8 |
 | B8 | Account deletion/export and retention jobs | B2c–B6, D-4 |
@@ -41,6 +41,16 @@ Not in Track A: authenticating `/vision-query` or `/conversation/sessions`, remo
 | B10 | Staging and production pipeline, nightly dump, restore drill, alerts, runbooks | B1 |
 
 Parallel: M3 corpus work after the B7 contract; iOS M4 consumes the contracts frozen at B2c.
+
+**Bounded B3–B5 design review (2026-11-24, T4; owner direction of that date).** Vehicle context is
+backend-authoritative end to end: one snapshot-creation path (B3), a conversation bound to one snapshot with a
+switch ending it (B4), voice tools without vehicle authority (B5), and evaluation and release against the snapshot
+and call generation captured when a request begins (B7d, B7e). The rules are in
+[03-data-model.md](03-data-model.md) "Vehicle context rules", [06-vapi-ingress.md](06-vapi-ingress.md) steps 6 and 7
+and [07-brain.md](07-brain.md) "Outcomes and response compiler". Conversational vehicle identification (CAR-019)
+is a conditional enhancement limited to proposals inside a confirmed conversation (D-19) and needs no B3 or B4
+change; the Stage S requirement is approved and its serving mechanism stays open for B7a (D-20). B4 now depends on B3,
+whose snapshot table its foreign keys reference.
 
 B2 is split into serial rows B2a, B2b and B2c (owner, 2026-11-22), and B2b further into B2b-1 and
 B2b-2 (table above), each its own draft PR titled `(M2 B2a)` and so on, each starting only after the
@@ -64,7 +74,7 @@ owner approval.
 
 | Package | Scope | Depends on | Acceptance criteria |
 | --- | --- | --- | --- |
-| B7a | Canonical knowledge and evidence schema (source documents and revisions with rights basis, fragments, entities and aliases, applicability, specifications, procedures and steps, review decisions, evidence versions, coverage), versioned internal contracts, additive migration with downgrade | B2, D-8 | Migration up/down on a scratch store; constraints reject activation without rights basis; append-only review decisions enforced; RLS and scope tests; nothing served |
+| B7a | Canonical knowledge and evidence schema (source documents and revisions with rights basis, fragments, entities and aliases, applicability, specifications, procedures and steps, review decisions, evidence versions, coverage), versioned internal contracts, additive migration with downgrade | B2, D-8; D-20 for any synthetic-partition element | Migration up/down on a scratch store; constraints reject activation without rights basis; append-only review decisions enforced; RLS and scope tests; nothing served |
 | B7b | Operator ingestion: source registration before transmission, parser adapter (LlamaParse baseline), technical normalization, typed `pending` extraction, terminology resolution | B7a | Normalization golden tests for every form listed in 07 "Knowledge construction"; no external call without a registered permission; extractions are `pending` only; synthetic fixtures cannot reach a real scope |
 | B7c | Review and publication roles, projection loop, tombstones, control collection, reconciliation, quarantine and restore | B7a (coordinate with the B7b importer); accepted protocol (07 "Protocol gate") | Acceptance cases 1–12 in 07 "Tests", F3 and the restore tests pass on real PostgreSQL and a Qdrant test instance; reviewer ≠ publisher enforced; reconciliation never raises trust |
 | B7d | Query mapping (subject, operation, property, position, conditions, follow-up), authoritative scope enumeration with dependency closure, discovery adapter that only proposes mappings re-entering the exact path | B7a, B7c trust contract, accepted protocol (07 "Protocol gate"); R3 only if a discovery layer beyond the baseline is adopted | 07 authoritative-scope acceptance requirements, including F1–F3, and the accepted protocol's cases; structured exact retrieval works without any discovery layer; scope limit refuses with `clarification` |
@@ -177,6 +187,8 @@ the decision records are marked `accepted` or the dependent PR starts:
 | D-16 | Pilot targets with the pilot technician (V1 contract §6.5) | Confirm with the pilot technician | M3 evaluation, V1 field test |
 | D-17 | Named qualified technical reviewer and publisher | Name before any real-scope publication | M3 publication |
 | D-18 | Include conditional TSB/recall discovery in V1 | Decide per rights, coverage, quality and cost; not a release gate | CAR-042 |
+| D-19 | Include conversational vehicle identification in V1 (CAR-019) | **Direction set by the owner on 2026-11-24:** manual Garage and VIN identification with explicit in-app confirmation is the mandatory V1 baseline; voice proposals inside a confirmed conversation may remain a conditional enhancement; pre-vehicle conversations and spoken confirmation are not in V1, and any expansion needs explicit owner approval and reconciliation of the affected contracts (spoken confirmation would also need a speech-input validation and acknowledgment gate; D-14 covers output only). Inclusion of the proposal form stays open | CAR-019 proposal tool (B5 or later); not B3, B4 or base B5 |
+| D-20 | Stage S synthetic-evidence serving mechanism (07 "Stage S synthetic evidence") | **Requirement approved by the owner on 2026-11-24** (controlled Stage S validation through the real application with isolated, explicitly labeled synthetic evidence that can never authorize real repair guidance); the implementation decision stays open for B7a. Recommendation: a server-issued Stage S mode bound to a dedicated synthetic workspace, excluded from real and global scope resolution, durably labeled simulated, never verified, separate metrics | Stage S serving runs; B7a design acceptance and B7c publication decisions that encode the synthetic partition; not B3–B6 |
 
 Decision IDs D-12 onward continue this roadmap's numbering; they are separate from the V1
 contract's D-01–D-12.

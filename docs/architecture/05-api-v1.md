@@ -81,13 +81,13 @@ outcome**, not an HTTP error (see turns below).
 | `DELETE /v1/me`, `GET /v1/me/export` | Account deletion and export (B8, D-4) | Provisional |
 | `GET/POST /v1/vehicles`; `GET/PATCH/DELETE /v1/vehicles/{id}` | Garage (DELETE archives) | Provisional (path reserved; B3) |
 | `POST /v1/vehicles/decode` | VIN validation + decode behind a provider interface | Provisional (provider) |
-| `POST /v1/vehicles/{id}/confirm` | Creates the immutable `vehicle_snapshot` | Provisional (path reserved; B3) |
-| `POST /v1/conversations`; `GET /v1/conversations`; `GET /v1/conversations/{id}` | Lifecycle, history list and detail | Provisional (path reserved; B4) |
+| `POST /v1/vehicles/{id}/confirm` | Creates the immutable `vehicle_snapshot`, the only way to establish vehicle context; binds to the vehicle version the technician saw; refuses an archived vehicle | Provisional (path reserved; B3) |
+| `POST /v1/conversations`; `GET /v1/conversations`; `GET /v1/conversations/{id}` | Lifecycle, history list and detail; a conversation is bound to one confirmed vehicle snapshot for its whole life, and a vehicle switch ends it; history detail shows each turn with its own vehicle snapshot (vehicle and resolved configuration) | Provisional (path reserved; B4) |
 | `POST /v1/conversations/{id}/calls` | Starts a call generation; returns `{call_id, generation, vapi_variables, bind_nonce, bind_expires_at}` | Provisional (D-9, G-V1…G-V6) |
 | `POST /v1/calls/{id}/bind` | Body `{vapi_call_id, bind_nonce}`; see [06-vapi-ingress.md](06-vapi-ingress.md) | Provisional (D-9) |
 | `POST /v1/calls/{id}/end` | Ends a call | Provisional (D-9) |
-| `GET /v1/turns/{id}` | Answer with `outcome`, `refusal_reason`, `evidence[]` (document, page, revision, conditions, status) | Provisional (Brain evidence, D-13) |
-| `POST /v1/turns/{id}/feedback` | Report incorrect, unhelpful or missing information | Provisional (B6) |
+| `GET /v1/turns/{id}` | Answer with `outcome`, `refusal_reason`, the turn's own vehicle snapshot (vehicle and resolved configuration), `evidence[]` (document, page, revision, conditions, status) | Provisional (Brain evidence, D-13) |
+| `POST /v1/turns/{id}/feedback` | Report incorrect, unhelpful or missing information; the vehicle is taken from the authorized turn, never from the request | Provisional (B6) |
 | `GET /v1/coverage` | What CARVIS covers (screen P02) | Provisional |
 | `POST /v1/vision/query` | Authenticated successor of `/vision-query`; camera input is deferred for V1 | Provisional |
 | `GET /healthz`, `GET /readyz` | Liveness; readiness (database; Qdrant later) | **Frozen** (B1) |

@@ -66,11 +66,18 @@ assistant and the captured payloads are committed as test fixtures. Track A does
    on-the-fly bind in `session_for_webhook`).
 6. **Replay and idempotency.** `webhook_events (vapi_call_id, tool_call_id)` UNIQUE returns the stored
    response for duplicates; ended and stale-generation calls are rejected; a timestamp tolerance is
-   added only if G-V1 confirms signed timestamps. A replay needs the credential, resolves only to its
-   own already-ended call, returns the stored result and writes nothing.
-7. **Tool scope.** Tools may invoke `lookup_spec`, `confirm_vehicle`, `set_work_context`,
-   `look_at_part`. No tool accepts tenant fields. The sessionless legacy lookup path is removed in
-   Track B after iOS migrates.
+   added only if G-V1 confirms signed timestamps. A replay needs the credential and writes nothing. It
+   returns the stored response only while its call is still the conversation's active, current generation;
+   a replay for an ended or superseded call (for example after a vehicle switch ended the conversation)
+   returns no technical content.
+7. **Tool scope.** The V1 tool set is `lookup_spec` and `set_work_context`; `look_at_part` is preserved but not
+   offered in V1 (camera input is deferred, PRD CAR-062). No tool accepts tenant fields, and no tool creates or changes confirmed vehicle context: the legacy `confirm_vehicle`
+   ("confirmed aloud") has no authority in v2 and is removed from the V1 tool set or returns a nonconfirming
+   result. Only if roadmap D-19 includes CAR-019 does a proposal tool exist; it returns an unconfirmed
+   candidate that the technician confirms in the app (`POST /v1/vehicles/{id}/confirm`). `lookup_spec` is
+   evaluated against the bound call's conversation snapshot and generation, and its answer is released only
+   if that call is still current ([03-data-model.md](03-data-model.md), "Vehicle context rules"). The
+   sessionless legacy lookup path is removed in Track B after iOS migrates.
 8. **Logging.** Request ID and call ID only; no transcripts or answers; Vapi recording and transcript
    storage disabled unless the retention decision (ADR-0009) says otherwise.
 
@@ -86,4 +93,7 @@ window is the victim; JWT theft is outside the binding design.
 - Vapi API down or metadata unavailable ⇒ bind fails closed.
 - Webhook with attacker-chosen `carvis_*` metadata or session ID for an unbound or other call ⇒ ignored.
 - Tool arguments naming another tenant's `shop_id` or vehicle ⇒ ignored or `vehicle_conflict`.
-- Replayed `toolCallId` ⇒ identical response, one `turns` row; `X-Call-Id` ≠ `call.id` ⇒ 400.
+- Replayed `toolCallId` on the current call ⇒ identical response, one `turns` row; `X-Call-Id` ≠ `call.id` ⇒ 400.
+- Vehicle switch between a tool call and its response, or a replay after the switch ⇒ no technical content
+  released for the old vehicle; the old call is ended.
+- A tool claiming the technician confirmed a vehicle aloud ⇒ no snapshot created, context unchanged.
