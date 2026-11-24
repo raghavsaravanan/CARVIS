@@ -290,7 +290,7 @@ The user can identify a vehicle through:
 - Camera-assisted VIN recognition where supported.
 - Manual year/make/model/engine selection.
 - A previously saved vehicle.
-- *Conditional V1 enhancement (CAR-019):* a vehicle described in conversation, proposed as a candidate that the technician confirms in the app like any other identification. Its form is part of roadmap decision D-19: proposing a replacement vehicle during a conversation that already has a confirmed vehicle, or identifying the first vehicle by voice, which would need a pre-vehicle conversation state.
+- *Conditional V1 enhancement (CAR-019):* a vehicle described in conversation, proposed as a candidate that the technician confirms in the app like any other identification. Manual Garage and VIN identification with explicit in-app confirmation is the mandatory V1 baseline; a voice proposal arises only inside a conversation that already has a confirmed vehicle. Pre-vehicle conversations and spoken confirmation are not part of V1; any expansion to them requires explicit owner approval and reconciliation of the affected contracts (owner direction, 2026-11-24; roadmap D-19).
 
 CARVIS decodes or resolves the available vehicle information and shows a confirmation screen.
 
