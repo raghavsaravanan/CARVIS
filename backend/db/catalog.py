@@ -1,9 +1,9 @@
 """Catalog check for the CARVIS privilege and RLS model (M2 B2b-1; doc 04 "Validation" 1, 10, 13, 15).
 
 :func:`violations` returns violation codes (empty when the catalog is sound). Migration
-``0004_identity`` runs it as a post-condition, the tests run it after upgrade and downgrade, and later
-packages extend :data:`IDENTITY_TABLES`, :data:`DEFINER_ALLOW_LIST` and :data:`EXACT_TABLE_PRIVILEGES`
-when they add tables, definer functions or grants. It reads only catalogs, schema-qualified, and builds
+``0004_identity`` and ``0005_garage`` run it as a post-condition, the tests run it after upgrade and downgrade, and
+later packages extend :data:`IDENTITY_TABLES`, :data:`TENANT_TABLES`, :data:`DEFINER_ALLOW_LIST` and
+:data:`EXACT_TABLE_PRIVILEGES` when they add tables, definer functions or grants. It reads only catalogs, schema-qualified, and builds
 routine signatures (argument types included) from catalog columns rather than ``regprocedure`` or
 ``oidvectortypes`` output, so the caller's ``search_path`` changes nothing.
 
@@ -27,8 +27,12 @@ Rules (both CARVIS schemas, ``carvis`` and ``carvis_migrations``):
   whenever the identity tables do;
 - each definer owner has at most one member: PostgreSQL 16's ADMIN-only grant (no SET, no INHERIT) to
   the migration login named by the caller;
-- the listed roles hold exactly the listed privileges on the identity tables, without grant option, no
-  more and no less.
+- the listed roles hold exactly the listed privileges on the identity and tenant tables, without grant option,
+  no more and no less; ``carvis.uuid_v7()`` has exactly its ACL for the revision present (``carvis_app`` may
+  execute it once the garage tables exist, M2 B3a);
+- the garage invariant triggers (M2 B3a) exist and are enabled whenever their tables do: the snapshot confirm
+  trigger (``BEFORE INSERT`` row) and the snapshot immutability triggers (``BEFORE UPDATE`` and ``BEFORE DELETE``
+  row, ``BEFORE TRUNCATE`` statement).
 """
 
 from __future__ import annotations
@@ -40,6 +44,8 @@ from db.roles import (APP_ROLE, BOOTSTRAP_ROLE, ISSUER_ROLES, METADATA_SCHEMA, O
                       WORKER_ROLE)
 
 IDENTITY_TABLES = ("users", "workspaces", "memberships")
+# Tenant tables with exact privileges (M2 B3a). Every table with workspace_id needs forced RLS regardless.
+TENANT_TABLES = ("vehicles", "vehicle_snapshots")
 CHECKED_ROLES = (APP_ROLE, WORKER_ROLE, BOOTSTRAP_ROLE, PROVISIONER_ROLE)
 NON_OWNING_ROLES = (APP_ROLE, WORKER_ROLE, BOOTSTRAP_ROLE, PROVISIONER_ROLE)
 DEFINER_OWNERS = (PROVISIONER_ROLE,)
@@ -52,6 +58,20 @@ DEFINER_ALLOW_LIST = {
 EXACT_ROUTINE_ACLS = {
     f"{SCHEMA}.uuid_v7()": {f"{OWNER_ROLE}=X/{OWNER_ROLE}", f"{PROVISIONER_ROLE}=X/{OWNER_ROLE}"},
 }
+# From 0005_garage (carvis.vehicles present), carvis_app inserts rows whose id defaults to uuid_v7() (doc 04).
+GARAGE_ROUTINE_ACLS = {
+    f"{SCHEMA}.uuid_v7()": EXACT_ROUTINE_ACLS[f"{SCHEMA}.uuid_v7()"] | {f"{APP_ROLE}=X/{OWNER_ROLE}"},
+}
+# (table, trigger function, tgtype) that must exist and be enabled while the table exists. tgtype bits
+# (PostgreSQL trigger.h): ROW 1, BEFORE 2, INSERT 4, DELETE 8, UPDATE 16, TRUNCATE 32.
+REQUIRED_TRIGGERS = (
+    ("vehicle_snapshots", "vehicle_snapshots_confirm", "insert", 1 | 2 | 4),
+    ("vehicle_snapshots", "vehicle_snapshots_immutable", "update", 1 | 2 | 16),
+    ("vehicle_snapshots", "vehicle_snapshots_immutable", "delete", 1 | 2 | 8),
+    ("vehicle_snapshots", "vehicle_snapshots_immutable", "truncate", 2 | 32),
+)
+_VEHICLE_ATTRIBUTES = ("trim", "engine", "transmission", "drivetrain", "wheel_size", "market", "production_date",
+                       "production_plant")
 # (role, table) -> set of (privilege, column or "" for table level). Roles not listed for a table
 # must hold nothing on it.
 EXACT_TABLE_PRIVILEGES: dict[tuple[str, str], set[tuple[str, str]]] = {
@@ -67,6 +87,15 @@ EXACT_TABLE_PRIVILEGES: dict[tuple[str, str], set[tuple[str, str]]] = {
     | {("INSERT", "")},
     (PROVISIONER_ROLE, "memberships"): {("SELECT", c) for c in ("workspace_id", "user_id", "role")}
     | {("INSERT", "")},
+    # M2 B3a. Snapshots: carvis_app supplies only (vehicle_id, vehicle_version); the confirm trigger derives the rest.
+    (APP_ROLE, "vehicles"): {("SELECT", "")}
+    | {("INSERT", c) for c in ("workspace_id", "vin", "year", "make", "model", *_VEHICLE_ATTRIBUTES,
+                               "not_applicable", "source")}
+    | {("UPDATE", c) for c in ("vin", "year", "make", "model", *_VEHICLE_ATTRIBUTES, "not_applicable",
+                               "archived_at")},
+    (WORKER_ROLE, "vehicles"): {("SELECT", "")},
+    (APP_ROLE, "vehicle_snapshots"): {("SELECT", "")} | {("INSERT", c) for c in ("vehicle_id", "vehicle_version")},
+    (WORKER_ROLE, "vehicle_snapshots"): {("SELECT", "")},
 }
 ELEVATED = ("rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls", "rolcanlogin")
 NOT_ARRAY = ("NOT (t.typelem <> 0 AND t.typsubscript = "
@@ -243,7 +272,11 @@ def violations(connection: Connection, migration_login: str | None = None) -> li
             found.append(f"definer_not_definer:{signature}")
         if owner not in DEFINER_OWNERS:
             found.append(f"definer_owner:{signature}")
-    for signature, expected in EXACT_ROUTINE_ACLS.items():
+    garage_present = bool(_rows(connection, """
+            SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = :schema AND c.relname = 'vehicles' AND c.relkind = 'r'""", schema=SCHEMA))
+    routine_acls = {**EXACT_ROUTINE_ACLS, **(GARAGE_ROUTINE_ACLS if garage_present else {})}
+    for signature, expected in routine_acls.items():
         # Matched through the catalog (to_regprocedure needs USAGE on the schema).
         rows = _rows(connection, "SELECT ARRAY(SELECT pg_catalog.unnest(p.proacl)::text ORDER BY 1) "
                                  "FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
@@ -267,11 +300,28 @@ def violations(connection: Connection, migration_login: str | None = None) -> li
             if member != migration_login or inherit or can_set or not admin:
                 found.append(f"definer_owner_member:{role}:{member}")
 
-    # Exact privileges on the identity tables.
+    # Garage invariant triggers: present and enabled ('O' origin or 'A' always; never 'D' disabled or 'R'
+    # replica-only) whenever their table exists. Matched by table, function and exact event/timing/level bits.
+    for table, function, event, tgtype in REQUIRED_TRIGGERS:
+        if not _rows(connection, """
+                SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = :schema AND c.relname = :t AND c.relkind = 'r'""", schema=SCHEMA, t=table):
+            continue
+        if not _rows(connection, """
+                SELECT 1 FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid
+                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace JOIN pg_catalog.pg_proc p ON p.oid = g.tgfoid
+                JOIN pg_catalog.pg_namespace pn ON pn.oid = p.pronamespace
+                WHERE n.nspname = :schema AND c.relname = :t AND pn.nspname = :schema AND p.proname = :f
+                  AND NOT g.tgisinternal AND g.tgenabled IN ('O', 'A') AND (g.tgtype & 63) & :bits = :bits
+                  AND (g.tgtype & 1) = (:bits & 1)""",
+                     schema=SCHEMA, t=table, f=function, bits=tgtype):
+            found.append(f"required_trigger:{table}:{event}")
+
+    # Exact privileges on the identity and tenant tables.
     present = {row[0] for row in _rows(connection, """
             SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = :schema AND c.relname = ANY(:tables) AND c.relkind = 'r'""",
-                                       schema=SCHEMA, tables=list(IDENTITY_TABLES))}
+                                       schema=SCHEMA, tables=[*IDENTITY_TABLES, *TENANT_TABLES])}
     for table in sorted(present):
         held: dict[str, set[tuple[str, str]]] = {}
         for grantee, privilege, column, grantable in _rows(connection, """

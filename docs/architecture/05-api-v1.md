@@ -79,7 +79,7 @@ outcome**, not an HTTP error (see turns below).
 | `GET /v1/workspaces` | The caller's memberships: page of `{id, kind, name, role, created_at}` | **Frozen** (B2c) |
 | `PATCH /v1/me` | Profile and preferences (preferences not designed yet) | Provisional |
 | `DELETE /v1/me`, `GET /v1/me/export` | Account deletion and export (B8, D-4) | Provisional |
-| `GET/POST /v1/vehicles`; `GET/PATCH/DELETE /v1/vehicles/{id}` | Garage (DELETE archives) | Provisional (path reserved; B3) |
+| `GET/POST /v1/vehicles`; `GET/PATCH/DELETE /v1/vehicles/{id}` | Garage (DELETE archives; archiving is terminal in the B3a schema). Open item for B3b: how a returning car whose VIN belongs to an archived vehicle is handled; the owner prefers restoring the existing vehicle, which needs this contract and doc 03 to define a restore operation before archive semantics change | Provisional (path reserved; B3b; persistence in B3a) |
 | `POST /v1/vehicles/decode` | VIN validation + decode behind a provider interface | Provisional (provider) |
 | `POST /v1/vehicles/{id}/confirm` | Creates the immutable `vehicle_snapshot`, the only way to establish vehicle context; binds to the vehicle version the technician saw; refuses an archived vehicle | Provisional (path reserved; B3) |
 | `POST /v1/conversations`; `GET /v1/conversations`; `GET /v1/conversations/{id}` | Lifecycle, history list and detail; a conversation is bound to one confirmed vehicle snapshot for its whole life, and a vehicle switch ends it; history detail shows each turn with its own vehicle snapshot (vehicle and resolved configuration) | Provisional (path reserved; B4) |
