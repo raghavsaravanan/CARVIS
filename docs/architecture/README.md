@@ -1,14 +1,15 @@
 # CARVIS V1 backend architecture (milestone M1)
 
-**Status:** proposed for owner review, except [ADR-0001](../decisions/0001-single-store-postgresql.md), accepted by the owner on 2026-11-22. Proposed ADR-0006's serve path is amended by proposed ADR-0010. Documentation only: no application code, migration, provider
+**Status:** proposed for owner review, except the accepted decision records [ADR-0001](../decisions/0001-single-store-postgresql.md) (owner, 2026-11-22), [ADR-0002](../decisions/0002-identity-provider-and-token-model.md), [ADR-0003](../decisions/0003-tenancy-and-row-level-security.md) and [ADR-0004](../decisions/0004-api-versioning-and-error-envelope.md) (owner, 2026-11-23). Proposed ADR-0006's serve path is amended by proposed ADR-0010. Documentation only: no application code, migration, provider
 configuration, or infrastructure changed in the PR that introduces these files. The owner approved
 the direction in principle on 2026-11-15; each decision record stays `proposed` until the owner moves
 it to `accepted` ([`../decisions/README.md`](../decisions/README.md)).
 
 Authority: this set refines, and never overrides, [`../PRD.md`](../PRD.md) and the
 [V1 Product Experience Contract](../product/v1-product-experience-contract.md) (§7 data/access, §8
-V1 boundary, §11 M1 deliverables). It resolves contract decisions D-08 (single transactional store),
-D-11 (identity/database vendors) and D-12 (retention) as **proposals** only.
+V1 boundary, §11 M1 deliverables). Contract decision D-11 (identity/database vendors) is resolved by accepted ADR-0001 and ADR-0002,
+and the store half of D-08 (single transactional store) by accepted ADR-0001. D-12 (retention)
+remains a **proposal** only (ADR-0009).
 
 ## Evidence labels
 
@@ -55,7 +56,7 @@ architecture that scales without fundamental redesign, nothing more than necessa
 | [12-m2-roadmap.md](12-m2-roadmap.md) | Track A / Track B PR sequence, B7a–f, R3, M3 acquisition, owner decisions, B1 contract |
 
 Decision records: [`../decisions/`](../decisions/) 0001–0010. ADR-0001 was accepted by the owner on
-2026-11-22; the others remain `proposed`.
+2026-11-22 and ADR-0002 to ADR-0004 on 2026-11-23; ADR-0005 to ADR-0010 remain `proposed`.
 
 ## Scope guard for V1
 

@@ -1,11 +1,11 @@
 # CARVIS — V1 Product Experience Contract
 
-**Document revision:** 1.2 · Approved V1 scope; items marked Proposed or Open remain unresolved (1.2, 2026-11-22: §6.5 and gate additions)  
+**Document revision:** 1.3 · Approved V1 scope; items marked Proposed or Open remain unresolved (1.2, 2026-11-22: §6.5 and gate additions; 1.3, 2026-11-23: the pilot participant is named by role, and D-11 and the matching §7 and §12 entries record their resolution by accepted ADR-0001 and ADR-0002; no decision ID, journey, acceptance criterion, or scope item changed)  
 **Date:** November 15, 2026 (terminology revised November 15, 2026)  
-**Purpose:** Define the exact experience to validate whether CARVIS is useful to working automotive technicians before Claude Max designs the canonical multi-tenant platform and before Tyler receives an independent TestFlight build.  
+**Purpose:** Define the exact experience to validate whether CARVIS is useful to working automotive technicians before Claude Max designs the canonical multi-tenant platform and before the pilot technician receives an independent TestFlight build.  
 **Authority:** CARVIS PRD (document revision 1.1; first drafted Nov 14, 2026); CARVIS P0 Readiness Audit (Nov 15, 2026); historical architecture/consolidation reports; verified phone-to-knowledge demonstration.  
 **Status:** Product contract for implementation planning. Proposals and open items are explicitly labeled; this document is not evidence that missing capabilities have been implemented.  
-**Terminology:** **V1** is the first complete field-testable CARVIS release, deployed through TestFlight for Tyler. Engineering work toward V1 is organized as milestones **M1–M5** (see PRD §6.5), not as separate product versions. **P0** marks requirements mandatory in V1; **P1–P3** are post-V1 priorities with no assigned product version. “Document revision” numbers edits of this contract and is unrelated to V1. Definitions: [`docs/README.md`](../README.md#terminology-and-milestones).
+**Terminology:** **V1** is the first complete field-testable CARVIS release, deployed through TestFlight for the pilot technician. Engineering work toward V1 is organized as milestones **M1–M5** (see PRD §6.5), not as separate product versions. **P0** marks requirements mandatory in V1; **P1–P3** are post-V1 priorities with no assigned product version. “Document revision” numbers edits of this contract and is unrelated to V1. Definitions: [`docs/README.md`](../README.md#terminology-and-milestones).
 
 ---
 
@@ -15,7 +15,7 @@
 
 **Product promise:** “Select the vehicle. Ask CARVIS. Hear the verified answer—or a clear reason CARVIS cannot answer.”
 
-**V1 is not a shop-management system.** Tyler's pilot is a narrow, trustworthy, voice-first iPhone application with a **preconfigured CARVIS Brain**. Mechanics do not upload manuals, curate evidence, administer users, or manage AI infrastructure. The builder/operator manages the pilot knowledge corpus. The shop owner receives a concise measured pilot review, not a complex management dashboard.
+**V1 is not a shop-management system.** The V1 pilot is a narrow, trustworthy, voice-first iPhone application with a **preconfigured CARVIS Brain**. Mechanics do not upload manuals, curate evidence, administer users, or manage AI infrastructure. The builder/operator manages the pilot knowledge corpus. The shop owner receives a concise measured pilot review, not a complex management dashboard.
 
 **V1 focus:** Phone-based natural conversation; confirmed vehicle; verified source/citation; correct clarification and refusal; useful follow-ups; durable history; feedback; privacy and secure access. A connected Bluetooth headset may be used as the active call's audio route. **Custom AirPods always-listening wake and Meta glasses remain outside V1.** Meta is presented as “Coming Soon” only if that entry is noninteractive and clear.
 
@@ -26,16 +26,16 @@
 | ID | Decision | State | Reason |
 |---|---|---|---|
 | D-01 | V1 success is real technician utility, not breadth of platform | **Confirmed by owner direction** | Test the value proposition first |
-| D-02 | CARVIS Brain is preconfigured and reviewed by the CARVIS operator | **Confirmed by owner direction** | No PDF administration burden for Tyler |
+| D-02 | CARVIS Brain is preconfigured and reviewed by the CARVIS operator | **Confirmed by owner direction** | No PDF administration burden for the pilot technician |
 | D-03 | Native iPhone audio is the default, with ordinary supported headsets | **Confirmed / implemented core** | Works without wearables |
 | D-04 | Meta glasses appear as “Coming Soon”; no functional dependency | **Confirmed by owner direction** | Concentrate on voice AI |
 | D-05 | P0 navigation = Home, Garage, CARVIS, History, Profile | **Specified in PRD** | Simple, mechanic-first navigation |
 | D-06 | No owner dashboard, jobs, guided repair, analytics suite or Brain upload UI in V1 | **Proposed default for approval** | Avoid adding untested product complexity |
 | D-07 | Shop association can be configured by an operator for the pilot | **Proposed default** | Avoid invitations and manager admin as a first-run obstacle |
 | D-08 | V1 uses one transactional application store and server-enforced tenant scope | **Required principle; store accepted: PostgreSQL** (ADR-0001, owner 2026-11-22) | Privacy, durability, isolation |
-| D-09 | Brain dashboard is internal/read-only and optional before Tyler's pilot | **Proposed default** | Coverage can initially be inspected with CLI/report |
+| D-09 | Brain dashboard is internal/read-only and optional before the technician pilot | **Proposed default** | Coverage can initially be inspected with CLI/report |
 | D-10 | Pilot sources must be specifically authorized for CARVIS's intended processing and presentation | **Required by PRD** | ALLDATA subscription is not permission to copy/index |
-| D-11 | Provider-agnostic auth contracts; exact OIDC/database vendors not yet chosen | **Open technical choice** for the OIDC vendor (roadmap D-2); database store accepted (ADR-0001) | Define experience before implementation |
+| D-11 | Provider-agnostic auth contracts; OIDC and database vendors | **Resolved:** database store PostgreSQL (ADR-0001, owner 2026-11-22); OIDC issuer Supabase Auth (ADR-0002, owner 2026-11-23, roadmap D-2); auth contracts stay provider-agnostic | Define experience before implementation |
 | D-12 | Duration of conversation history, transcripts, feedback and raw audio retention | **Open policy choice** | Consent, deletion and vendor settings required |
 
 **Change-control rule:** If a proposed default is rejected, change this contract and its entity/API implications **before** asking Claude to implement the database. Do not silently expand V1.
@@ -52,17 +52,17 @@ Can configure pilot user/workspace access, upload **authorized** documents throu
 
 ### 2.3 Shop owner / evaluator (buyer, not required to log into V1)
 
-Observes Tyler's demonstration and receives a concise report of real supported-task performance. V1 does not require an owner account, staff roster, assignments, repair orders, billing, or a company dashboard. A real owner account and management workspace may be considered after V1 if demand supports it.
+Observes the pilot technician's demonstration and receives a concise report of real supported-task performance. V1 does not require an owner account, staff roster, assignments, repair orders, billing, or a company dashboard. A real owner account and management workspace may be considered after V1 if demand supports it.
 
 ### 2.4 Workspace model
 
-At minimum every user belongs to an isolated personal or pilot shop context. Tyler may be associated with a pilot shop by the CARVIS operator; this **does not grant access** to other tenants. Backend authorization derives user and tenant identity from verified credentials and membership—not from caller-supplied `shop_id` or arbitrary identifiers. Preserve account and shop boundaries even with only one pilot shop.
+At minimum every user belongs to an isolated personal or pilot shop context. The pilot technician may be associated with a pilot shop by the CARVIS operator; this **does not grant access** to other tenants. Backend authorization derives user and tenant identity from verified credentials and membership—not from caller-supplied `shop_id` or arbitrary identifiers. Preserve account and shop boundaries even with only one pilot shop.
 
 ## 3. Mechanic end-to-end journey — the V1 contract
 
 ### J-01 — Install, onboard and sign in
 
-**Entry:** Tyler installs TestFlight build and opens CARVIS.  
+**Entry:** The pilot technician installs TestFlight build and opens CARVIS.  
 **Flow:** Welcome with concise promise → create account/sign in using approved secure identity flow → choose or see operator-provisioned workspace → see supported-coverage disclosure → request microphone permission only when first needed → land on Home.  
 **Visible system state:** signed out / authenticating / signed in / auth failure / connectivity failure.  
 **Data:** verified user identity, workspace membership, preferences, consent state and timestamps. Tokens in iOS Keychain; app never stores provider private keys.  
@@ -144,7 +144,7 @@ At minimum every user belongs to an isolated personal or pilot shop context. Tyl
 
 ### 5.1 The pilot is *not* self-serve ingestion
 
-**Operator preflight:** agree with Tyler on actual frequent vehicles and lookup categories → obtain specifically rights-cleared documents → register origin/allowed uses/revision → ingest to pending staging via existing tools → compare extracted fields against original pages → approve with reviewer identity → verify conflict/revision behavior → activate approved evidence → run golden positive/negative questions → publish the exact supported coverage description to app. This happens **before** Tyler's first independent test.
+**Operator preflight:** agree with the pilot technician on actual frequent vehicles and lookup categories → obtain specifically rights-cleared documents → register origin/allowed uses/revision → ingest to pending staging via existing tools → compare extracted fields against original pages → approve with reviewer identity → verify conflict/revision behavior → activate approved evidence → run golden positive/negative questions → publish the exact supported coverage description to app. This happens **before** the pilot technician's first independent test.
 
 ### 5.2 Brain lifecycle and state
 
@@ -160,13 +160,13 @@ Publicly show only the supported configurations and categories actually reviewed
 
 ### 5.5 Rights boundary
 
-Tyler's shop uses ALLDATA, but its subscription does not itself establish permission for CARVIS to copy, index, cache, display or speak proprietary content. No scraping or Chrome-extension workaround. If suitable rights-cleared corpus cannot be obtained, **reduce the supported pilot scope or delay independent technical lookup**; do not invent data or silently use unauthorized sources.
+The pilot shop uses ALLDATA, but its subscription does not itself establish permission for CARVIS to copy, index, cache, display or speak proprietary content. No scraping or Chrome-extension workaround. If suitable rights-cleared corpus cannot be obtained, **reduce the supported pilot scope or delay independent technical lookup**; do not invent data or silently use unauthorized sources.
 
 ## 6. Shop-owner demonstration and evaluation contract
 
 ### 6.1 Mechanic demonstration (real-task-first)
 
-Ask Tyler to choose representative, authorized, supported questions from his normal repair workflow. Start with a genuinely relevant vehicle; let him use the app unaided. Observe if he finds the voice action, whether the response is fast enough, how often clarification is needed, whether he trusts citations, and whether he voluntarily repeats usage across different work sessions. Show one *intentional unsupported question* to demonstrate safe boundaries, but do not let scripted refusal dominate the demo.
+Ask the pilot technician to choose representative, authorized, supported questions from their normal repair workflow. Start with a genuinely relevant vehicle; let them use the app unaided. Observe if they find the voice action, whether the response is fast enough, how often clarification is needed, whether they trust citations, and whether they voluntarily repeat usage across different work sessions. Show one *intentional unsupported question* to demonstrate safe boundaries, but do not let scripted refusal dominate the demo.
 
 ### 6.2 Shop-owner demonstration (business evidence)
 
@@ -189,12 +189,12 @@ Present one side-by-side supported lookup using the shop's existing process vers
 | Source traceability | 100% of answers labeled verified | Inspectable original evidence |
 | Lookup time | ≥30% median reduction for matched supported tasks | Usability/value hypothesis |
 | Voice task completion | ≥90% supported test interactions | Reliability measure |
-| Technician adoption | Tyler uses CARVIS voluntarily again | Qualitative product signal |
+| Technician adoption | The pilot technician uses CARVIS voluntarily again | Qualitative product signal |
 | Buyer interest | Owner agrees to extend pilot or offers concrete purchasing assessment | Commercial signal |
 
-### 6.5 Tyler workflow, proposed pilot coverage and acquisition gates (document revision 1.2, 2026-11-22)
+### 6.5 Pilot technician workflow, proposed pilot coverage and acquisition gates (document revision 1.2, 2026-11-22)
 
-**Workflow traceability.** Tyler's November 20 priorities map to PRD §6.1: exact vehicle-specific
+**Workflow traceability.** The pilot technician's November 20 priorities map to PRD §6.1: exact vehicle-specific
 specifications (lug-nut torque; brake service limits, rotor or pad to be confirmed) and EPB service
 methods → J-04 and P07–P09 (CAR-030–037, CAR-041, CAR-043); manufacturer communications → conditional
 CAR-042; Tekmetric shop history → deferred (PRD §16).
@@ -211,9 +211,9 @@ Three kinds of criteria stay separate:
   synthetic fixtures may validate engineering but never support real repair advice.
 - **Pilot utility targets:** §6.4 and the coverage targets above; hypotheses until measured.
 - **Release blockers:** §10 gates plus these outstanding items: documented rights for every active
-  source; a named qualified technical reviewer and publisher (D-17); Tyler-confirmed coverage;
+  source; a named qualified technical reviewer and publisher (D-17); pilot-technician-confirmed coverage;
   spoken-output integrity validated on staging and devices (D-14); accepted ADRs; Apple Developer
-  account and budget; naming clearance before distribution; Tyler's and the shop's consent.
+  account and budget; naming clearance before distribution; the pilot technician's and the shop's consent.
 
 **Acquisition gates (all outstanding).** The owner or operator obtains representative tasks and
 configurations without unnecessary customer data. The existing 2022 WRX corpus (audit-time 24
@@ -223,14 +223,14 @@ NHTSA datasets may support conditional recall or TSB discovery, subject to their
 document-specific rights. Manufacturer documents need affirmative permission to process, store and
 present; public availability is not reuse permission. If rights-cleared coverage or qualified
 review is insufficient, engineering continues on synthetic fixtures and the independent pilot is
-narrowed with Tyler's agreement or delayed; limited licensed data (for example MOTOR or ALLDATA) is
+narrowed with the pilot technician's agreement or delayed; limited licensed data (for example MOTOR or ALLDATA) is
 an owner decision. No scraping, restricted subscriptions, employer data or web-search fallback.
 
 **Decision after pilot:** Continue, modify focus, or stop. A useful positive signal is not merely a demo that works—it is repeated self-initiated use for actual problems and credible owner interest. Record unmet needs explicitly; these drive post-V1 priorities rather than being added speculatively now.
 
 ## 7. Platform and data contract — schema-independent
 
-Design one canonical domain with additive V1 tables and planned post-V1 migrations. **Do not create two unrelated databases.** Qdrant remains a reviewed evidence index, not a source of truth for identity or transactions. FastAPI remains the policy enforcement point. Pick the canonical transactional store only after evaluating migrations, auth integration, backup/recovery, transaction guarantees, operational overhead, and multi-tenant constraints.
+Design one canonical domain with additive V1 tables and planned post-V1 migrations. **Do not create two unrelated databases.** Qdrant remains a reviewed evidence index, not a source of truth for identity or transactions. FastAPI remains the policy enforcement point. Pick the canonical transactional store only after evaluating migrations, auth integration, backup/recovery, transaction guarantees, operational overhead, and multi-tenant constraints. (Resolved: that evaluation selected PostgreSQL in accepted ADR-0001.)
 
 ### 7.1 V1 domain entities and retention responsibilities
 
@@ -294,7 +294,7 @@ Design one canonical domain with additive V1 tables and planned post-V1 migratio
 | Wearables | “Coming Soon,” code preserved | Meta and future devices after physical/privacy verification |
 | Platform | one secure modular monolith + transactional DB + Qdrant | scale features justified by measured load |
 
-**Product sequencing:** lock V1 journeys (this contract) → choose auth/store and API contracts (**M1 — Production Architecture**) → build secure durable vertical slice (**M2 — Backend and Database**) → preconfigure Brain and evaluate coverage (**M3 — CARVIS Brain Pilot Configuration**) → wire clean 5-tab interface (**M4 — Native iOS V1**) → run real-device and TestFlight gates (**M5 — Deployment and TestFlight Validation**) → **V1 — Tyler Field Test** → decide post-V1 priorities from evidence. M3 may proceed in parallel with M2 once M1 settles the shared contracts; PRD §6.5 is the authoritative milestone definition.
+**Product sequencing:** lock V1 journeys (this contract) → choose auth/store and API contracts (**M1 — Production Architecture**) → build secure durable vertical slice (**M2 — Backend and Database**) → preconfigure Brain and evaluate coverage (**M3 — CARVIS Brain Pilot Configuration**) → wire clean 5-tab interface (**M4 — Native iOS V1**) → run real-device and TestFlight gates (**M5 — Deployment and TestFlight Validation**) → **V1 — Technician Field Test** → decide post-V1 priorities from evidence. M3 may proceed in parallel with M2 once M1 settles the shared contracts; PRD §6.5 is the authoritative milestone definition.
 
 ## 9. Failure, safety and privacy acceptance matrix
 
@@ -329,7 +329,7 @@ These gates restate PRD §15 for the V1 field test. They are the completion test
 
 **Device/release:** actual spoken technical output preserves server-approved facts, units, qualifications and refusals (CAR-041, D-14), or a controlled delivery path is added, or technical voice release is blocked; physical iPhone mic/Bluetooth/interruption/network tests; stable HTTPS host (not Mac+ngrok); app signing/TestFlight install; crash reporting; rollback and incident owner.
 
-**Commercial validation:** Tyler has agreed to the test, the shop authorizes the activity, baseline tasks/time are recorded, and a method for feedback/repeat-use measurement exists. PRD targets are not marked achieved before measurement.
+**Commercial validation:** The pilot technician has agreed to the test, the shop authorizes the activity, baseline tasks/time are recorded, and a method for feedback/repeat-use measurement exists. PRD targets are not marked achieved before measurement.
 
 ## 11. Claude Max engineering handoff instructions
 
@@ -345,14 +345,14 @@ These gates restate PRD §15 for the V1 field test. They are the completion test
 6. Threat model: tenant spoofing, IDOR, webhook replay, unauthorized ingestion, source rights leakage, privacy retention.
 7. Phased implementation plan with separate acceptance gates; no big-bang rewrite of voice/retrieval.
 
-**Engineering constraints:** Preserve the validated Vapi → FastAPI → Qdrant verifier, sources/refusal behavior and optional Meta modules. Every change is staged, tested, reversible and measured. No production alias, provider config, credentials or cloud service mutations without separate explicit approval. Do not assume existing screenshots mean backend functionality exists. Do not solve speculative post-V1 needs by expanding Tyler's V1.
+**Engineering constraints:** Preserve the validated Vapi → FastAPI → Qdrant verifier, sources/refusal behavior and optional Meta modules. Every change is staged, tested, reversible and measured. No production alias, provider config, credentials or cloud service mutations without separate explicit approval. Do not assume existing screenshots mean backend functionality exists. Do not solve speculative post-V1 needs by expanding the V1 pilot.
 
 ## 12. Questions to close before implementation (not blockers to drafting)
 
 | Open point | Recommended default for decision |
 |---|---|
-| Tyler's supported cars/categories | Select with Tyler from actual shop work; start small, rights-cleared |
-| Identity provider and transactional store | Conventional secure OIDC/JWT plus transactional relational DB preferred; compare SpacetimeDB fairly |
+| Pilot technician's supported cars/categories | Select with the pilot technician from actual shop work; start small, rights-cleared |
+| Identity provider and transactional store | Conventional secure OIDC/JWT plus transactional relational DB preferred; compare SpacetimeDB fairly. **Resolved** by accepted ADR-0001 (PostgreSQL) and ADR-0002 (Supabase Auth as OIDC issuer) |
 | Owner access in V1 | No owner login; show observed pilot report |
 | Internal Brain dashboard | Minimal read-only optional; CLI/report sufficient if time-critical |
 | Transcript/audio retention | Store only approved minimal history; no CARVIS raw audio by default |
@@ -362,7 +362,7 @@ These gates restate PRD §15 for the V1 field test. They are the completion test
 
 ## 13. Definition of done
 
-**V1 product completeness does not mean every mockup is implemented.** It means Tyler can independently install and use the product for specific real repair information tasks, receive sourced answers or safe refusals, change vehicles without leakage, return to his history, provide feedback, and use the app reliably with account/security/privacy protections—without wearing Meta glasses or administering the Brain.
+**V1 product completeness does not mean every mockup is implemented.** It means the pilot technician can independently install and use the product for specific real repair information tasks, receive sourced answers or safe refusals, change vehicles without leakage, return to their history, provide feedback, and use the app reliably with account/security/privacy protections—without wearing Meta glasses or administering the Brain.
 
 **Pilot success** means observations demonstrate reduced disruption or useful repeat adoption, and the shop owner provides concrete interest or feedback about what would make CARVIS a normal part of the workday. A technically successful scripted demonstration alone is insufficient.
 
