@@ -52,7 +52,7 @@ def libpq_conninfo(url: DatabaseUrl) -> str:
 # :func:`db.readiness.open_connection`: host names are resolved by :class:`SharedResolver` on its own
 # small thread pool (never the shared default executor that the voice path's lookups use), each
 # attempt sets ``hostaddr`` and keeps ``host`` for TLS, and one deadline covers resolution and
-# connect. No route or lifespan uses this engine in B2a; B2b wires it with the session context.
+# connect. M2 B2b-2 adds the session context on top (``db.context``); no route or lifespan uses it before B2c.
 
 ASYNC_CONNECT_DEADLINE_SECONDS = 2.0
 RESOLVER_THREADS = 2
@@ -116,8 +116,11 @@ class SharedResolver:
 
 
 def create_async_app_engine(url: DatabaseUrl, resolver: SharedResolver | None = None,
-                            connect_deadline_seconds: float = ASYNC_CONNECT_DEADLINE_SECONDS):
-    """The request-path ``AsyncEngine`` and its resolver (shut the resolver down after disposing)."""
+                            connect_deadline_seconds: float = ASYNC_CONNECT_DEADLINE_SECONDS,
+                            pool_size: int = APP_POOL_SIZE, max_overflow: int = APP_MAX_OVERFLOW,
+                            pool_timeout: float = APP_POOL_TIMEOUT_SECONDS):
+    """The request-path ``AsyncEngine`` and its resolver, as ``(engine, resolver)`` (shut the resolver down after
+    disposing). Pool sizing is configurable for tests; the defaults are the request-path values."""
     import asyncio
 
     from sqlalchemy.ext.asyncio import create_async_engine
@@ -135,9 +138,9 @@ def create_async_app_engine(url: DatabaseUrl, resolver: SharedResolver | None = 
     engine = create_async_engine(
         "postgresql+psycopg://",
         async_creator=creator,
-        pool_size=APP_POOL_SIZE,
-        max_overflow=APP_MAX_OVERFLOW,
-        pool_timeout=APP_POOL_TIMEOUT_SECONDS,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
         pool_pre_ping=True,
         pool_reset_on_return="rollback",
         hide_parameters=True,
