@@ -52,6 +52,16 @@ is a conditional enhancement limited to proposals inside a confirmed conversatio
 change; the Stage S requirement is approved and its serving mechanism stays open for B7a (D-20). B4 now depends on B3,
 whose snapshot table its foreign keys reference.
 
+B3 is split into serial rows B3a and B3b (owner, 2026-11-24), each its own draft PR titled `(M2 B3a)` and
+`(M2 B3b)`. **B3a:** `vehicles` and `vehicle_snapshots` with forced RLS and exact grants, immutability, the confirm
+transaction as the only snapshot-creation path, the catalog-check extension, North American VIN validation and
+database-level tests (T3, no routes). **B3b** (depends on B3a): `/v1/vehicles*` and `POST /v1/vehicles/{id}/confirm`,
+`X-Workspace-Id` validation, `Idempotency-Key` on create and confirm, the provisional decode route, the OpenAPI
+snapshot and route-level cross-tenant tests; open contract item: restoring an archived vehicle when a car returns
+(doc 03, `vehicles`). Owner decisions for B3a (2026-11-24): production variants are `production_date` and
+`production_plant`; VINs stay unique per workspace including archived vehicles; the pilot VIN rule is North
+American (US and Canada).
+
 B2 is split into serial rows B2a, B2b and B2c (owner, 2026-11-22), and B2b further into B2b-1 and
 B2b-2 (table above), each its own draft PR titled `(M2 B2a)` and so on, each starting only after the
 previous one merges. All rely on ADR-0002, ADR-0003 and ADR-0004, which the owner accepted on
