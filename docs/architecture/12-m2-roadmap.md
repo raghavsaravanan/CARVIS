@@ -81,6 +81,20 @@ owner approval.
 | B7e | Unified evidence gate, conflict and completeness evaluation, deterministic response compiler, outcomes, coverage manifest | B7c, B7d, accepted protocol | 07 serve-time requirements and F1–F3 as acceptance cases; existing `test_specs_v2.py`/`test_ride_height.py` unchanged and passing; every outcome produced by a test; spoken and displayed text derive from one versioned answer |
 | B7f | Full real-store lifecycle, regression and adversarial acceptance, integration with B5 and B6, activation behind a reviewed switch | B7e, B5, B6 | Mandatory safety suite (zero unsupported numerical, wrong-vehicle, conflicting or incomplete-as-complete answers; 100% traceability); owner approval before switching serving to the new gate |
 
+**B7 carry-forwards (owner, 2026-11-24).** Recorded here so the packages pick them up; none changes scope or authorizes
+work before its package.
+
+- **WRX regression tests and fixtures (B7a, B7e, B7f).** `test_specs_v2.py`, `test_ride_height.py` and
+  `backend/tests/fixtures/wrx-acceptance.json` are preserved unchanged for now (B7e's "unchanged and passing" criterion
+  stands). Provenance concerns: their values and source hashes derive from documents whose usage rights are not
+  established, and the corresponding live records were reviewed by AI agents, not a qualified human reviewer (D-17). Before
+  any of them is treated as acceptance evidence for a real scope, or kept long term, the owner decides whether to keep,
+  replace with synthetic equivalents, or re-source them from rights-cleared material. Nothing is changed until then.
+- **CAR-043 procedure extraction gap (B7b, B7d, B7e).** The existing extractor emits ordered prose steps without component,
+  operation or applicability, so no procedure can reach a reviewable state on the legacy path (the incomplete case is
+  detected only because `step_count` is unset). B7b must produce typed `pending` procedure records (prerequisites, tools,
+  warnings, ordered steps, applicability); B7d and B7e own the group completeness check and the `incomplete` refusal.
+
 ## R3 — bounded retrieval comparison (off the critical path)
 
 R3 decides only whether a discovery layer beyond structured exact retrieval is adopted. It blocks
@@ -110,6 +124,21 @@ internal CLI and report are required; a dashboard is optional; there is no mecha
 No purchase, account change, licensing outreach or scraping without owner approval. Proposed pilot
 targets and the acquisition gates are in the
 [V1 contract §6.5](../product/v1-product-experience-contract.md).
+
+**Preparation status (owner direction, 2026-11-24).** The owner holds source rights initially (D-8) and may act as
+publisher (D-17); a separate qualified reviewer is not yet named. Real coverage targets stay open until the pilot
+technician's tasks are confirmed (D-16), and simulation carries no vehicle quota. Evidence classes: authorized public
+data (context only), rights-cleared technical evidence where it exists, and independently fabricated synthetic evidence
+for unavailable integrations (Stage S, never coverage). The existing 2022 WRX corpus is **quarantined** until its rights
+are established: it is not classified as synthetic, not used for demonstrations, and no new ingestion or parsing of it
+runs. The live collections were not modified; a read-only live inventory and offline backup were taken on 2026-11-24 (the
+live counts match the 2026-11-15 audit; its verified records were reviewed by AI agents, not a qualified human
+reviewer, and none has a recorded rights basis). Legacy exports were preserved offline. The source register, synthetic fixtures, evaluation cases,
+coverage manifest and public-data notes are prepared outside Git because they hold source-rights and private data; they
+enter the repository only through B7 or a later owner-approved change. Public-data findings (NHTSA vPIC for B3b, recalls
+and manufacturer communications for conditional D-18): the NHTSA pages read state no licence, attribution or
+caching terms, so caching and storage of responses stay unconfirmed until the owner reads NHTSA's current terms.
+Nothing here is integrated, ingested or activated, and it adds no V1 scope.
 
 ## B1 task contract (implementation-ready once authorized)
 
@@ -176,7 +205,7 @@ the decision records are marked `accepted` or the dependent PR starts:
 | D-5 | Backups: provider daily plus nightly external dump; PITR add-on yes or no | No PITR for pilot | ADR-0008 |
 | D-6 | Export `hackutd` table counts read-only; approve retirement; owner decides on live database | Retire after export | ADR-0007, B9 |
 | D-7 | Hosting: Render paid production instance and a staging instance; error-tracker vendor; budget (~$70–150/month) | Approve | ADR-0008, B10 |
-| D-8 | Brain: serve-time PostgreSQL gate, tombstone-first withdrawal, quarantine and reapproval rule; pilot corpus and rights owner; knowledge model and benchmark-gated retrieval | Approve ADR-0006 as amended by ADR-0010; name the pilot corpus and rights owner | B7a–f |
+| D-8 | Brain: serve-time PostgreSQL gate, tombstone-first withdrawal, quarantine and reapproval rule; pilot corpus and rights owner; knowledge model and benchmark-gated retrieval | Approve ADR-0006 as amended by ADR-0010; name the pilot corpus and rights owner. **Partly resolved (owner, 2026-11-24):** the owner is the initial rights owner; the pilot corpus is not yet named and no real source has a recorded rights basis; the ADR-0006 and ADR-0010 acceptance stays open | B7a–f |
 | D-9 | One staging Vapi assistant and one live call to validate G-V1…G-V6 and spoken-output integrity | Direction approved by the owner on 2026-11-22; no live call or provider change authorized yet | ADR-0005 final, B5 |
 | D-10 | Contract defaults D-06, D-07, D-09 | Approve | scope |
 | D-11 | Track A may start after this PR merges; A1 first | Approved | — |
@@ -184,11 +213,11 @@ the decision records are marked `accepted` or the dependent PR starts:
 | D-13 | PostgreSQL-first authoritative evidence scope (07 "Serve-time rule"): mandatory requirements, the delivery-window residual (07 requirement 6) and the detailed evidence protocol | Requirements and the residual (for V1) approved by the owner on 2026-11-22; the detailed protocol stays proposed until it resolves F1–F3, passes T4 design review and receives final owner sign-off | ADR-0010; design acceptance of B7c–e; B7a schema elements for publication status or decision counters; B7f activation |
 | D-14 | Spoken-output integrity as a mandatory V1 release gate | Approved by the owner on 2026-11-22 | B5, technical voice release, M5 |
 | D-15 | R3 adoption thresholds and latency target | Accept before R3 scoring | R3, B7d discovery adapter |
-| D-16 | Pilot targets with the pilot technician (V1 contract §6.5) | Confirm with the pilot technician | M3 evaluation, V1 field test |
-| D-17 | Named qualified technical reviewer and publisher | Name before any real-scope publication | M3 publication |
-| D-18 | Include conditional TSB/recall discovery in V1 | Decide per rights, coverage, quality and cost; not a release gate | CAR-042 |
+| D-16 | Pilot targets with the pilot technician (V1 contract §6.5) | Confirm with the pilot technician. **Open (owner, 2026-11-24):** real targets stay open until the technician's tasks are confirmed; no vehicle quota applies to synthetic evidence | M3 evaluation, V1 field test |
+| D-17 | Named qualified technical reviewer and publisher | Name before any real-scope publication. **Partly resolved (owner, 2026-11-24):** the owner may serve as authorized publisher, subject to the role requirements; the separate qualified technical reviewer is still outstanding | M3 publication |
+| D-18 | Include conditional TSB/recall discovery in V1 | Decide per rights, coverage, quality and cost; not a release gate. **Open (owner, 2026-11-24):** stays conditional and outside mandatory V1 scope; public-data research is prepared for the decision (caching and storage rights unconfirmed) | CAR-042 |
 | D-19 | Include conversational vehicle identification in V1 (CAR-019) | **Direction set by the owner on 2026-11-24:** manual Garage and VIN identification with explicit in-app confirmation is the mandatory V1 baseline; voice proposals inside a confirmed conversation may remain a conditional enhancement; pre-vehicle conversations and spoken confirmation are not in V1, and any expansion needs explicit owner approval and reconciliation of the affected contracts (spoken confirmation would also need a speech-input validation and acknowledgment gate; D-14 covers output only). Inclusion of the proposal form stays open | CAR-019 proposal tool (B5 or later); not B3, B4 or base B5 |
-| D-20 | Stage S synthetic-evidence serving mechanism (07 "Stage S synthetic evidence") | **Requirement approved by the owner on 2026-11-24** (controlled Stage S validation through the real application with isolated, explicitly labeled synthetic evidence that can never authorize real repair guidance); the implementation decision stays open for B7a. Recommendation: a server-issued Stage S mode bound to a dedicated synthetic workspace, excluded from real and global scope resolution, durably labeled simulated, never verified, separate metrics | Stage S serving runs; B7a design acceptance and B7c publication decisions that encode the synthetic partition; not B3–B6 |
+| D-20 | Stage S synthetic-evidence serving mechanism (07 "Stage S synthetic evidence") | **Requirement approved by the owner on 2026-11-24** (controlled Stage S validation through the real application with isolated, explicitly labeled synthetic evidence that can never authorize real repair guidance); the implementation decision stays open for B7a. Recommendation: a server-issued Stage S mode bound to a dedicated synthetic workspace, excluded from real and global scope resolution, durably labeled simulated, never verified, separate metrics. **Owner, 2026-11-24:** the serving mechanism is left to B7a design | Stage S serving runs; B7a design acceptance and B7c publication decisions that encode the synthetic partition; not B3–B6 |
 
 Decision IDs D-12 onward continue this roadmap's numbering; they are separate from the V1
 contract's D-01–D-12.
