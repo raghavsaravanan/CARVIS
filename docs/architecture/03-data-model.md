@@ -34,9 +34,9 @@ erDiagram
 
 | Table | Key fields and constraints | Mutability and retention |
 | --- | --- | --- |
-| `users` | `auth_subject` UNIQUE, `email`, `display_name`, `status` (active, deleting, deleted) | Soft-delete then purge after a grace period (proposed 30 days) |
-| `workspaces` | `kind` (personal, shop), `name`; partial unique index: one personal workspace per user | Removed with its owner; a shop with other members requires ownership transfer or refuses deletion |
-| `memberships` | `(workspace_id, user_id)` UNIQUE, `role` (owner, admin, member) | At least one owner enforced in service and trigger |
+| `users` | `(auth_issuer, auth_subject)` UNIQUE (the verified principal, ADR-0002), `email`, `display_name`, `status` (active, deleting, deleted) | Soft-delete then purge after a grace period (proposed 30 days) |
+| `workspaces` | `kind` (personal, shop), `name`, `personal_owner_user_id` (set if and only if `kind = 'personal'`, `UNIQUE`): one personal workspace per user | Removed with its owner; a shop with other members requires ownership transfer or refuses deletion |
+| `memberships` | `(workspace_id, user_id)` UNIQUE, `role` (owner, admin, member) | Every workspace has an owner. B2b-1 (owner decision, 2026-11-24): no database owner-presence trigger yet. The invariant holds through the only mutation surface: `ensure_principal` creates or reuses a personal workspace and its owner membership atomically, a trigger keeps a personal workspace's only member its owner, and no runtime role can create a shop workspace or update or delete a membership or workspace. The owner-presence trigger is **mandatory in the first package that introduces shop-workspace creation, membership UPDATE or DELETE, or ownership transfer**, before those mutations are exposed |
 | `vehicles` | `vin` (17 chars, `CHECK` no I/O/Q; check digit validated in application), `(workspace_id, vin)` UNIQUE where VIN present, year, make, model, trim, engine, transmission, wheel_size, `archived_at` | Editable; edits never alter past snapshots |
 | `vehicle_snapshots` | `vehicle_id`, `config` jsonb, `config_hash`, `source` (vin_decode, manual), `confirmed_by`, `confirmed_at`, `schema_version` | **Immutable** (UPDATE/DELETE blocked by trigger and grants) |
 | `conversations` | `user_id`, `active_snapshot_id`, `title`, `last_activity_at` | Per retention decision (ADR-0009) |
