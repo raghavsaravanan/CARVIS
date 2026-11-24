@@ -130,6 +130,16 @@ def test_provision_converges_and_returns_status(scratch, login):
     assert len(memberships_of(scratch, first.user_id)) == 1
 
 
+def test_provision_without_email_binds_null(scratch, login):
+    """Tokens without an email claim: the NULL argument resolves against the qualified function only."""
+    async def scenario(engine, factory):
+        return await provision(factory, BootstrapContext(ISSUER, "user-n"))
+
+    user = run(login, scenario)
+    assert user.status == "active"
+    assert _sql(scratch.db_admin, f"SELECT email FROM carvis.users WHERE id = '{user.user_id}'", fetch=True) == [(None,)]
+
+
 def test_provision_returns_non_active_status_without_rows(scratch, login):
     _sql(scratch.db_admin, f"INSERT INTO carvis.users (auth_issuer, auth_subject, status) "
                            f"VALUES ('{ISSUER}', 'user-d', 'deleting')")
