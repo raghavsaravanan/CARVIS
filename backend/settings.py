@@ -21,7 +21,7 @@ follow libpq's rule. A URL that
 breaks either rule is ``invalid``. It also adds the optional, transitional issuer settings
 (``CARVIS_AUTH_ISSUER``, ``CARVIS_AUTH_AUDIENCE``, ``CARVIS_AUTH_JWKS_URL``; ADR-0002): all unset means
 auth is unconfigured; a partial set, or a JWKS URL that is not ``https://``, refuses boot outside
-local. No route uses them in B2a.
+local. B2c uses them for ``/v1``; while unset ``/v1`` answers 503.
 """
 
 from __future__ import annotations

@@ -52,7 +52,7 @@ def libpq_conninfo(url: DatabaseUrl) -> str:
 # :func:`db.readiness.open_connection`: host names are resolved by :class:`SharedResolver` on its own
 # small thread pool (never the shared default executor that the voice path's lookups use), each
 # attempt sets ``hostaddr`` and keeps ``host`` for TLS, and one deadline covers resolution and
-# connect. M2 B2b-2 adds the session context on top (``db.context``); no route or lifespan uses it before B2c.
+# connect. M2 B2b-2 adds the session context on top (``db.context``); the ``/v1`` runtime (B2c) builds it in the lifespan.
 
 ASYNC_CONNECT_DEADLINE_SECONDS = 2.0
 RESOLVER_THREADS = 2
