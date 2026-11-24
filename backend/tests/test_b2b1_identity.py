@@ -25,6 +25,9 @@ ISSUER = "https://issuer.example.test/auth/v1"
 
 # --- helpers ------------------------------------------------------------------------------------
 
+# Statement template for database-level DDL on the current (per-test) database.
+DB_DO = "DO $$BEGIN EXECUTE format('{}', current_database()); END$$"
+
 def violations(url: str, search_path: str | None = None, migration_login: str | None = MIGRATOR) -> list[str]:
     from sqlalchemy import create_engine
     from sqlalchemy.pool import NullPool
@@ -167,6 +170,30 @@ def test_preflight_refuses_without_modification(scratch, migrator, setup, messag
     assert identity_catalog(scratch.db_admin) == before
 
 
+@pytest.mark.parametrize("ddl", ["CREATE DOMAIN carvis.users AS int",
+                                 "CREATE TYPE carvis.workspaces AS ENUM ('x')",
+                                 "CREATE TYPE carvis.memberships AS (x int)"])
+def test_preflight_refuses_a_conflicting_type(scratch, migrator, ddl):
+    ok(run_alembic(migrator, "upgrade", B2A_HEAD))
+    _sql(scratch.db_admin, "SET ROLE carvis_owner", ddl, "RESET ROLE")
+    before = identity_catalog(scratch.db_admin)
+    result = run_alembic(migrator, "upgrade", HEAD)
+    # A composite type is also a pg_class row, so the table check may refuse it first.
+    assert result.returncode != 0 and "already exists; refusing to adopt it" in result.stderr, result.stderr[-1500:]
+    assert "uuid_v7" not in result.stderr  # refused before any DDL
+    assert identity_catalog(scratch.db_admin) == before
+
+
+def test_preflight_refuses_a_preexisting_relation_without_a_row_type(scratch, migrator):
+    """An index has no row type, so only the relation check sees it."""
+    ok(run_alembic(migrator, "upgrade", B2A_HEAD))
+    _sql(scratch.db_admin, "SET ROLE carvis_owner", "CREATE TABLE carvis.b2b1_x (a int)",
+         "CREATE INDEX users ON carvis.b2b1_x (a)", "RESET ROLE")
+    result = run_alembic(migrator, "upgrade", HEAD)
+    assert result.returncode != 0 and "carvis.users already exists; refusing" in result.stderr
+    assert "A type named" not in result.stderr
+
+
 def test_preflight_refuses_a_preexisting_table(scratch, migrator):
     ok(run_alembic(migrator, "upgrade", B2A_HEAD))
     _sql(scratch.db_admin, "SET ROLE carvis_owner", "CREATE TABLE carvis.users (x int)", "RESET ROLE")
@@ -189,9 +216,9 @@ def test_preflight_refuses_a_preexisting_table(scratch, migrator):
     (["GRANT SELECT ON carvis.users TO carvis_bootstrap"], "table_privileges:carvis_bootstrap:users"),
     (["ALTER ROLE carvis_provisioner BYPASSRLS"], "role_attribute:carvis_provisioner:rolbypassrls"),
     (["ALTER ROLE carvis_app LOGIN"], "role_attribute:carvis_app:rolcanlogin"),
-    (["GRANT CREATE ON SCHEMA carvis TO carvis_provisioner"], "definer_owner_create:carvis_provisioner"),
+    (["GRANT CREATE ON SCHEMA carvis TO carvis_provisioner"], "role_create:carvis_provisioner:carvis"),
     (["GRANT CREATE ON SCHEMA carvis_migrations TO carvis_provisioner"],
-     "definer_owner_create:carvis_provisioner:carvis_migrations"),
+     "role_create:carvis_provisioner:carvis_migrations"),
     (["ALTER FUNCTION carvis.ensure_principal(text,text,text) SET search_path = public, pg_temp"],
      "definer_search_path"),
     (["ALTER FUNCTION carvis.ensure_principal(text,text,text) RESET search_path"], "definer_search_path"),
@@ -203,9 +230,40 @@ def test_preflight_refuses_a_preexisting_table(scratch, migrator):
      "definer_owner_members:carvis_provisioner"),
     (["SET ROLE carvis_owner", "CREATE FUNCTION carvis.b2b1_o() RETURNS int LANGUAGE sql AS 'SELECT 1'",
       "REVOKE ALL ON FUNCTION carvis.b2b1_o() FROM PUBLIC", "RESET ROLE",
-      "ALTER FUNCTION carvis.b2b1_o() OWNER TO carvis_app"], "role_owns_routine:carvis_app:carvis.b2b1_o()"),
+      "ALTER FUNCTION carvis.b2b1_o() OWNER TO carvis_app"], "role_owns:carvis_app:pg_proc:carvis.b2b1_o()"),
     (["CREATE TYPE carvis.b2b1_e AS ENUM ('x')", "REVOKE ALL ON TYPE carvis.b2b1_e FROM PUBLIC",
-      "ALTER TYPE carvis.b2b1_e OWNER TO carvis_worker"], "role_owns_type:carvis_worker"),
+      "ALTER TYPE carvis.b2b1_e OWNER TO carvis_worker"], "role_owns:carvis_worker:pg_type"),
+    # ownership of any object class, including schemas and the database (pg_shdepend)
+    (["CREATE SCHEMA rv_b2b1_s AUTHORIZATION carvis_bootstrap"], "role_owns:carvis_bootstrap:pg_namespace"),
+    (["ALTER SCHEMA carvis_migrations OWNER TO carvis_app"], "role_owns:carvis_app:pg_namespace"),
+    ([DB_DO.format("ALTER DATABASE %I OWNER TO carvis_worker")], "role_owns:carvis_worker:pg_database"),
+    (["SET ROLE carvis_owner", "CREATE FUNCTION carvis.b2b1_p() RETURNS int LANGUAGE sql AS 'SELECT 1'",
+      "REVOKE ALL ON FUNCTION carvis.b2b1_p() FROM PUBLIC", "RESET ROLE",
+      "ALTER FUNCTION carvis.b2b1_p() OWNER TO carvis_provisioner"],
+     "role_owns:carvis_provisioner:pg_proc:carvis.b2b1_p()"),
+    (["ALTER DEFAULT PRIVILEGES FOR ROLE carvis_app REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"],
+     "role_owns:carvis_app:pg_default_acl"),
+    # effective CREATE: direct, through PUBLIC, inherited, on the database
+    (["GRANT CREATE ON SCHEMA carvis TO carvis_app"], "role_create:carvis_app:carvis"),
+    (["GRANT CREATE ON SCHEMA carvis_migrations TO carvis_worker"], "role_create:carvis_worker:carvis_migrations"),
+    (["GRANT CREATE ON SCHEMA carvis TO PUBLIC"], "role_create:carvis_bootstrap:carvis"),
+    (["CREATE ROLE rv_b2b1_c NOLOGIN", "GRANT CREATE ON SCHEMA carvis TO rv_b2b1_c",
+      "GRANT rv_b2b1_c TO carvis_worker"], "role_create:carvis_worker:carvis"),
+    ([DB_DO.format("GRANT CREATE ON DATABASE %I TO carvis_bootstrap")], "role_create:carvis_bootstrap:database"),
+    ([DB_DO.format("GRANT CREATE ON DATABASE %I TO PUBLIC")], "role_create:carvis_app:database"),
+    # grant options
+    (["GRANT SELECT ON carvis.users TO carvis_app WITH GRANT OPTION"], "table_privileges:carvis_app:users"),
+    (["GRANT SELECT ON carvis.users TO carvis_app WITH GRANT OPTION"], "grant_option:relation:carvis_app:carvis.users"),
+    (["GRANT SELECT (id) ON carvis.users TO carvis_provisioner WITH GRANT OPTION"],
+     "table_privileges:carvis_provisioner:users"),
+    (["GRANT SELECT (id) ON carvis.users TO carvis_provisioner WITH GRANT OPTION"],
+     "grant_option:column:carvis_provisioner:carvis.users.id"),
+    (["GRANT USAGE ON SCHEMA carvis TO carvis_app WITH GRANT OPTION"], "grant_option:schema:carvis_app:carvis"),
+    ([DB_DO.format("GRANT CONNECT ON DATABASE %I TO carvis_worker WITH GRANT OPTION")],
+     "grant_option:database:carvis_worker"),
+    (["GRANT EXECUTE ON FUNCTION carvis.ensure_principal(text,text,text) TO carvis_bootstrap WITH GRANT OPTION"],
+     "grant_option:routine:carvis_bootstrap:carvis.ensure_principal"),
+    (["GRANT USAGE ON TYPE carvis.users TO carvis_app WITH GRANT OPTION"], "grant_option:type:carvis_app:carvis.users"),
     (["ALTER FUNCTION carvis.ensure_principal(text,text,text) SECURITY INVOKER"], "definer_not_definer"),
     (["DROP FUNCTION carvis.ensure_principal(text,text,text)"], "definer_missing"),
     (["GRANT carvis_provisioner TO postgres"], "definer_owner_member:carvis_provisioner:postgres"),
@@ -218,7 +276,10 @@ def test_catalog_check_detects_violations(scratch, head, setup, code):
         _sql(scratch.db_admin, *setup)
         assert any(item.startswith(code) for item in violations(scratch.db_admin)), violations(scratch.db_admin)
     finally:
-        _sql(scratch.admin, "DROP ROLE IF EXISTS rv_b2b1_admin", "DROP ROLE IF EXISTS rv_b2b1_admin2")
+        for role in ("rv_b2b1_admin", "rv_b2b1_admin2", "rv_b2b1_c"):
+            if _sql(scratch.admin, f"SELECT 1 FROM pg_roles WHERE rolname = '{role}'", fetch=True):
+                _sql(scratch.db_admin, f"DROP OWNED BY {role}")
+                _sql(scratch.admin, f"DROP ROLE {role}")
 
 
 def test_catalog_does_not_depend_on_the_callers_search_path(scratch, head):
@@ -236,6 +297,19 @@ def test_catalog_signatures_qualify_argument_types_under_any_search_path(scratch
     for path in (None, "carvis, public"):
         found = violations(scratch.db_admin, search_path=path)
         assert "public_or_issuer_routine:carvis.b2b1_t(carvis.b2b1_dom)" in found, (path, found)
+
+
+def test_legitimate_administrative_ownership_is_not_rejected(scratch, head):
+    """The CREATEROLE migration login owns the database, carvis_owner owns the schemas and objects,
+    and carvis_provisioner owns ensure_principal and its own default ACL (from 0003): all allowed."""
+    assert _sql(scratch.db_admin, "SELECT pg_get_userbyid(datdba) FROM pg_database "
+                                  "WHERE datname = current_database()", fetch=True) == [(MIGRATOR,)]
+    assert _sql(scratch.db_admin, "SELECT count(*) FROM pg_default_acl WHERE defaclrole = "
+                                  "'carvis_provisioner'::regrole", fetch=True)[0][0] >= 1
+    assert _sql(scratch.db_admin, "SELECT pg_get_userbyid(p.proowner) FROM pg_proc p "
+                                  "WHERE p.oid = 'carvis.ensure_principal(text,text,text)'::regprocedure",
+                fetch=True) == [("carvis_provisioner",)]
+    assert violations(scratch.db_admin) == []
 
 
 def test_definer_owner_member_must_be_the_migration_login(scratch, head):

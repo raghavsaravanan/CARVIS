@@ -236,7 +236,9 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
   confinement of a whole call to one principal rests on that (reviewed and tested) body, not on the
   policies alone.
 - `db.catalog.violations()` is the reusable catalog check: forced RLS, role attributes, no `PUBLIC`
-  or issuer grants, allow-listed definer routines and exact table privileges. The migration runs it
+  or issuer grants, allow-listed definer routines, exact table privileges without grant options, and
+  for the CARVIS runtime roles no ownership of any object (database and schemas included), no
+  `CREATE` on the database or the CARVIS schemas and no grant options. The migration runs it
   as a post-condition, and later packages extend it.
 - Downgrading `0004` refuses while any identity table has rows.
 - Nothing uses these tables from a request yet: the session context is B2b-2 and the routes B2c.

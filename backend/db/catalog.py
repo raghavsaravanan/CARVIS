@@ -12,8 +12,12 @@ Rules (both CARVIS schemas, ``carvis`` and ``carvis_migrations``):
 - every table in ``carvis`` with a ``workspace_id`` column, and every identity table, has row-level
   security enabled **and forced**;
 - the CARVIS runtime and definer roles are NOLOGIN, have no elevated attribute (superuser, createdb,
-  createrole, replication, BYPASSRLS) and are members of no role; the runtime roles own no relation,
-  type or routine, and a definer owner owns only its allow-listed routines;
+  createrole, replication, BYPASSRLS) and are members of no role;
+- they own no object of any class in any database (``pg_shdepend`` owner entries, which include the
+  database and schemas), except that a definer owner owns its allow-listed routines and its own
+  default ACLs in this database;
+- they have no effective ``CREATE`` (PUBLIC and inherited grants included) on either CARVIS schema or
+  the database, and hold no grant option on the database or anything in the CARVIS schemas;
 - no ACL on a CARVIS schema, relation, column, routine or type grants anything to ``PUBLIC`` or an
   issuer role, and no routine or non-array type has a NULL ACL (NULL means defaults that include
   ``PUBLIC``);
@@ -22,9 +26,9 @@ Rules (both CARVIS schemas, ``carvis`` and ``carvis_migrations``):
 - every allow-listed definer is still ``SECURITY DEFINER`` and owned by its definer owner, and exists
   whenever the identity tables do;
 - each definer owner has at most one member: PostgreSQL 16's ADMIN-only grant (no SET, no INHERIT) to
-  the migration login named by the caller, and
-  no ``CREATE`` on either CARVIS schema;
-- the listed roles hold exactly the listed privileges on the identity tables, no more and no less.
+  the migration login named by the caller;
+- the listed roles hold exactly the listed privileges on the identity tables, without grant option, no
+  more and no less.
 """
 
 from __future__ import annotations
@@ -115,21 +119,62 @@ def violations(connection: Connection, migration_login: str | None = None) -> li
         if _rows(connection, "SELECT 1 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r "
                              "ON r.oid = m.member WHERE r.rolname = :r", r=role):
             found.append(f"role_member_of_another:{role}")
+    # Ownership of any object class in any database, from pg_shdepend owner entries (deptype 'o'),
+    # which PostgreSQL records for every object owned by a non-pinned role: relations, types,
+    # routines, schemas, default ACLs, the database itself (dbid 0) and the rest. A definer owner may
+    # own its allow-listed routines and its own default ACLs (0003) in this database; nothing else.
     for role in NON_OWNING_ROLES:
-        if _rows(connection, "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_roles r ON r.oid = c.relowner "
-                             "WHERE r.rolname = :r", r=role):
-            found.append(f"role_owns_relation:{role}")
-        if _rows(connection, "SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_roles r ON r.oid = t.typowner "
-                             "WHERE r.rolname = :r", r=role):
-            found.append(f"role_owns_type:{role}")
-        # A definer owner may own exactly its allow-listed routines; every other checked role owns none.
-        allowed = set(DEFINER_ALLOW_LIST) if role in DEFINER_OWNERS else set()
-        for (signature,) in _rows(connection, f"SELECT {SIGNATURE} FROM pg_catalog.pg_proc p "
-                                              "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
-                                              "JOIN pg_catalog.pg_roles r ON r.oid = p.proowner WHERE r.rolname = :r",
-                                  r=role):
-            if signature not in allowed:
-                found.append(f"role_owns_routine:{role}:{signature}")
+        for catalog, here, signature in _rows(connection, f"""
+                SELECT (SELECT k.relname FROM pg_catalog.pg_class k WHERE k.oid = d.classid),
+                       d.dbid = (SELECT db.oid FROM pg_catalog.pg_database db
+                                 WHERE db.datname = pg_catalog.current_database()),
+                       (SELECT {SIGNATURE} FROM pg_catalog.pg_proc p
+                        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                        WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND p.oid = d.objid)
+                FROM pg_catalog.pg_shdepend d JOIN pg_catalog.pg_roles r ON r.oid = d.refobjid
+                WHERE d.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass AND d.deptype = 'o'
+                  AND r.rolname = :r""", r=role):
+            if role in DEFINER_OWNERS and here and (
+                    catalog == "pg_default_acl" or (catalog == "pg_proc" and signature in DEFINER_ALLOW_LIST)):
+                continue
+            found.append(f"role_owns:{role}:{catalog}" + (f":{signature}" if here and signature else ""))
+
+    # Effective CREATE (PUBLIC and inherited grants included) on both CARVIS schemas and the database.
+    for role in CHECKED_ROLES:
+        for schema in schemas:
+            if _rows(connection, "SELECT 1 WHERE pg_catalog.has_schema_privilege(:r, :s, 'CREATE')", r=role, s=schema):
+                found.append(f"role_create:{role}:{schema}")
+        if _rows(connection, "SELECT 1 WHERE pg_catalog.has_database_privilege(:r, "
+                             "pg_catalog.current_database(), 'CREATE')", r=role):
+            found.append(f"role_create:{role}:database")
+
+    # Grant options held by a checked role on anything in the CARVIS schemas or on the database.
+    option_queries = {
+        "database": "SELECT d.datname FROM pg_catalog.pg_database d, pg_catalog.aclexplode(d.datacl) a "
+                    "WHERE d.datname = pg_catalog.current_database() AND a.grantee = :g AND a.is_grantable",
+        "schema": "SELECT n.nspname FROM pg_catalog.pg_namespace n, pg_catalog.aclexplode(n.nspacl) a "
+                  "WHERE n.nspname = ANY(:schemas) AND a.grantee = :g AND a.is_grantable",
+        "relation": "SELECT n.nspname || '.' || c.relname FROM pg_catalog.pg_class c "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace, pg_catalog.aclexplode(c.relacl) a "
+                    "WHERE n.nspname = ANY(:schemas) AND a.grantee = :g AND a.is_grantable",
+        "column": "SELECT n.nspname || '.' || c.relname || '.' || t.attname FROM pg_catalog.pg_attribute t "
+                  "JOIN pg_catalog.pg_class c ON c.oid = t.attrelid JOIN pg_catalog.pg_namespace n "
+                  "ON n.oid = c.relnamespace, pg_catalog.aclexplode(t.attacl) a "
+                  "WHERE n.nspname = ANY(:schemas) AND a.grantee = :g AND a.is_grantable",
+        "routine": f"SELECT {SIGNATURE} FROM pg_catalog.pg_proc p "
+                   "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace, pg_catalog.aclexplode(p.proacl) a "
+                   "WHERE n.nspname = ANY(:schemas) AND a.grantee = :g AND a.is_grantable",
+        "type": "SELECT n.nspname || '.' || t.typname FROM pg_catalog.pg_type t "
+                "JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace, pg_catalog.aclexplode(t.typacl) a "
+                "WHERE n.nspname = ANY(:schemas) AND a.grantee = :g AND a.is_grantable",
+    }
+    for role in CHECKED_ROLES:
+        oid = _rows(connection, "SELECT oid FROM pg_catalog.pg_roles WHERE rolname = :r", r=role)
+        if not oid:
+            continue
+        for kind, sql in option_queries.items():
+            for (name,) in _rows(connection, sql, g=oid[0][0], schemas=schemas):
+                found.append(f"grant_option:{kind}:{role}:{name}")
 
     # PUBLIC or issuer entries anywhere in the CARVIS schemas; NULL ACLs on routines and types.
     grantees = """(SELECT 0::oid UNION ALL SELECT oid FROM pg_catalog.pg_roles WHERE rolname = ANY(:issuers))"""
@@ -207,7 +252,7 @@ def violations(connection: Connection, migration_login: str | None = None) -> li
         if rows and set(rows[0][0] or []) != expected:
             found.append(f"routine_acl:{signature}")
 
-    # Definer owners: only the ADMIN-only member; no CREATE on carvis.
+    # Definer owners: only the migration login's ADMIN-only member.
     for role in DEFINER_OWNERS:
         members = _rows(connection, """
                 SELECT mr.rolname, m.admin_option, m.inherit_option, m.set_option
@@ -221,9 +266,6 @@ def violations(connection: Connection, migration_login: str | None = None) -> li
         for member, admin, inherit, can_set in members:
             if member != migration_login or inherit or can_set or not admin:
                 found.append(f"definer_owner_member:{role}:{member}")
-        for schema in schemas:
-            if _rows(connection, "SELECT 1 WHERE pg_catalog.has_schema_privilege(:r, :s, 'CREATE')", r=role, s=schema):
-                found.append(f"definer_owner_create:{role}:{schema}")
 
     # Exact privileges on the identity tables.
     present = {row[0] for row in _rows(connection, """
@@ -232,20 +274,21 @@ def violations(connection: Connection, migration_login: str | None = None) -> li
                                        schema=SCHEMA, tables=list(IDENTITY_TABLES))}
     for table in sorted(present):
         held: dict[str, set[tuple[str, str]]] = {}
-        for grantee, privilege, column in _rows(connection, """
-                SELECT r.rolname, a.privilege_type, '' FROM pg_catalog.pg_class c
+        for grantee, privilege, column, grantable in _rows(connection, """
+                SELECT r.rolname, a.privilege_type, '', a.is_grantable FROM pg_catalog.pg_class c
                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace, pg_catalog.aclexplode(c.relacl) a
                 JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
                 WHERE n.nspname = :schema AND c.relname = :t
                 UNION ALL
-                SELECT r.rolname, a.privilege_type, t.attname FROM pg_catalog.pg_attribute t
+                SELECT r.rolname, a.privilege_type, t.attname, a.is_grantable FROM pg_catalog.pg_attribute t
                 JOIN pg_catalog.pg_class c ON c.oid = t.attrelid JOIN pg_catalog.pg_namespace n
                 ON n.oid = c.relnamespace, pg_catalog.aclexplode(t.attacl) a
                 JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
                 WHERE n.nspname = :schema AND c.relname = :t""", schema=SCHEMA, t=table):
             if grantee == OWNER_ROLE:
                 continue
-            held.setdefault(grantee, set()).add((privilege, column))
+            # A grant option is extra authority: it never matches the (non-grantable) allow-list.
+            held.setdefault(grantee, set()).add((f"{privilege} WITH GRANT OPTION" if grantable else privilege, column))
         for role in set(held) | {r for r, t in EXACT_TABLE_PRIVILEGES if t == table}:
             if held.get(role, set()) != EXACT_TABLE_PRIVILEGES.get((role, table), set()):
                 found.append(f"table_privileges:{role}:{table}")

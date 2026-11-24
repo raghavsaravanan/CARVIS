@@ -138,6 +138,11 @@ def _preflight(login: str) -> None:
         if _scalar("SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n "
                    "ON n.oid = c.relnamespace WHERE n.nspname = :s AND c.relname = :n", s=S, n=name):
             raise IdentityMigrationError(f"{S}.{name} already exists; refusing to adopt it.")
+    for name in TABLES:
+        # A table's row type takes its name, so a standalone type (domain, enum, composite) conflicts.
+        if _scalar("SELECT count(*) FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n "
+                   "ON n.oid = t.typnamespace WHERE n.nspname = :s AND t.typname = :n", s=S, n=name):
+            raise IdentityMigrationError(f"A type named {S}.{name} already exists; refusing to adopt it.")
     for routine in (*OWNER_ROUTINES, DEFINER):
         if _scalar("SELECT count(*) FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n "
                    "ON n.oid = p.pronamespace WHERE n.nspname = :s AND p.proname = :n",
