@@ -32,7 +32,7 @@ PASSWORD = "b1-scratch-Pw-7731"
 # These tests cover the B1 revisions; they migrate to the B1 head explicitly so later revisions
 # (tested in test_b2a_*.py) do not change what they assert.
 B1_HEAD = "0002_roles"
-SHIPPED_HEAD = "0003_runtime_roles"
+SHIPPED_HEAD = "0004_identity"
 
 
 # --- History (no database) ----------------------------------------------------------------------

@@ -221,6 +221,28 @@ phone-supplied reasons, caller-chosen IDs or exception messages. Uvicorn's own a
   name resolution included, by one 2-second deadline, and resolves names on its own small thread pool
   shared by concurrent pool fills. Nothing uses it yet (B2b).
 
+#### Identity tables and provisioning (M2 B2b-1)
+
+- Migration `0004_identity` adds `carvis.users`, `carvis.workspaces` and `carvis.memberships`, each
+  with row-level security enabled and forced. `carvis_app` and `carvis_worker` may only read them,
+  and only the rows their transaction context (`app.user_id`, `app.workspace_ids`) allows; with no
+  context they see nothing.
+- `carvis.ensure_principal(issuer, subject, email)` is the only runtime path that creates identity
+  rows. It is a `SECURITY DEFINER` function owned by `carvis_provisioner` and executable only by
+  `carvis_bootstrap`. It finds or creates the user, their personal workspace and their owner
+  membership, and returns `(user_id, status)`. It requires `READ COMMITTED`. The provisioner's policies
+  confine each read and insert to the principal the `app.bootstrap_*` settings name at that
+  statement. The function body sets those settings from its arguments and clears them on return, so
+  confinement of a whole call to one principal rests on that (reviewed and tested) body, not on the
+  policies alone.
+- `db.catalog.violations()` is the reusable catalog check: forced RLS, role attributes, no `PUBLIC`
+  or issuer grants, allow-listed definer routines, exact table privileges without grant options, and
+  for the CARVIS runtime roles no ownership of any object (database and schemas included), no
+  `CREATE` on the database or the CARVIS schemas and no grant options. The migration runs it
+  as a post-condition, and later packages extend it.
+- Downgrading `0004` refuses while any identity table has rows.
+- Nothing uses these tables from a request yet: the session context is B2b-2 and the routes B2c.
+
 ### iOS
 
 Open [`ios/Carvis/Carvis.xcodeproj`](ios/Carvis/Carvis.xcodeproj) in Xcode, configure signing and
