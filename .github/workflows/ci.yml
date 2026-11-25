@@ -5,6 +5,8 @@ on:
     branches: [main]
   push:
     branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -12,15 +14,161 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only pull-request runs are cancelled by a newer run; full runs on main, schedule and dispatch always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Required checks (branch protection): "Backend and hygiene", "Swift pure checks", "SpacetimeDB typecheck". They are
+# the gate jobs at the end, which always run and pass only if every job they need succeeded or was skipped for a
+# reason the plan states (scripts/ci-gate.py). Work jobs have other names, because a skipped job counts as passing.
 
 jobs:
-  backend:
-    name: Backend and hygiene
+  plan:
+    name: Plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    # Throwaway PostgreSQL for migration and readiness tests (M2 B1). No provider, no credentials:
-    # the password exists only inside this job.
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.categories.outputs.full }}
+      backend: ${{ steps.categories.outputs.backend }}
+      ios: ${{ steps.categories.outputs.ios }}
+      spacetimedb: ${{ steps.categories.outputs.spacetimedb }}
+      deps: ${{ steps.categories.outputs.deps }}
+      lockfile: ${{ steps.categories.outputs.lockfile }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Categorize changed paths (fail-closed)
+        id: categories
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci-plan.py categories --event "${EVENT}" --base "${BASE}" --head "${HEAD}" | tee -a "${GITHUB_OUTPUT}"
+
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check tracked secret and local-data paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden='(^|/)(\.env($|\.)|VapiConfig\.plist$|carvis_mvp_db/|node_modules/|xcuserdata/|__pycache__/)|\.(pdf|pem|p12)$'
+          if git ls-files | grep -E "$forbidden"; then
+            echo "Tracked secret, local-data, cache, or private-document path found." >&2
+            exit 1
+          fi
+          private_key='BEGIN ''(RSA |EC |OPENSSH )?PRIVATE KEY'
+          github_token='github''_pat_[A-Za-z0-9_]{20,}|gh''p_[A-Za-z0-9]{20,}'
+          provider_key='sk_''(live|test)_[A-Za-z0-9]{16,}'
+          if git grep -I -n -E "$private_key|$github_token|$provider_key" -- . ':!docs/archive/**'; then
+            echo "Possible committed credential found." >&2
+            exit 1
+          fi
+
+      - name: Check whitespace in the change
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${BASE}" ]]; then git diff --check "${BASE}" HEAD; else git diff --check HEAD^ HEAD; fi
+
+      - name: Check repository structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d frontend
+          test ! -d carvis-module
+          test -f backend/spacetimedb/module/src/index.ts
+          test -f ios/Carvis/Carvis.xcodeproj/project.pbxproj
+          test -f ios/Tests/ConversationMachineTests.swift
+
+      - name: Validate Apple property lists
+        run: |
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+
+          for name in ("ios/Carvis/Carvis-Info.plist", "ios/Carvis/Carvis.entitlements"):
+              with Path(name).open("rb") as source:
+                  plistlib.load(source)
+          PY
+
+      - name: Documentation links and stale paths
+        run: bash scripts/check-docs.sh
+
+      - name: Review packet tests
+        run: bash scripts/tests/review-scope-test.sh
+
+      - name: Workflow script tests
+        run: |
+          bash scripts/tests/check-disk-space-test.sh
+          bash scripts/tests/ci-scripts-test.sh
+
+  lockfile:
+    name: Runtime lockfile
+    needs: plan
+    if: needs.plan.outputs.lockfile == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Verify runtime lockfile and imports in isolation
+        run: bash scripts/check-runtime-lock.sh python
+
+  unit:
+    name: Backend tests (unit)
+    needs: plan
+    if: needs.plan.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # No PostgreSQL service: a database test assigned here fails instead of skipping.
+    env:
+      CARVIS_REQUIRE_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install backend dependencies
+        run: python -m pip install --disable-pip-version-check --require-hashes -r backend/requirements-dev.txt
+      - name: Every collected test is in exactly one shard
+        run: python scripts/ci-plan.py partition
+      - name: Workflow structure
+        run: python scripts/tests/ci-workflow-test.py
+      - name: Run unit tests
+        run: python -m pytest -q --junitxml=/tmp/junit.xml $(python scripts/ci-plan.py shard unit)
+      - name: No test skipped, errored or missing
+        run: python scripts/ci-plan.py junit /tmp/junit.xml
+      - name: Compile backend
+        run: python -m compileall -q backend
+      - name: Alembic history is linear (single head)
+        working-directory: backend
+        run: python -m db.history
+
+  db-1:
+    name: Backend tests (db-1)
+    needs: plan
+    if: needs.plan.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
@@ -35,36 +183,22 @@ jobs:
           --health-retries 30
     env:
       CARVIS_TEST_POSTGRES_URL: postgresql://postgres:ci-scratch-only@127.0.0.1:5432/postgres
-      # Real-PostgreSQL tests fail instead of skipping when the server is missing.
       CARVIS_REQUIRE_POSTGRES: "1"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 2
           persist-credentials: false
-
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
-
-      - name: Verify runtime lockfile in isolation
-        run: bash scripts/check-runtime-lock.sh python
-
       - name: Install backend dependencies
         run: python -m pip install --disable-pip-version-check --require-hashes -r backend/requirements-dev.txt
-
-      - name: Run backend tests
-        run: python -m pytest backend/tests -q
-
-      - name: Compile backend
-        run: python -m compileall -q backend
-
-      - name: Alembic history is linear (single head)
-        working-directory: backend
-        run: python -m db.history
-
+      - name: Run database tests
+        run: python -m pytest -q --junitxml=/tmp/junit.xml $(python scripts/ci-plan.py shard db-1)
+      - name: No test skipped, errored or missing
+        run: python scripts/ci-plan.py junit /tmp/junit.xml
       - name: Migrations up, down and up as a non-superuser CREATEROLE login
         working-directory: backend
         shell: bash
@@ -89,53 +223,84 @@ jobs:
           diff -u /tmp/roles-first.txt /tmp/roles-second.txt
           test "$(python -m alembic -c migrations/alembic.ini heads | wc -l)" -eq 1
 
-      - name: Check tracked secret and local-data paths
-        shell: bash
-        run: |
-          set -euo pipefail
-          forbidden='(^|/)(\.env($|\.)|VapiConfig\.plist$|carvis_mvp_db/|node_modules/|xcuserdata/|__pycache__/)|\.(pdf|pem|p12)$'
-          if git ls-files | grep -E "$forbidden"; then
-            echo "Tracked secret, local-data, cache, or private-document path found." >&2
-            exit 1
-          fi
-          private_key='BEGIN ''(RSA |EC |OPENSSH )?PRIVATE KEY'
-          github_token='github''_pat_[A-Za-z0-9_]{20,}|gh''p_[A-Za-z0-9]{20,}'
-          provider_key='sk_''(live|test)_[A-Za-z0-9]{16,}'
-          if git grep -I -n -E "$private_key|$github_token|$provider_key" -- . ':!docs/archive/**'; then
-            echo "Possible committed credential found." >&2
-            exit 1
-          fi
+  db-2:
+    name: Backend tests (db-2)
+    needs: plan
+    if: needs.plan.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
+        env:
+          POSTGRES_PASSWORD: ci-scratch-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      CARVIS_TEST_POSTGRES_URL: postgresql://postgres:ci-scratch-only@127.0.0.1:5432/postgres
+      CARVIS_REQUIRE_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install backend dependencies
+        run: python -m pip install --disable-pip-version-check --require-hashes -r backend/requirements-dev.txt
+      - name: Run database tests
+        run: python -m pytest -q --junitxml=/tmp/junit.xml $(python scripts/ci-plan.py shard db-2)
+      - name: No test skipped, errored or missing
+        run: python scripts/ci-plan.py junit /tmp/junit.xml
 
-      - name: Review packet tests
-        run: bash scripts/tests/review-scope-test.sh
-
-      - name: Workflow script tests
-        run: bash scripts/tests/check-disk-space-test.sh
-
-      - name: Check repository structure and whitespace
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --check HEAD^ HEAD
-          test ! -d frontend
-          test ! -d carvis-module
-          test -f backend/spacetimedb/module/src/index.ts
-          test -f ios/Carvis/Carvis.xcodeproj/project.pbxproj
-          test -f ios/Tests/ConversationMachineTests.swift
-
-      - name: Validate Apple property lists
-        run: |
-          python - <<'PY'
-          import plistlib
-          from pathlib import Path
-
-          for name in ("ios/Carvis/Carvis-Info.plist", "ios/Carvis/Carvis.entitlements"):
-              with Path(name).open("rb") as source:
-                  plistlib.load(source)
-          PY
+  db-3:
+    name: Backend tests (db-3)
+    needs: plan
+    if: needs.plan.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
+        env:
+          POSTGRES_PASSWORD: ci-scratch-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      CARVIS_TEST_POSTGRES_URL: postgresql://postgres:ci-scratch-only@127.0.0.1:5432/postgres
+      CARVIS_REQUIRE_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install backend dependencies
+        run: python -m pip install --disable-pip-version-check --require-hashes -r backend/requirements-dev.txt
+      - name: Run database tests
+        run: python -m pytest -q --junitxml=/tmp/junit.xml $(python scripts/ci-plan.py shard db-3)
+      - name: No test skipped, errored or missing
+        run: python scripts/ci-plan.py junit /tmp/junit.xml
 
   swift:
-    name: Swift pure checks
+    name: Swift tests
+    needs: plan
+    if: needs.plan.outputs.ios == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -175,7 +340,9 @@ jobs:
           /tmp/carvis-wake-tests
 
   spacetimedb:
-    name: SpacetimeDB typecheck
+    name: SpacetimeDB module typecheck
+    needs: plan
+    if: needs.plan.outputs.spacetimedb == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -197,3 +364,50 @@ jobs:
 
       - name: Typecheck module
         run: ./node_modules/.bin/tsc --project tsconfig.json --noEmit
+
+  # --- required checks: gates (always run; scripts/ci-gate.py) ---------------------------------------------------
+
+  gate-backend:
+    name: Backend and hygiene
+    needs: [plan, hygiene, lockfile, unit, db-1, db-2, db-3]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Gate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci-gate.py backend "${NEEDS}"
+
+  gate-swift:
+    name: Swift pure checks
+    needs: [plan, swift]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Gate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci-gate.py swift "${NEEDS}"
+
+  gate-spacetimedb:
+    name: SpacetimeDB typecheck
+    needs: [plan, spacetimedb]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Gate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci-gate.py spacetimedb "${NEEDS}"

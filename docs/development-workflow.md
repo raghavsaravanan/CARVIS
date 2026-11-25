@@ -479,7 +479,29 @@ dependencies change. GitHub CI runs these checks without provider credentials or
 - the review-packet tests (`scripts/tests/review-scope-test.sh`);
 - pure Swift tests;
 - SpacetimeDB TypeScript type checking;
-- the workflow-script tests (`scripts/tests/check-disk-space-test.sh`).
+- the workflow-script tests (`scripts/tests/check-disk-space-test.sh`, `scripts/tests/ci-scripts-test.sh`,
+  `scripts/tests/ci-workflow-test.py`);
+- documentation links and stale paths (`scripts/check-docs.sh`).
+
+**CI structure.**
+
+- **Jobs:**
+  - `Plan` sorts the changed paths into categories (`scripts/ci-plan.py`).
+  - `Hygiene` always runs.
+  - The backend tests run as a unit job without PostgreSQL, plus three database shards, each on its own PostgreSQL
+    service: `Backend tests (unit)` and `Backend tests (db-1)` to `(db-3)`.
+  - The rest are `Runtime lockfile`, `Swift tests` and `SpacetimeDB module typecheck`.
+- **Required checks:** `Backend and hygiene`, `Swift pure checks` and `SpacetimeDB typecheck` are gate jobs that
+  always run (`scripts/ci-gate.py`). A gate passes only when every job it needs succeeded, or was skipped while the
+  plan reported that its category did not change. A failure, a cancellation, a missing job or a failed plan fails the
+  gate. GitHub counts a skipped job as passing, so required names never belong to work jobs.
+- **Full runs:** everything runs on `main`, on the weekly schedule, on manual dispatch, and for any change to
+  `.github/`, the CI scripts or this document. Anything that cannot be classified also runs everything.
+- **Docs-only pull requests:** only `README.md` and `docs/**.md` count as documentation. Such pull requests run only
+  the plan, hygiene (which includes the documentation checks) and the gates. Their review tier is unchanged.
+- **Shards:** every collected test must belong to exactly one shard (`ci-plan.py partition`), and no shard may skip
+  a test (`ci-plan.py junit`). A new real-PostgreSQL test file belongs in a database shard in `scripts/ci-plan.py`.
+  Left out, it runs in the unit job, which requires PostgreSQL but has none, so it fails.
 
 Changes to the workflow scripts also need their manual, network-using tests:
 `scripts/tests/bootstrap-worktree-test.sh` (package registries) and
