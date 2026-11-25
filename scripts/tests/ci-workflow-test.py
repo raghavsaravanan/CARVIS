@@ -51,6 +51,11 @@ def problems(workflow: dict) -> list[str]:
     for job_id in ("plan", "hygiene"):
         if "if" in (jobs.get(job_id) or {}):
             found.append(f"{job_id} must always run")
+    for job_id, job in jobs.items():
+        for step in job.get("steps") or []:
+            if "|" in (step.get("run") or "") and step.get("shell") != "bash":
+                # GitHub's default Linux shell is `bash -e` without pipefail; `shell: bash` adds -o pipefail.
+                found.append(f"{job_id}: a step with a pipe must set shell: bash (pipefail)")
     unit = jobs.get("unit") or {}
     if "services" in unit:
         found.append("unit must have no database service")

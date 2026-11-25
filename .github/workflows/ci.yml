@@ -40,6 +40,7 @@ jobs:
           persist-credentials: false
       - name: Categorize changed paths (fail-closed)
         id: categories
+        shell: bash  # bash -eo pipefail: a failing plan script fails the step despite the pipe into tee
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
