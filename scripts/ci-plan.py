@@ -35,8 +35,9 @@ DB_SHARDS = {
 SHARDS = ("unit", *DB_SHARDS)
 CATEGORIES = ("full", "backend", "ios", "spacetimedb", "deps", "lockfile")
 FULL_EVENTS = {"push", "schedule", "workflow_dispatch"}
-FULL_PATHS = (".github/", "scripts/ci-plan.py", "scripts/ci-gate.py", "scripts/check-docs.sh", "scripts/tests/ci-",
-              "docs/development-workflow.md")
+# Any CI script (scripts/ci-*, existing or new), its tests, the docs check the workflow runs, the workflow and the
+# workflow policy document force a full run.
+FULL_PATHS = (".github/", "scripts/ci-", "scripts/tests/ci-", "scripts/check-docs.sh", "docs/development-workflow.md")
 DEPS_PATHS = ("backend/requirements", "scripts/check-runtime-lock.sh", "runtime.txt", "requirements.txt")
 
 

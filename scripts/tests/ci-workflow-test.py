@@ -30,8 +30,12 @@ def problems(workflow: dict) -> list[str]:
         found.append("push must be limited to main")
     if "paths" in str(on) or "paths-ignore" in str(on):
         found.append("path filters on triggers leave required checks pending")
-    if (workflow.get("concurrency") or {}).get("cancel-in-progress") != "${{ github.event_name == 'pull_request' }}":
+    concurrency = workflow.get("concurrency") or {}
+    if concurrency.get("cancel-in-progress") != "${{ github.event_name == 'pull_request' }}":
         found.append("cancel-in-progress must apply to pull requests only")
+    if concurrency.get("group") != ("ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' "
+                                    "&& github.ref || github.run_id }}"):
+        found.append("non-pull-request runs need their own concurrency group (run_id), so no full run is replaced")
     jobs = workflow.get("jobs") or {}
     names = [job.get("name") for job in jobs.values()]
     for job_id, (name, needs) in REQUIRED.items():
@@ -45,6 +49,23 @@ def problems(workflow: dict) -> list[str]:
         gate_name = job_id.removeprefix("gate-")
         if not any(f"scripts/ci-gate.py {gate_name}" in (step.get("run") or "") for step in job.get("steps") or []):
             found.append(f"{job_id} must run scripts/ci-gate.py {gate_name}")
+    # The gate script's job map must match the workflow: each gate's needs (apart from plan) are exactly its GATES
+    # keys, and each skippable job's if: tests exactly the category the gate accepts for its skip.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("ci_gate", ROOT / "scripts" / "ci-gate.py")
+    ci_gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ci_gate)
+    for job_id, (name, needs) in REQUIRED.items():
+        gate_name = job_id.removeprefix("gate-")
+        declared = set((jobs.get(job_id) or {}).get("needs") or []) - {"plan"}
+        if declared != set(ci_gate.GATES.get(gate_name, {})):
+            found.append(f"{job_id}: needs {sorted(declared)} differ from ci-gate.py's {sorted(ci_gate.GATES.get(gate_name, {}))}")
+        for job, category in ci_gate.GATES.get(gate_name, {}).items():
+            condition = (jobs.get(job) or {}).get("if")
+            expected = None if category is None else f"needs.plan.outputs.{category} == 'true'"
+            if condition != expected:
+                found.append(f"{job}: if is {condition!r}, but ci-gate.py skips it on category {category!r}")
     for job_id, condition in CONDITIONS.items():
         if (jobs.get(job_id) or {}).get("if") != condition:
             found.append(f"{job_id} must run if {condition}")

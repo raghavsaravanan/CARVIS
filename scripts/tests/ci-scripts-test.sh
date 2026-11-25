@@ -27,7 +27,8 @@ for event in ("push", "schedule", "workflow_dispatch"):
     check(f"{event} is full", plan.categorize(event, ["docs/x.md"]) == ALL)
 check("no diff is full", pr(None) == ALL)
 check("empty diff is full", pr([]) == ALL)
-for path in (".github/workflows/ci.yml", "scripts/ci-plan.py", "scripts/ci-gate.py", "scripts/check-docs.sh",
+for path in (".github/workflows/ci.yml", "scripts/ci-plan.py", "scripts/ci-gate.py", "scripts/ci-helper.py",
+             "scripts/check-docs.sh",
              "scripts/tests/ci-scripts-test.sh", "scripts/tests/ci-workflow-test.py", "docs/development-workflow.md"):
     check(f"{path} forces full", pr([path]) == ALL)
 # categories
@@ -119,6 +120,19 @@ def needs(gate_name, results, out):
     n.update({job: {"result": results.get(job, "success"), "outputs": {}} for job in gate.GATES[gate_name]})
     return n
 check("all success passes", gate.decide("backend", needs("backend", {}, outputs(backend=True, lockfile=True))) == [])
+# Every bad result, for every job of every gate (a job left out of a gate's map would pass these unnoticed).
+every = {k: "true" for k in plan.CATEGORIES}
+for gate_name, jobs in gate.GATES.items():
+    for job in jobs:
+        for result in ("failure", "cancelled", "neutral", "", None):
+            n = needs(gate_name, {}, every)
+            if result is None:
+                n.pop(job)
+            else:
+                n[job]["result"] = result
+            check(f"{gate_name}/{job} {result!r} fails", gate.decide(gate_name, n) != [])
+        n = needs(gate_name, {job: "skipped"}, every)
+        check(f"{gate_name}/{job} skipped while its category is true fails", gate.decide(gate_name, n) != [])
 for result in ("failure", "cancelled", "neutral", ""):
     check(f"unit {result!r} fails", gate.decide("backend", needs("backend", {"unit": result}, outputs(backend=True))))
 docs_only = {j: "skipped" for j in ("lockfile", "unit", "db-1", "db-2", "db-3")}

@@ -13,8 +13,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  # Only pull-request runs are cancelled by a newer run; full runs on main, schedule and dispatch always finish.
+  # Pull-request runs share a group per ref, so a newer push cancels the older run. Every other run (push to main,
+  # schedule, dispatch) gets its own group by run ID: GitHub keeps only one pending run per group, so a shared group
+  # could replace a pending full run, which then never executes.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Required checks (branch protection): "Backend and hygiene", "Swift pure checks", "SpacetimeDB typecheck". They are
